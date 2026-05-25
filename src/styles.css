@@ -1,0 +1,410 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app {
+  min-height: 100vh;
+  padding: 24px;
+  background: radial-gradient(circle at top left, #dcfce7 0, #f8fafc 34%, #eef2ff 100%);
+}
+
+.container {
+  max-width: 1360px;
+  margin: 0 auto;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.4fr .8fr;
+  gap: 22px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 32px;
+  background: #fff;
+  box-shadow: 0 16px 45px rgba(15, 23, 42, .08);
+}
+
+.hero > div:first-child {
+  padding: 34px;
+}
+
+.brand {
+  display: inline-flex;
+  margin-bottom: 20px;
+  border-radius: 999px;
+  background: #0f172a;
+  padding: 10px 16px;
+  color: #fff;
+  font-weight: 950;
+  letter-spacing: .04em;
+}
+
+.hero h1 {
+  max-width: 800px;
+  margin: 0;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: .98;
+  letter-spacing: -.05em;
+}
+
+.hero p {
+  max-width: 650px;
+  margin: 14px 0 0;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.hero-card {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: 30px;
+  background: #0f172a;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 22px 0;
+}
+
+.tabs button, .primary, .secondary, .confirm-button {
+  border: 0;
+  border-radius: 16px;
+  padding: 12px 18px;
+  font-weight: 900;
+}
+
+.tabs button {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+.tabs button.active, .primary, .confirm-button {
+  background: #0f172a;
+  color: #fff;
+}
+
+.confirm-button {
+  width: 100%;
+  min-height: 72px;
+  font-size: 15px;
+}
+
+.secondary {
+  margin-top: 14px;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.stack {
+  display: grid;
+  gap: 22px;
+}
+
+.section {
+  border: 1px solid #e2e8f0;
+  border-radius: 28px;
+  background: #fff;
+  padding: 22px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .05);
+}
+
+.section h2 {
+  margin: 0 0 18px;
+  font-size: 21px;
+  letter-spacing: -.02em;
+}
+
+.section h3 {
+  margin: 0 0 12px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.form-space {
+  margin-top: 18px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+input, select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 12px;
+  outline: none;
+}
+
+input:focus, select:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 4px #d1fae5;
+}
+
+.card, .price-box, .pin-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 24px;
+  background: #fff;
+  padding: 18px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, .04);
+}
+
+.card span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 950;
+  letter-spacing: -.03em;
+  word-break: break-word;
+}
+
+.card small {
+  display: block;
+  margin-top: 7px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.card.dark {
+  border-color: #0f172a;
+  background: #0f172a;
+  color: #fff;
+}
+
+.card.dark span, .card.dark small {
+  color: rgba(255,255,255,.72);
+}
+
+.card.green {
+  border-color: #bbf7d0;
+  background: #ecfdf5;
+}
+
+.card.green strong, .positive, .verified-cell {
+  color: #059669 !important;
+}
+
+.card.yellow {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.card.yellow strong, .pending-cell {
+  color: #b45309 !important;
+}
+
+.card.red, .card.negative {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.card.red strong, .card.negative strong, .negative, .variance-cell {
+  color: #dc2626 !important;
+}
+
+.neutral {
+  color: #475569 !important;
+}
+
+.price-note {
+  margin-top: 12px;
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 13px;
+}
+
+.price-note span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.price-note strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 19px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+}
+
+thead {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+th, td {
+  border-bottom: 1px solid #f1f5f9;
+  padding: 12px 14px;
+  vertical-align: middle;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.total-row {
+  background: #ecfdf5;
+  font-weight: 950;
+  color: #064e3b;
+}
+
+.status {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.status.green {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.status.yellow {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.small-danger, .small-success {
+  border: 0;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.small-danger {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.small-success {
+  background: #059669;
+  color: white;
+}
+
+.excel-wrap {
+  overflow-x: auto;
+  border: 1px solid #94a3b8;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.excel {
+  min-width: 980px;
+}
+
+.excel thead {
+  background: #047857;
+  color: #fff;
+}
+
+.excel th, .excel td {
+  border: 1px solid #cbd5e1;
+}
+
+.error {
+  margin: 12px 0 0;
+  color: #dc2626;
+  font-weight: 900;
+}
+
+@media (max-width: 1000px) {
+  .hero, .grid.two, .grid.three, .grid.four {
+    grid-template-columns: 1fr;
+  }
+  .hero-card {
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .app {
+    padding: 12px;
+  }
+  .hero > div:first-child, .hero-card, .section {
+    padding: 16px;
+  }
+}
+
+
+.read-only-value {
+  display: inline-flex;
+  min-height: 42px;
+  width: 100%;
+  align-items: center;
+  border-radius: 14px;
+  background: #f1f5f9;
+  padding: 10px 12px;
+  color: #0f172a;
+}

@@ -1,0 +1,33 @@
+Validation passed for V2 updates.
+- Admin confirm report removed.
+- Manager confirm report removed.
+- Manager date only inside Daily Fuel Price Setup.
+- Cashier date/range controls removed from top header.
+- Cashier uses automatic current shift display.
+- Cashier pump table product category removed.
+- Admin Excel Spreadsheet Monitoring removed.
+- Admin Calendar Summary removed.
+- Admin Fuel and Tank Registers removed.
+
+Validation passed for V3 closing-only pump register.
+- Opening input removed from cashier pump register.
+- Previous Shift Closing shown as read-only value.
+- Current Closing remains editable.
+- Liters Sold computes from current closing minus previous shift closing.
+
+Validation passed for V4 tank inventory update.
+- Tank opening input removed from cashier side.
+- Previous Shift Dip shown as read-only value.
+- Current Actual Dip remains editable.
+- Tank variance still computes from previous shift dip plus deliveries less sales/pull-out/calibration.
+
+Validation passed for V5 admin summary and PIN update.
+- Admin PIN added: fueltechphils2026.
+- Admin Summary has editable start and end dates.
+- Admin Summary is a larger period summary.
+- Admin View, Bank Verification, and Daily Station Summary retained.
+
+Validation passed for V6 consolidated admin summary update.
+- Admin big summary labeled consolidated all stations.
+- Summary report selection still uses all BRANCHES across selected dates.
+- No cashier or manager changes made.
