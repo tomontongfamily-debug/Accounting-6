@@ -3,7 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Fueltech Branch Reporting</title>
+    <title>FuelTech Accounting</title>
+    <script>
+      document.write(
+        '<link rel="manifest" href="' +
+        ({
+          "/admin": "/fueltech-admin-manifest-v1.webmanifest",
+          "/approver": "/fueltech-approver-manifest-v1.webmanifest",
+          "/manager": "/fueltech-manager-manifest-v1.webmanifest",
+          "/cashier": "/fueltech-cashier-manifest-v1.webmanifest"
+        }[window.location.pathname.replace(/\/+$/, "") || "/"] || "/fueltech-manifest-v2.webmanifest") +
+        '" />'
+      );
+    </script>
+    <link rel="apple-touch-icon" href="/apple-touch-icon-v3.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/fueltech-icon-180-v3.png" />
+    <link rel="shortcut icon" href="/favicon-v3.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/fueltech-icon-192-v3.png" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FuelTech Accounting" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <script>
+      if (window.location.pathname.replace(/\/+$/, "") === "/approver") {
+        document.title = "FuelTech Bank Approver";
+        document.querySelector('meta[name="apple-mobile-web-app-title"]').content = "FuelTech Approver";
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

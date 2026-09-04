@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FuelTech Cashier Step-by-Step Preview</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #637083;
+      --line: #dbe2ea;
+      --surface: #ffffff;
+      --soft: #f5f7fa;
+      --blue: #165dcc;
+      --blue-dark: #104aa4;
+      --green: #117a51;
+      --shadow: 0 24px 70px rgba(24, 39, 64, .18);
+    }
+    * { box-sizing: border-box; letter-spacing: 0; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      color: var(--ink);
+      background: #eef2f6;
+      font: 16px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .page-behind {
+      min-height: 100dvh;
+      padding: 32px;
+      background: linear-gradient(135deg, #edf3fb, #f7f8fa);
+    }
+    .ghost-header, .ghost-card { border: 1px solid #dce3eb; background: white; border-radius: 8px; }
+    .ghost-header { height: 108px; max-width: 1180px; margin: auto; }
+    .ghost-card { height: 300px; max-width: 1180px; margin: 18px auto 0; }
+    .scrim {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background: rgba(13, 24, 42, .56);
+      backdrop-filter: blur(5px);
+    }
+    .wizard {
+      width: min(1040px, 100%);
+      height: min(760px, calc(100dvh - 44px));
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,.5);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .wizard-header {
+      padding: 22px 28px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .topline { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(22px, 3vw, 30px); line-height: 1.2; }
+    .shift-meta { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+    .draft-badge {
+      flex: none;
+      padding: 8px 12px;
+      border: 1px solid #c7d7f3;
+      border-radius: 999px;
+      color: var(--blue-dark);
+      background: #eef5ff;
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .progress-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+    .progress-track { height: 7px; flex: 1; overflow: hidden; border-radius: 99px; background: #e8edf3; }
+    .progress-fill { height: 100%; width: 12.5%; border-radius: inherit; background: var(--blue); transition: width .22s ease-out; }
+    .step-count { min-width: 92px; text-align: right; color: var(--muted); font-size: 13px; font-weight: 700; }
+    .wizard-body { overflow-y: auto; padding: 28px; background: var(--soft); }
+    .step { display: none; max-width: 900px; margin: 0 auto; animation: reveal .18s ease-out; }
+    .step.active { display: block; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .step-title { margin: 0; font-size: 24px; line-height: 1.25; }
+    .step-help { margin: 7px 0 22px; color: var(--muted); }
+    .form-panel { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .field { min-width: 0; }
+    label { display: block; margin-bottom: 7px; color: #344155; font-size: 13px; font-weight: 750; }
+    input {
+      width: 100%;
+      min-height: 48px;
+      padding: 11px 13px;
+      border: 1px solid #cbd4df;
+      border-radius: 6px;
+      color: var(--ink);
+      background: white;
+      font-variant-numeric: tabular-nums;
+      outline: none;
+    }
+    input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(22, 93, 204, .14); }
+    input[readonly] { color: #556274; background: #edf1f5; }
+    .reading-row {
+      display: grid;
+      grid-template-columns: 1.1fr .85fr 1fr 1fr;
+      gap: 12px;
+      align-items: end;
+      padding: 14px 0;
+      border-bottom: 1px solid #e7ebf0;
+    }
+    .reading-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .reading-row:first-child { padding-top: 0; }
+    .reading-name b, .reading-name span { display: block; }
+    .reading-name span { margin-top: 2px; color: var(--muted); font-size: 13px; }
+    .calculated { min-height: 48px; display: flex; align-items: center; color: var(--green); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .section-label { margin: 20px 0 10px; font-weight: 800; }
+    .section-label:first-child { margin-top: 0; }
+    .tank-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .tank-table { width: 100%; min-width: 840px; border-collapse: collapse; }
+    .tank-table th, .tank-table td { padding: 13px 12px; border-bottom: 1px solid #e7ebf0; text-align: left; }
+    .tank-table th { color: #4b586b; background: #f2f5f8; font-size: 12px; text-transform: uppercase; }
+    .tank-table tr:last-child td { border-bottom: 0; }
+    .tank-table input { min-width: 108px; }
+    .list-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .list-panel { padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+    .list-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .list-header h3 { margin: 0; font-size: 17px; }
+    .add-button, .remove-button { min-height: 42px; border-radius: 6px; font-weight: 800; }
+    .add-button { padding: 8px 13px; color: var(--blue-dark); border: 1px solid #bcd0ef; background: #eef5ff; }
+    .remove-button { width: 42px; color: #a32929; border: 1px solid #efc7c7; background: #fff5f5; }
+    .line-item { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(110px, .8fr) 42px; gap: 9px; align-items: end; padding: 12px 0; border-top: 1px solid #e7ebf0; }
+    .line-item:first-child { border-top: 0; padding-top: 0; }
+    .review-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .review-item { padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+    .review-item span, .review-item b { display: block; }
+    .review-item span { color: var(--muted); font-size: 13px; }
+    .review-item b { margin-top: 4px; font-size: 16px; }
+    .ready {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border: 1px solid #b7dfce;
+      border-radius: 6px;
+      color: #0c6844;
+      background: #edf9f4;
+      font-weight: 700;
+    }
+    .review-warning { margin-top: 12px; padding: 14px 16px; border: 1px solid #e1bd64; border-radius: 6px; color: #684b06; background: #fff7dc; }
+    .review-warning b, .review-warning span { display: block; }
+    .review-warning span { margin-top: 3px; }
+    .wizard-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 28px;
+      border-top: 1px solid var(--line);
+      background: white;
+    }
+    .button {
+      min-height: 48px;
+      min-width: 128px;
+      padding: 11px 20px;
+      border-radius: 6px;
+      border: 1px solid #c9d2dc;
+      font-weight: 800;
+    }
+    .button:focus-visible { outline: 3px solid rgba(22, 93, 204, .28); outline-offset: 2px; }
+    .button.secondary { color: #364356; background: white; }
+    .button.primary { margin-left: auto; color: white; border-color: var(--blue); background: var(--blue); }
+    .button.primary:hover { background: var(--blue-dark); }
+    .button.submit { display: none; color: white; border-color: var(--green); background: var(--green); }
+    .button[disabled] { visibility: hidden; }
+    .preview-note {
+      position: fixed;
+      right: 14px;
+      bottom: 10px;
+      z-index: 5;
+      color: rgba(255,255,255,.82);
+      font-size: 12px;
+    }
+    @media (max-width: 680px) {
+      .scrim { padding: 0; }
+      .wizard { width: 100%; height: 100dvh; border: 0; border-radius: 0; }
+      .wizard-header { padding: 18px 18px 14px; }
+      .wizard-body { padding: 20px 16px; }
+      .wizard-footer { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+      .draft-badge { display: none; }
+      .field-grid, .review-list { grid-template-columns: 1fr; }
+      .list-grid { grid-template-columns: 1fr; }
+      .reading-row { grid-template-columns: 1fr 1fr; }
+      .reading-name { grid-column: 1 / -1; }
+      .button { min-width: 112px; padding-inline: 16px; }
+      .preview-note { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .step, .progress-fill { animation: none; transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="page-behind" aria-hidden="true"><div class="ghost-header"></div><div class="ghost-card"></div></div>
+  <main class="scrim">
+    <section class="wizard" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+      <header class="wizard-header">
+        <div class="topline">
+          <div>
+            <p class="eyebrow">FuelTech Accounting</p>
+            <h1 id="wizard-title">Complete Shift Report</h1>
+            <p class="shift-meta">Liloan &nbsp;|&nbsp; July 13, 2026 &nbsp;|&nbsp; Shift 1: 4:00 AM to 1:00 PM</p>
+          </div>
+          <span class="draft-badge">Draft saved</span>
+        </div>
+        <div class="progress-row">
+          <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="progress"></div></div>
+          <span class="step-count" id="step-count">Step 1 of 8</span>
+        </div>
+      </header>
+
+      <div class="wizard-body">
+        <section class="step active">
+          <h2 class="step-title">Pump register</h2>
+          <p class="step-help">Enter only the current closing readings. Previous readings are locked in gray.</p>
+          <div class="form-panel">
+            <div class="reading-row">
+              <div class="reading-name"><b>Pump 1</b><span>Premium</span></div>
+              <div class="field"><label>Previous closing</label><input value="409106.57" readonly /></div>
+              <div class="field"><label>Current closing</label><input inputmode="decimal" placeholder="0" /></div>
+              <div><label>Liters sold</label><div class="calculated">0.00 L</div></div>
+            </div>
+            <div class="reading-row">
+              <div class="reading-name"><b>Pump 1</b><span>Regular</span></div>
+              <div class="field"><label>Previous closing</label><input value="326464.82" readonly /></div>
+              <div class="field"><label>Current closing</label><input inputmode="decimal" placeholder="0" /></div>
+              <div><label>Liters sold</label><div class="calculated">0.00 L</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">Underground tank</h2>
+          <p class="step-help">Enter delivery, pull-out, calibration and the current actual dip for Premium, Regular and Diesel.</p>
+          <div class="tank-table-wrap">
+            <table class="tank-table">
+              <thead><tr><th>Product</th><th>Previous shift dip</th><th>Delivery</th><th>Pull-out</th><th>Calibration</th><th>Current actual dip</th><th>Difference</th></tr></thead>
+              <tbody>
+                <tr><td><b>Premium</b></td><td><input value="8420.50" readonly /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="5.00" /></td><td><input inputmode="decimal" value="8395.50" /></td><td><b class="calculated">0.00 L</b></td></tr>
+                <tr><td><b>Regular</b></td><td><input value="10750.25" readonly /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="10725.75" /></td><td><b class="calculated">0.00 L</b></td></tr>
+                <tr><td><b>Diesel</b></td><td><input value="12340.75" readonly /></td><td><input inputmode="decimal" value="5000.00" /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="0" /></td><td><input inputmode="decimal" value="17030.00" /></td><td><b class="calculated">0.00 L</b></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">Deductions</h2>
+          <p class="step-help">Enter payments and non-cash items for this shift only.</p>
+          <div class="form-panel field-grid">
+            <div class="field"><label>FuelTech Pay Total</label><input inputmode="decimal" value="2500.00" /></div>
+            <div class="field"><label>Cash Redemption</label><input inputmode="decimal" value="0" /></div>
+            <div class="field"><label>Fuel Redemption</label><input inputmode="decimal" value="350.00" /></div>
+            <div class="field"><label>Points Issued</label><input inputmode="decimal" value="120" /></div>
+            <div class="field"><label>Points Withdrawn</label><input value="PHP 350.00" readonly /></div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">PO accounts and purchase requests</h2>
+          <p class="step-help">Add only items used during this shift. Leave a section empty if there are none.</p>
+          <div class="list-grid">
+            <div class="list-panel">
+              <div class="list-header"><h3>PO Accounts</h3><button class="add-button" type="button" data-add="po">+ Add PO</button></div>
+              <div id="po-list">
+                <div class="line-item"><div class="field"><label>Account</label><input value="Municipal vehicle" /></div><div class="field"><label>Amount</label><input inputmode="decimal" value="1500.00" /></div><button class="remove-button" type="button" aria-label="Remove PO">x</button></div>
+              </div>
+            </div>
+            <div class="list-panel">
+              <div class="list-header"><h3>Purchase Requests</h3><button class="add-button" type="button" data-add="pr">+ Add Request</button></div>
+              <div id="pr-list">
+                <div class="line-item"><div class="field"><label>Particular</label><input value="Station supplies" /></div><div class="field"><label>Amount</label><input inputmode="decimal" value="500.00" /></div><button class="remove-button" type="button" aria-label="Remove purchase request">x</button></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">Oil sales and Coke count</h2>
+          <p class="step-help">Enter oil sales and the Coke ending count. Coke beginning is carried from the previous shift.</p>
+          <div class="form-panel field-grid">
+            <div class="field"><label>Oil sales</label><input inputmode="decimal" value="850.00" /></div>
+            <div class="field"><label>Coke beginning</label><input value="48" readonly /></div>
+            <div class="field"><label>Coke ending</label><input inputmode="numeric" value="45" /></div>
+            <div class="field"><label>Coke used</label><input value="3 pcs" readonly /></div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">End-of-shift cash count</h2>
+          <p class="step-help">Count the physical cash and enter the amount. Expected cash and differences are visible only to admin.</p>
+          <div class="form-panel">
+            <div class="field"><label>Physical cash counted</label><input inputmode="decimal" value="28450.00" /></div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">Cashier information</h2>
+          <p class="step-help">Enter the name of the cashier responsible for this shift report.</p>
+          <div class="form-panel">
+            <div class="field"><label>Cashier name</label><input value="Juan Dela Cruz" /></div>
+          </div>
+        </section>
+
+        <section class="step">
+          <h2 class="step-title">Review and submit</h2>
+          <p class="step-help">Check the summary. Use Back if something needs to be corrected.</p>
+          <div class="review-list">
+            <div class="review-item"><span>Pump 1 - Premium</span><b>20.00 L</b></div>
+            <div class="review-item"><span>Pump 1 - Regular</span><b>24.50 L</b></div>
+            <div class="review-item"><span>Pump 2 - Diesel</span><b>310.75 L</b></div>
+            <div class="review-item"><span>Total liters sold</span><b>355.25 L</b></div>
+            <div class="review-item"><span>FuelTech Pay</span><b>PHP 2,500.00</b></div>
+            <div class="review-item"><span>PO and PR total</span><b>PHP 2,000.00</b></div>
+            <div class="review-item"><span>Physical cash counted</span><b>PHP 28,450.00</b></div>
+          </div>
+          <div class="review-warning"><b>Check this reading</b><span>Pump 2 - Diesel is unusually high at 310.75 L. Go back and confirm the closing reading before submitting.</span></div>
+          <div class="ready">All required entries are complete. The report is ready to submit.</div>
+        </section>
+      </div>
+
+      <footer class="wizard-footer">
+        <button class="button secondary" id="back" type="button" disabled>Back</button>
+        <button class="button primary" id="next" type="button">Next</button>
+        <button class="button submit" id="submit" type="button">Submit Shift Report</button>
+      </footer>
+    </section>
+  </main>
+  <div class="preview-note">Demo preview only - it cannot open, edit, or lock a live report</div>
+
+  <script>
+    const steps = [...document.querySelectorAll('.step')];
+    const progress = document.querySelector('#progress');
+    const count = document.querySelector('#step-count');
+    const back = document.querySelector('#back');
+    const next = document.querySelector('#next');
+    const submit = document.querySelector('#submit');
+    let current = 0;
+
+    function showStep(index) {
+      current = Math.max(0, Math.min(index, steps.length - 1));
+      steps.forEach((step, position) => step.classList.toggle('active', position === current));
+      progress.style.width = `${((current + 1) / steps.length) * 100}%`;
+      count.textContent = `Step ${current + 1} of ${steps.length}`;
+      back.disabled = current === 0;
+      next.style.display = current === steps.length - 1 ? 'none' : 'block';
+      submit.style.display = current === steps.length - 1 ? 'block' : 'none';
+      document.querySelector('.wizard-body').scrollTop = 0;
+      steps[current].querySelector('input:not([readonly])')?.focus();
+    }
+
+    back.addEventListener('click', () => showStep(current - 1));
+    next.addEventListener('click', () => showStep(current + 1));
+    submit.addEventListener('click', () => alert('Preview only: no report was submitted and no live data was changed.'));
+    document.addEventListener('click', (event) => {
+      const addType = event.target.dataset.add;
+      if (addType) {
+        const isPo = addType === 'po';
+        const list = document.querySelector(isPo ? '#po-list' : '#pr-list');
+        const row = document.createElement('div');
+        row.className = 'line-item';
+        row.innerHTML = `<div class="field"><label>${isPo ? 'Account' : 'Particular'}</label><input /></div><div class="field"><label>Amount</label><input inputmode="decimal" value="0" /></div><button class="remove-button" type="button" aria-label="Remove row">x</button>`;
+        list.appendChild(row);
+        row.querySelector('input').focus();
+      }
+      if (event.target.classList.contains('remove-button')) event.target.closest('.line-item').remove();
+    });
+    showStep(0);
+  </script>
+</body>
+</html>

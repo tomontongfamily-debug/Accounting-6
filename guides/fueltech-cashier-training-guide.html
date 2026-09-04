@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cashier Training Guide</title>
+  <style>
+  :root {
+    --ink:#16202c; --muted:#5c6a7a; --line:#d8e0ea; --soft:#f6f8fb;
+    --blue:#1769e0; --blue2:#eaf2ff; --green:#0c8a4a; --green2:#e9f8f0;
+    --yellow:#8a5a00; --yellow2:#fff5d6; --red:#b42318; --red2:#ffedeb;
+    --dark:#111827;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#edf1f6; color:var(--ink); font-family:Arial,Helvetica,sans-serif; line-height:1.4; }
+  .book { width:min(1060px, calc(100% - 32px)); margin:22px auto; background:white; border:1px solid var(--line); box-shadow:0 16px 42px rgba(20,33,51,.12); }
+  .cover { padding:34px; background:linear-gradient(135deg,rgba(23,105,224,.11),transparent 42%),linear-gradient(315deg,rgba(12,138,74,.09),transparent 36%),white; border-bottom:1px solid var(--line); }
+  .content { padding:28px 34px 34px; }
+  .eyebrow { display:inline-flex; width:fit-content; padding:7px 11px; border-radius:999px; background:var(--dark); color:white; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+  h1,h2,h3,h4 { margin:0; line-height:1.12; }
+  h1 { font-size:42px; margin-top:16px; max-width:820px; }
+  h2 { font-size:25px; margin:26px 0 12px; padding-top:4px; }
+  h3 { font-size:18px; margin:0 0 7px; }
+  h4 { font-size:15px; margin:10px 0 4px; }
+  p { margin:0 0 8px; }
+  ul,ol { margin:7px 0 0 20px; padding:0; }
+  li { margin:3px 0; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin:8px 0 12px; break-inside:avoid; }
+  th { background:#eff4fa; color:#344054; text-align:left; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; }
+  th,td { border:1px solid var(--line); padding:7px; vertical-align:top; }
+  tr:nth-child(even) td { background:#fbfdff; }
+  .lead { color:var(--muted); font-size:17px; max-width:840px; margin-top:10px; }
+  .grid { display:grid; gap:10px; }
+  .two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .four { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .card, .callout, .screen, .step, .sticker { break-inside:avoid; }
+  .card { border:1px solid var(--line); background:var(--soft); border-radius:10px; padding:11px; }
+  .card strong { display:block; font-size:17px; margin-top:2px; }
+  .label { display:block; color:var(--muted); font-size:10.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+  .note { color:var(--muted); font-size:12px; }
+  .callout { border-left:5px solid var(--blue); background:var(--blue2); padding:11px 13px; border-radius:9px; margin:12px 0; }
+  .good { border-color:#9bd8b8; background:var(--green2); }
+  .warn { border-color:#f0cf74; background:var(--yellow2); }
+  .bad { border-color:#f4aaa5; background:var(--red2); }
+  .screen { border:2px solid #151b23; border-radius:14px; background:#fbfcfe; padding:12px; margin:8px 0 12px; box-shadow:inset 0 0 0 1px #edf1f6; }
+  .screen-top { display:flex; justify-content:space-between; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--line); margin-bottom:8px; font-weight:900; }
+  .pill { display:inline-flex; padding:4px 8px; border-radius:999px; background:#edf2f7; color:#344054; font-size:10.5px; font-weight:800; white-space:nowrap; }
+  .fake-field { min-height:40px; border:1px solid #cfd8e3; border-radius:8px; background:white; padding:7px 9px; }
+  .fake-field b { display:block; font-size:13px; }
+  .input { border:2px solid #8db0e8; background:white; border-radius:7px; padding:7px; font-weight:800; }
+  .read { background:#edf1f5; color:#4b5563; border:1px solid #cdd5df; border-radius:7px; padding:7px; font-weight:800; }
+  .button { display:inline-flex; align-items:center; justify-content:center; min-height:34px; border-radius:8px; padding:7px 11px; font-weight:900; background:var(--blue); color:white; margin-top:6px; }
+  .button.green { background:var(--green); } .button.gray { background:#64748b; }
+  .steps { counter-reset:step; display:grid; gap:9px; }
+  .step { display:grid; grid-template-columns:34px 1fr; gap:10px; border:1px solid var(--line); border-radius:12px; padding:11px; background:white; }
+  .step:before { counter-increment:step; content:counter(step); width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:var(--blue); color:white; font-weight:900; }
+  .do-dont { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .workflow { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin:10px 0 12px; }
+  .flow { border:1px solid var(--line); border-radius:10px; padding:9px; background:white; min-height:74px; }
+  .flow b { display:block; color:var(--blue); font-size:13px; margin-bottom:3px; }
+  .flow span { color:var(--muted); font-size:11.5px; }
+  .legend { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:10px 0 12px; }
+  .legend-item { border:1px solid var(--line); border-radius:10px; padding:9px; background:white; }
+  .legend-item b { display:block; font-size:13px; }
+  .mini { font-size:11.5px; color:var(--muted); }
+  .checklist { columns:2; column-gap:24px; }
+  .checklist li { break-inside:avoid; }
+  .formula { font-family:Consolas,Monaco,monospace; font-weight:900; background:#f1f5f9; padding:2px 5px; border-radius:5px; }
+  .sticker-sheet { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+  .sticker { border:2px dashed #95a3b4; border-radius:12px; padding:9px; min-height:106px; }
+  .footer { color:var(--muted); font-size:11px; display:flex; justify-content:space-between; gap:12px; border-top:1px solid var(--line); padding-top:10px; margin-top:18px; }
+  .break-before { break-before:page; }
+  .keep { break-inside:avoid; }
+  @page { size:A4; margin:9mm; }
+  @media print {
+    body { background:white; }
+    .book { width:100%; margin:0; border:none; box-shadow:none; }
+    .cover { padding:7mm 7mm 5mm; }
+    .content { padding:5mm 7mm 7mm; }
+    h2 { margin-top:16px; }
+    .workflow { grid-template-columns:repeat(5,minmax(0,1fr)); }
+    .footer { display:none; }
+    a { color:inherit; text-decoration:none; }
+  }
+</style>
+</head>
+<body>
+  <main class="book">
+    <section class="cover">
+      <span class="eyebrow">FuelTech Accounting</span>
+      <h1>Cashier Training Guide</h1>
+      <p class="lead">Detailed cashier guidebook with examples, screen-style pictures, what to input, what to avoid, and final checks before saving or submitting.</p>
+      <div class="grid four" style="margin-top:18px">
+        <div class="card"><span class="label">Shift 1</span><strong>4:00 AM - 1:00 PM</strong></div>
+        <div class="card"><span class="label">Shift 2</span><strong>1:00 PM - 10:00 PM</strong></div>
+        <div class="card"><span class="label">Shift 3</span><strong>10:00 PM - 4:00 AM</strong></div>
+        <div class="card"><span class="label">Website</span><strong>fueltechphil.vercel.app</strong></div>
+      </div>
+      <div class="callout warn"><b>Training rule:</b> Do not guess. If branch, date, shift, pump number, product, price, or deposit coverage looks wrong, stop and ask before pressing confirm.</div>
+    </section>
+    <section class="content">
+      
+  <h2>1. Cashier Job Summary</h2>
+  <div class="grid three">
+    <div class="card"><span class="label">Your job</span><strong>Record the shift</strong><p class="note">Pump readings, tank readings, deductions, PO/PR, oil, Coke, then submit.</p></div>
+    <div class="card"><span class="label">Your link</span><strong>/cashier</strong><p class="note">Use cashier login only. Do not use manager/admin login.</p></div>
+    <div class="card"><span class="label">Final action</span><strong>Confirm Report</strong><p class="note">Submit only when every number is checked.</p></div>
+  </div>
+  <div class="workflow">
+    <div class="flow"><b>1. Login</b><span>Pick branch and enter cashier PIN.</span></div>
+    <div class="flow"><b>2. Check</b><span>Branch, date, shift, cashier name.</span></div>
+    <div class="flow"><b>3. Input</b><span>Pumps, tank, deductions, oil, Coke.</span></div>
+    <div class="flow"><b>4. Review</b><span>Fix warnings before confirming.</span></div>
+    <div class="flow"><b>5. Submit</b><span>Confirm report and wait for saved online.</span></div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><b>Gray box</b><span class="mini">Read-only. Do not type here.</span></div>
+    <div class="legend-item"><b>White/blue input</b><span class="mini">Type the number from your record.</span></div>
+    <div class="legend-item"><b>Green button</b><span class="mini">Save or confirm after checking.</span></div>
+    <div class="legend-item"><b>Yellow/red warning</b><span class="mini">Stop and fix before submitting.</span></div>
+  </div>
+  <div class="callout"><b>Cashier boundary:</b> Cashier records the shift. Cashier does not change fuel prices, approve deposits, verify banks, or use manager/admin access.</div>
+
+  <h2>2. Login And First Screen Check</h2>
+  <div class="steps">
+    <div class="step"><div><h3>Open cashier page</h3><p>Open <b>https://fueltechphil.vercel.app/cashier</b>, choose the correct branch, enter cashier PIN, then press <b>Proceed</b>.</p>
+      <div class="screen"><div class="screen-top">Cashier Branch Access <span class="pill">Login</span></div><div class="grid two"><div class="fake-field"><span class="label">Selected Branch</span><b>Liloan</b></div><div class="fake-field"><span class="label">Cashier PIN</span><b>******</b></div></div><span class="button">Proceed</span></div></div></div>
+    <div class="step"><div><h3>Check branch, date, shift, and status</h3><p>Do this before typing anything. If the report date or shift is wrong, do not continue.</p>
+      <div class="screen"><div class="screen-top">Report Information <span class="pill">Check first</span></div><div class="grid four"><div class="fake-field"><span class="label">Branch</span><b>Liloan</b></div><div class="fake-field"><span class="label">Report Date</span><b>2026-07-09</b></div><div class="fake-field"><span class="label">Active Shift</span><b>Shift 1 - 4 AM to 1 PM</b></div><div class="fake-field"><span class="label">Report Status</span><b>Draft</b></div></div></div></div></div>
+    <div class="step"><div><h3>Enter cashier name</h3><p>Use the real cashier/teller name. This is used for checking who submitted the shift.</p></div></div>
+  </div>
+  <div class="callout warn"><b>If the page opens on the wrong branch or wrong shift:</b> stop first. Do not type pump readings into the wrong report. Ask manager/admin before continuing.</div>
+
+  <h2>3. If First Opening Setup Appears</h2>
+  <p>First Opening Setup appears only when the system has no previous confirmed readings. This is the starting point of the station. Enter opening numbers carefully because future shifts depend on them.</p>
+  <div class="screen">
+    <div class="screen-top">First Opening Setup <span class="pill">Only when starting from zero</span></div>
+    <table><tr><th>Pump</th><th>Nozzle</th><th>First Opening Pump Reading</th><th>Where to get it</th></tr>
+      <tr><td>Pump 1</td><td>Premium</td><td><div class="input">408967.16</div></td><td>Copy exact register number from pump</td></tr>
+      <tr><td>Pump 1</td><td>Regular</td><td><div class="input">325929.76</div></td><td>Copy exact register number from pump</td></tr>
+      <tr><td>Pump 1</td><td>Diesel</td><td><div class="input">212631.95</div></td><td>Copy exact register number from pump</td></tr>
+    </table>
+    <div class="grid three"><div class="fake-field"><span class="label">Underground Tank Opening</span><b>Tank inventory in liters</b></div><div class="fake-field"><span class="label">Coke Beginning</span><b>Starting Coke count</b></div><div><span class="button green">Confirm First Opening</span></div></div>
+  </div>
+  <div class="do-dont">
+    <div class="card good"><h3>Do</h3><ul><li>Copy the exact opening pump register.</li><li>Use decimals when shown, like <b>408967.16</b>.</li><li>Confirm only when all pumps/tanks are correct.</li></ul></div>
+    <div class="card bad"><h3>Do Not</h3><ul><li>Do not guess opening numbers.</li><li>Do not switch Premium, Regular, Diesel.</li><li>Do not put tank dip numbers into pump readings.</li></ul></div>
+  </div>
+
+  <h2>4. Official Pump Reading Register</h2>
+  <p>This is the main sales source. The system computes liters sold from pump register readings.</p>
+  <div class="screen">
+    <div class="screen-top">Official Pump Reading Register <span class="pill">Most important cashier section</span></div>
+    <table><tr><th>Pump</th><th>Nozzle</th><th>Previous Shift Closing</th><th>Current Closing</th><th>Liters Sold</th></tr>
+      <tr><td>Pump 1</td><td>Premium</td><td><div class="read">408967.16</div></td><td><div class="input">409019.92</div></td><td><b>52.76 L</b></td></tr>
+      <tr><td>Pump 1</td><td>Regular</td><td><div class="read">325929.76</div></td><td><div class="input">326030.05</div></td><td><b>100.29 L</b></td></tr>
+      <tr><td>Pump 1</td><td>Diesel</td><td><div class="read">212631.95</div></td><td><div class="input">212631.95</div></td><td><b>0 L</b></td></tr>
+    </table>
+  </div>
+  <div class="grid two">
+    <div class="card"><span class="label">Before number</span><strong>Previous Shift Closing</strong><p class="note">Gray/read-only. This is the last confirmed ending register from the previous shift.</p></div>
+    <div class="card"><span class="label">After number</span><strong>Current Closing</strong><p class="note">Type the ending register reading for this shift. This is the number from the pump now.</p></div>
+  </div>
+  <div class="callout"><b>Cashier does not need to calculate liters.</b> Just copy the gray Previous Shift Closing, type the correct Current Closing from the pump register, and let the system calculate Liters Sold automatically.</div>
+  <div class="callout warn"><b>No gasoline / closed station:</b> If there were no sales, type the same number in Current Closing as Previous Shift Closing. Example: before 1000, after 1000 = 0 L. This is allowed.</div>
+  <div class="callout bad"><b>Never type lower than previous closing.</b> Example: before 1000, after 990 is wrong because it creates negative liters.</div>
+
+  <h2>5. Product And Pump Rules</h2>
+  <table><tr><th>Check</th><th>Correct</th><th>Wrong</th></tr>
+    <tr><td>Product</td><td>Premium reading goes to Premium row</td><td>Putting Premium reading in Regular row</td></tr>
+    <tr><td>Pump number</td><td>Pump 1 reading goes to Pump 1 row</td><td>Typing Pump 2 reading in Pump 1 row</td></tr>
+    <tr><td>Decimals</td><td>Type 409019.92 if pump shows decimals</td><td>Typing 409019 or 40901992 by mistake</td></tr>
+    <tr><td>Zero sales</td><td>Same previous/current number</td><td>Leaving it blank when no sales</td></tr>
+  </table>
+  <div class="callout"><b>Decimal rule:</b> Type decimals exactly as shown on the pump. If the pump shows <b>409019.92</b>, type <b>409019.92</b>. Do not remove the decimal point.</div>
+
+  <h2>6. If Fuel Price Changes During Shift</h2>
+  <p>The manager handles the price-change entry in the manager page. The cashier's job is to help record the pump register reading at the exact time the price changed.</p>
+  <table><tr><th>Situation</th><th>Cashier should do</th><th>Cashier should not do</th></tr>
+    <tr><td>Fuel price changes during the shift</td><td>Write down the exact time and pump register reading for each affected product/nozzle</td><td>Do not change the manager price in the app</td></tr>
+    <tr><td>Manager asks for price-change reading</td><td>Give the pump reading at the price-change time, not the final closing reading</td><td>Do not guess the reading later</td></tr>
+    <tr><td>No price change during shift</td><td>Do nothing in this area; continue normal current closing entry</td><td>Do not invent a price-change entry</td></tr>
+  </table>
+  <div class="callout warn"><b>Example:</b> If Regular price changed at 1:30 PM, cashier should record the Regular pump register reading at 1:30 PM. The manager uses that reading to split sales before and after the new price.</div>
+
+  <h2>7. Underground Tank</h2>
+  <p>The underground tank is a reference check. Official fuel sales come from pump readings. The tank section helps detect inventory differences.</p>
+  <div class="screen">
+    <div class="screen-top">Underground Tank <span class="pill">Inventory reference</span></div>
+    <table><tr><th>Field</th><th>What to input</th><th>Example</th><th>Notes</th></tr>
+      <tr><td>Previous Shift Dip</td><td>Read-only</td><td>3500 L</td><td>Comes from last shift</td></tr>
+      <tr><td>Delivery</td><td>Liters delivered into tank</td><td>2000</td><td>Only if delivery happened</td></tr>
+      <tr><td>Pull-Out</td><td>Liters removed from tank</td><td>0</td><td>Only if pull-out happened</td></tr>
+      <tr><td>Calibration</td><td>Liters used for calibration and returned</td><td>10</td><td>Reduces official sales but not tank inventory</td></tr>
+      <tr><td>Current Actual Dip</td><td>Actual dip at shift end</td><td>6190</td><td>Copy from dip measurement</td></tr>
+    </table>
+  </div>
+
+  <h2>8. Deductions, FuelTech Pay, PO/PR</h2>
+  <div class="grid two">
+    <div class="card"><h3>FuelTech Pay Total</h3><p>Enter the total non-cash payment amount together: card, GCash, Paymaya, and similar payments.</p></div>
+    <div class="card"><h3>Points Withdrawn</h3><p>This is based on Cash Redemption + Fuel Redemption. Do not manually invent this number if shown as read-only.</p></div>
+  </div>
+  <table><tr><th>Section</th><th>What cashier enters</th><th>What not to do</th></tr>
+    <tr><td>Deductions</td><td>FuelTech Pay Total and valid deduction amounts</td><td>Do not put bank deposit here</td></tr>
+    <tr><td>PO Accounts</td><td>Account/customer name and amount</td><td>Do not duplicate the same PO</td></tr>
+    <tr><td>Purchase Requests</td><td>Particular/item and amount</td><td>Do not enter unapproved expenses</td></tr>
+    <tr><td>Oil Sales</td><td>Total oil sales amount</td><td>Do not mix oil with fuel sales</td></tr>
+    <tr><td>Coke Ending</td><td>Ending Coke count</td><td>Do not edit Coke Beginning</td></tr>
+  </table>
+  <div class="grid two">
+    <div class="card good"><h3>Cash redemption / fuel redemption</h3><p>Enter redemption only in the correct redemption fields if they appear in the app. Points Withdrawn is based on these redemptions.</p></div>
+    <div class="card warn"><h3>Bank deposit is not cashier input</h3><p>Do not put bank deposit amount in deductions, PO, PR, or FuelTech Pay. Manager handles bank deposits.</p></div>
+  </div>
+  <div class="screen">
+    <div class="screen-top">End-of-Shift Cash Count <span class="pill">Physical counted cash</span></div>
+    <div class="grid four">
+      <div class="fake-field"><span class="label">End-of-Shift Cash Count</span><b>Cashier types physical cash counted</b></div>
+      <div class="fake-field"><span class="label">Expected Cash On Hand</span><b>System calculated</b></div>
+      <div class="fake-field"><span class="label">Actual Cash Counted</span><b>Cashier count</b></div>
+      <div class="fake-field"><span class="label">Actual Cash Difference</span><b>Actual minus expected</b></div>
+    </div>
+    <div class="callout warn"><b>Important:</b> End-of-Shift Cash Count does not replace expected cash and does not replace bank deposit. It only checks physical counted cash against the system expected cash on hand.</div>
+  </div>
+
+  <h2>9. Request Date Correction</h2>
+  <p>Use this if the cashier needs to correct a past date or shift. It opens only after admin approval.</p>
+  <div class="steps"><div class="step"><div><h3>Select correct report date and shift</h3><p>Choose the old date/shift that needs correction.</p></div></div><div class="step"><div><h3>Type reason</h3><p>Example: "Wrong Regular reading typed in Shift 2."</p></div></div><div class="step"><div><h3>Press Send Request to Admin</h3><p>Wait for admin approval before editing that report.</p></div></div></div>
+  <div class="callout bad"><b>Do not use correction request to skip today's report.</b> It is only for fixing a real wrong date/shift after admin approval.</div>
+
+  <h2>10. Submit Report And Missing Report Warning</h2>
+  <div class="screen">
+    <div class="screen-top">Confirm Report Popup <span class="pill">Final check</span></div>
+    <ul><li>Check branch and shift.</li><li>Check total liters.</li><li>If unsure, press <b>Go Back</b>.</li><li>If correct, press <b>Confirm Report</b>.</li></ul>
+    <span class="button gray">Go Back</span> <span class="button green">Confirm Report</span>
+  </div>
+  <div class="callout bad"><b>Submitted means sent to admin.</b> Do not confirm if the report is not complete.</div>
+  <div class="callout warn"><b>After confirming:</b> Keep the page open until the app says it is saved online. Do not close the browser immediately after pressing Confirm Report.</div>
+  <div class="screen">
+    <div class="screen-top">Missing Previous Shift Warning <span class="pill">What cashier may see</span></div>
+    <div class="callout warn" style="margin-top:0"><b>Previous shift is missing.</b><br>Please complete <b>2026-06-29 - Shift 3</b> first so pump readings stay correct.</div>
+    <div class="grid two">
+      <div class="fake-field"><span class="label">Missing report</span><b>June 29, 2026 - Shift 3</b><p class="note">This is the exact report that must be completed first.</p></div>
+      <div class="fake-field"><span class="label">Current report waiting</span><b>June 30, 2026 - Shift 1</b><p class="note">Do not continue this one until the missing shift is submitted.</p></div>
+    </div>
+    <span class="button">Go to Missing Shift</span>
+  </div>
+  <div class="screen">
+    <div class="screen-top">After Pressing Go to Missing Shift <span class="pill">What to input</span></div>
+    <div class="grid four">
+      <div class="fake-field"><span class="label">Branch</span><b>Liloan</b></div>
+      <div class="fake-field"><span class="label">Report Date</span><b>2026-06-29</b></div>
+      <div class="fake-field"><span class="label">Active Shift</span><b>Shift 3</b></div>
+      <div class="fake-field"><span class="label">Status</span><b>Draft</b></div>
+    </div>
+    <table><tr><th>What cashier sees</th><th>What cashier inputs</th><th>Reminder</th></tr>
+      <tr><td><div class="read">Previous Shift Closing</div></td><td><div class="input">Current Closing from missing shift paper/register</div></td><td>Do not type today's reading here.</td></tr>
+      <tr><td><div class="read">Correct missing date and shift</div></td><td>Cashier name, pump readings, underground tank, deductions, oil, Coke</td><td>Use the records for that missing shift only.</td></tr>
+      <tr><td>Confirm Report popup</td><td>Press Confirm Report only after checking everything</td><td>Then continue the next shift/report.</td></tr>
+    </table>
+  </div>
+  <div class="callout bad"><b>Important:</b> The Go to Missing Shift button is not for changing any random report. It opens the specific missing shift needed so the next pump beginning numbers stay correct.</div>
+
+  <h2>11. Troubleshooting</h2>
+  <table><tr><th>Warning/problem</th><th>Meaning</th><th>Cashier action</th></tr>
+    <tr><td>Previous shift is missing</td><td>The shift before this was not submitted</td><td>Press Go to Missing Shift and complete it first</td></tr>
+    <tr><td>Opening is missing</td><td>No previous reading to compare</td><td>Complete first opening or missing previous report</td></tr>
+    <tr><td>Closing lower than opening</td><td>Negative liters</td><td>Check typed number, pump, and product</td></tr>
+    <tr><td>Pump price missing</td><td>There are sold liters but no price</td><td>Tell manager to enter fuel price</td></tr>
+    <tr><td>Not saved online yet</td><td>Data is still syncing</td><td>Keep page open until saved online</td></tr>
+    <tr><td>Submitted button already green</td><td>This report may already be submitted</td><td>Do not submit again unless admin instructed you</td></tr>
+    <tr><td>Number looks too high</td><td>Pump, product, or decimal may be wrong</td><td>Compare with paper/register before confirming</td></tr>
+  </table>
+
+  <h2>12. Final Cashier Checklist</h2>
+  <ul class="checklist"><li>Correct branch</li><li>Correct date</li><li>Correct shift</li><li>Cashier name filled</li><li>Pump readings copied exactly</li><li>Premium/Regular/Diesel not switched</li><li>Decimals included</li><li>Tank dip entered</li><li>Delivery entered if any</li><li>Calibration entered if any</li><li>FuelTech Pay entered</li><li>PO/PR entered if any</li><li>Oil sales entered if any</li><li>Coke ending entered</li><li>End-of-shift cash counted</li><li>Warnings fixed</li><li>Confirm popup checked</li><li>Page kept open until saved online</li></ul>
+
+  <h2>Sticker Reminders - Cashier</h2>
+  <div class="sticker-sheet"><div class="sticker"><h3>Before Typing</h3><ul><li>Check branch.</li><li>Check date.</li><li>Check shift.</li><li>Enter cashier name.</li></ul></div><div class="sticker"><h3>Pump Rule</h3><ul><li>Gray = previous closing.</li><li>White input = current closing.</li><li>Current must not be lower.</li></ul></div><div class="sticker"><h3>Cash Count</h3><ul><li>Count physical cash.</li><li>Type end-of-shift cash count.</li><li>It does not replace bank deposit.</li></ul></div><div class="sticker"><h3>Submit</h3><ul><li>Read popup.</li><li>If unsure, Go Back.</li><li>Confirm only when finished.</li></ul></div></div>
+
+      <div class="footer"><span>FuelTech Accounting</span><span>cashier guidebook</span></div>
+    </section>
+  </main>
+</body>
+</html>

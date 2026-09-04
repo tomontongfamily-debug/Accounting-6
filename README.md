@@ -4,9 +4,9 @@ Stable no-Tailwind React/Vite app for station reporting.
 
 ## Included updates
 
-- Each daily report has a Confirm Report button.
+- Each daily report has a Submit Shift Report button.
 - Cashier and Manager have separate branch PINs.
-- Admin can access all stations without PIN.
+- Admin access is protected by the configured production PIN.
 - Official wording, no demo reminder text.
 - Fuel price setup is daily, not per shift.
 - Manager pricing carries forward to the next day until changed.
@@ -14,25 +14,9 @@ Stable no-Tailwind React/Vite app for station reporting.
 - Admin has bank verification and Excel-style monitoring.
 - Branch pump layouts follow the requested pump/nozzle setup.
 
-## Branch PINs
+## PINs
 
-Cashier PINs:
-- Mabolo: 1101
-- Arpili: 1102
-- Liloan: 1103
-- Pondol: 1104
-- Barili: 1105
-- Moalboal: 1106
-
-Manager PINs:
-- Mabolo: 2101
-- Arpili: 2102
-- Liloan: 2103
-- Pondol: 2104
-- Barili: 2105
-- Moalboal: 2106
-
-Admin: no PIN.
+PINs are configured only in Vercel environment variables. Do not store live cashier, manager, or admin PINs in project files.
 
 ## Vercel settings
 
@@ -46,9 +30,9 @@ Output Directory: dist
 ## V2 admin/manager/cashier changes
 
 - Admin side keeps Admin View, Bank Verification, Daily Station Summary, and Summary only.
-- Admin does not have Confirm Report.
+- Admin does not submit cashier reports.
 - Admin does not show Excel Spreadsheet Monitoring, Calendar Summary, or Fuel and Tank Registers.
-- Manager does not have Confirm Report.
+- Manager does not submit cashier reports.
 - Manager only confirms Daily Prices.
 - Manager report date and summary range were removed from the top header.
 - Manager can change date only inside Daily Fuel Price Setup.
@@ -81,7 +65,7 @@ Output Directory: dist
 
 ## V5 admin summary and PIN update
 
-- Admin now requires PIN: fueltechphils2026.
+- Admin now requires a PIN configured in Vercel environment variables.
 - Admin Summary is now a larger period-based summary.
 - Summary has separate Start Date and End Date controls.
 - Summary totals include fuel sales, oil sales, gross sales, deductions, expected cash, bank deposit, confirmed bank, pending verification, PO, PR, cash variance, pump variance, tank variance, liters, and Coke count.
