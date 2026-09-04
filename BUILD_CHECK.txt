@@ -22,7 +22,7 @@ Validation passed for V4 tank inventory update.
 - Tank variance still computes from previous shift dip plus deliveries less sales/pull-out/calibration.
 
 Validation passed for V5 admin summary and PIN update.
-- Admin PIN added: fueltechphils2026.
+- Admin PIN moved to Vercel environment variables.
 - Admin Summary has editable start and end dates.
 - Admin Summary is a larger period summary.
 - Admin View, Bank Verification, and Daily Station Summary retained.

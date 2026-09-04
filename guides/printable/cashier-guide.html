@@ -1,0 +1,630 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #dfe7ee; font-family: Arial, Helvetica, sans-serif; color: #17212b; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; }
+  .page { --accent:#1267d6; --soft:#eaf3ff; width:1240px; height:1754px; background:#fff; padding:54px 58px 42px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 12px 36px #12203330; page-break-after:always; }
+  .page.green { --accent:#087f5b; --soft:#e9f8f2; }
+  header { display:flex; align-items:flex-start; justify-content:space-between; border-bottom:5px solid var(--accent); padding-bottom:24px; margin-bottom:28px; }
+  .brand { display:inline-block; background:#17212b; color:#fff; font-size:16px; font-weight:800; letter-spacing:1.5px; padding:9px 14px; border-radius:5px; }
+  h1 { font-size:45px; line-height:1.05; margin:16px 0 8px; letter-spacing:0; }
+  header p { margin:0; font-size:20px; color:#526171; }
+  .page-no { color:var(--accent); font-size:16px; font-weight:800; text-align:right; letter-spacing:1px; }
+  .page-no b { display:block; font-size:35px; margin-top:4px; letter-spacing:0; }
+  main { flex:1; }
+  h2 { font-size:27px; line-height:1.15; margin:24px 0 14px; color:#111b25; }
+  h3 { font-size:20px; margin:0 0 5px; }
+  p { font-size:17px; line-height:1.42; margin:0; }
+  footer { border-top:2px solid #dce4eb; padding-top:14px; display:flex; justify-content:space-between; font-size:14px; color:#647384; }
+  .hero-grid, .two { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  .three { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
+  .four { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; }
+  .equal > div { min-width:0; }
+  .shift-grid { display:grid; gap:12px; }
+  .shift-card { border:2px solid #ccd8e3; padding:18px; border-radius:8px; display:grid; gap:5px; }
+  .shift-card.active { border:4px solid var(--accent); background:var(--soft); }
+  .shift-card small { color:var(--accent); font-weight:800; }
+  .shift-card b { font-size:20px; }
+  .shift-card span { color:#5f6d7a; font-size:15px; }
+  .screen { border:2px solid #b8c5d1; border-radius:8px; overflow:hidden; background:#fbfcfe; margin-bottom:14px; }
+  .screen-head { background:#17212b; color:#fff; padding:13px 16px; display:flex; align-items:center; justify-content:space-between; font-size:18px; }
+  .screen > .field, .screen > .two, .screen > .three, .screen > .four, .screen > table, .screen > .mini-cards, .screen > .review, .screen > .screen-copy { margin:13px 15px; }
+  .field { min-height:64px; border:2px solid #d6e0e8; border-radius:7px; background:#fff; padding:10px 13px; display:flex; flex-direction:column; justify-content:center; }
+  .field span { font-size:13px; text-transform:uppercase; color:#627282; font-weight:800; margin-bottom:5px; }
+  .field b { font-size:18px; }
+  .field.ghost, .readonly { background:#edf1f4 !important; color:#50606f; }
+  .button { margin:13px 15px; background:var(--accent); color:#fff; font-size:17px; font-weight:800; padding:13px 20px; border-radius:6px; text-align:center; }
+  .button.success { background:#078548; }
+  .button.warning { background:#e4a11b; color:#221a05; }
+  .button.secondary { background:#e7edf3; color:#17212b; border:1px solid #becbd6; }
+  .button.small { padding:10px 12px; margin:10px 12px; }
+  .badge { display:inline-block; border-radius:999px; background:#dbe9f8; color:#124a84; padding:5px 10px; font-size:13px; font-weight:800; }
+  .badge.green { background:#d6f5e5; color:#07643e; }
+  .badge.yellow { background:#fff0bd; color:#765500; }
+  .instruction { display:grid; grid-template-columns:38px 1fr; gap:11px; margin:0 0 14px; }
+  .step, .icon { width:34px; height:34px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-weight:900; flex:none; }
+  .instruction p { font-size:16px; }
+  .callout { border-left:7px solid #1b70d0; background:#eef6ff; border-radius:5px; padding:14px 16px; margin:12px 0; display:grid; gap:4px; }
+  .callout b { font-size:18px; }
+  .callout span { font-size:16px; line-height:1.4; }
+  .callout.good { border-color:#13935f; background:#e9f8f0; }
+  .callout.warn { border-color:#d59817; background:#fff6d9; }
+  .callout.bad { border-color:#d74444; background:#fff0f0; }
+  table { width:100%; border-collapse:collapse; font-size:16px; background:#fff; }
+  th { background:#e9eff5; text-align:left; font-size:14px; text-transform:uppercase; color:#465767; }
+  th, td { border:1px solid #ccd7e1; padding:11px 10px; vertical-align:top; }
+  td.input, .input { background:#fff; outline:3px solid #90bef4; outline-offset:-4px; font-weight:800; }
+  .ghost-cell { color:#adb8c2; }
+  .wizard-nav { display:flex; justify-content:flex-end; gap:8px; }
+  .wizard-nav .button { min-width:180px; }
+  .example { border:2px dashed var(--accent); border-radius:8px; padding:18px; display:grid; gap:8px; margin-top:14px; }
+  .example b { font-size:20px; color:var(--accent); }
+  .example span { font-size:17px; line-height:1.4; }
+  .bottom-strip { margin-top:18px; padding:16px 20px; border-radius:7px; background:#17212b; color:#fff; font-size:17px; line-height:1.4; }
+  .tile { border:2px solid #d2dce5; border-radius:7px; padding:15px; background:#fff; }
+  .tile b { display:block; color:var(--accent); font-size:19px; margin-bottom:6px; }
+  .tile span { font-size:15px; line-height:1.4; }
+  .review { padding:12px 14px; border:1px solid #d4dee6; border-radius:6px; display:flex; justify-content:space-between; font-size:16px; }
+  .review.warn { background:#fff5cc; border-color:#e3b644; }
+  .flow { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; }
+  .flow > div { border:2px solid #d3dee7; border-radius:8px; padding:15px; display:grid; gap:8px; }
+  .flow b { font-size:17px; }
+  .flow span { font-size:14px; color:#5c6c79; }
+  .three-flow { grid-template-columns:repeat(3, 1fr); }
+  .mini-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .mini-cards > div, .mini-grid > div { border:1px solid #cdd8e2; border-radius:6px; padding:12px; display:grid; gap:6px; }
+  .mini-cards small { color:var(--accent); font-weight:800; }
+  .mini-cards b { font-size:17px; }
+  .mini-cards span { font-size:13px; color:#607080; }
+  .mini-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .mini-grid > div { grid-template-columns:40px 1fr; align-items:center; }
+  .mini-grid b, .mini-grid span { grid-column:2; }
+  .compact { font-size:15px; }
+  .compact th, .compact td { padding:9px; }
+  .sticker { border:5px dashed #17212b; border-radius:10px; padding:20px; background:#f8fbfd; }
+  .sticker h3 { text-align:center; font-size:25px; color:var(--accent); margin-bottom:12px; }
+  .sticker ol { margin:0 0 14px 24px; padding:0; }
+  .sticker li { font-size:16px; line-height:1.45; margin-bottom:6px; }
+  .sticker > b { display:block; border-top:2px solid #b7c4cf; padding-top:12px; line-height:1.5; font-size:15px; }
+  .sticker.manager li { font-size:15px; }
+  @media print {
+    body { display:block; padding:0; background:#fff; }
+    .page { box-shadow:none; margin:0; }
+  }
+</style></head><body>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Start The Correct Shift</h1><p>Login, shift cards, Opening Setup, and automatic saving</p></div>
+      <div class="page-no">CASHIER<b>1/6</b></div>
+    </header>
+    <main>
+    <div class="hero-grid">
+      <div>
+        <h2>Your shift times</h2>
+        <div class="shift-grid">
+          <div class="shift-card active"><small>SHIFT 1</small><b>4:00 AM - 1:00 PM</b><span>Tap to open</span></div>
+          <div class="shift-card"><small>SHIFT 2</small><b>1:00 PM - 10:00 PM</b><span>Draft / Submitted</span></div>
+          <div class="shift-card"><small>SHIFT 3</small><b>10:00 PM - 4:00 AM</b><span>Missing / Submitted</span></div>
+        </div>
+      </div>
+      
+  <div class="screen">
+    <div class="screen-head"><b>Cashier Login</b><span class="badge ">Cashier</span></div>
+    
+        
+  <div class="field ">
+    <span>Branch</span><b>Liloan</b>
+  </div>
+        
+  <div class="field ">
+    <span>Cashier PIN</span><b>••••••</b>
+  </div>
+        <div class="button">Log In</div>
+      
+  </div>
+    </div>
+    <h2>Before entering any number</h2>
+    <div class="two">
+      <div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Choose the correct branch</h3><p>Never work under another station. Stop immediately if the branch name is wrong.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Check the report date</h3><p>The card must show the sales date you are reporting. Do not guess yesterday/today.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Tap Shift 1, Shift 2, or Shift 3</h3><p>The blue ring means the selected shift. Status must match what you expect: Not Started, Draft, Missing, or Submitted.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">4</span>
+    <div><h3>Type the cashier name</h3><p>Use the real cashier who counted and submitted the shift.</p></div>
+  </div>
+      </div>
+      
+  <div class="screen">
+    <div class="screen-head"><b>Today - Liloan</b><span class="badge ">Shift Dashboard</span></div>
+    
+        <div class="mini-cards">
+          <div><small>SHIFT 1</small><b>Draft</b><span>Continue Report</span></div>
+          <div><small>SHIFT 2</small><b>Not Started</b><span>Start Report</span></div>
+          <div><small>SHIFT 3</small><b>Submitted</b><span>Complete</span></div>
+        </div>
+        <div class="button secondary">Request Date Correction</div>
+      
+  </div>
+    </div>
+    <h2>Opening Setup</h2>
+    <div class="two">
+      
+  <div class="screen">
+    <div class="screen-head"><b>Opening Setup</b><span class="badge ">Only when instructed</span></div>
+    
+        
+  <div class="field ">
+    <span>First Pump Reading</span><b>Copy exact physical register</b>
+  </div>
+        
+  <div class="field ">
+    <span>First Underground Tank Dip</span><b>Liters</b>
+  </div>
+        
+  <div class="field ">
+    <span>Coke Beginning</span><b>Piece count</b>
+  </div>
+        <div class="button success">Confirm Opening Setup</div>
+      
+  </div>
+      <div>
+        
+  <div class="callout good"><b>Use it once</b><span>Opening Setup creates the starting readings when the station begins or when admin intentionally reopens it.</span></div>
+        
+  <div class="callout warn"><b>Do not repeat it</b><span>If Opening Setup already says complete, open the correct shift card. Ask admin before redoing setup.</span></div>
+        
+  <div class="callout info"><b>Draft recovery</b><span>Every entry is kept on the device immediately and uploaded online after a short pause. A refresh should restore the unfinished draft.</span></div>
+      </div>
+    </div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Step 1 - Pump Register</h1><p>Copy every physical register reading exactly, including decimals</p></div>
+      <div class="page-no">CASHIER<b>2/6</b></div>
+    </header>
+    <main>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Step 1 of 8 - Pump Register</b><span class="badge ">Exact physical reading</span></div>
+    
+      <table>
+        <thead><tr><th>Pump / Nozzle</th><th>Previous Closing</th><th>Current Closing</th><th>Liters Sold</th></tr></thead>
+        <tbody>
+          <tr><td><b>Pump 1 - Premium</b></td><td class="readonly">408,967.16</td><td class="input">409,019.92</td><td>52.76 L</td></tr>
+          <tr><td><b>Pump 1 - Regular</b></td><td class="readonly">325,929.76</td><td class="input">326,030.05</td><td>100.29 L</td></tr>
+          <tr><td><b>Pump 1 - Diesel</b></td><td class="readonly">212,631.95</td><td class="input ghost-cell">0</td><td>0.00 L</td></tr>
+        </tbody>
+      </table>
+      <div class="wizard-nav"><span class="button secondary">Back</span><span class="button">Save & Next</span></div>
+    
+  </div>
+    <div class="two">
+      <div>
+        <h2>What to do</h2>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Read the pump label</h3><p>Match Pump number and nozzle: Premium, Regular, Regular 2, or Diesel.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Leave Previous Closing alone</h3><p>Gray fields come from the prior confirmed shift. Cashier does not edit them.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Tap Current Closing</h3><p>The faint zero is only a placeholder. Type the whole register number yourself.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">4</span>
+    <div><h3>Keep the decimal</h3><p>If the physical register says 409019.92, type 409019.92 - not 409019 and not 40919.92.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">5</span>
+    <div><h3>Check liters sold</h3><p>The app calculates liters. If it looks impossible, recheck the copied digits before continuing.</p></div>
+  </div>
+      </div>
+      <div>
+        <h2>Important rules</h2>
+        
+  <div class="callout good"><b>No sales / closed station</b><span>Current Closing may be exactly the same as Previous Closing. That correctly produces 0 liters sold.</span></div>
+        
+  <div class="callout warn"><b>Never invent a reading</b><span>Copy what the physical pump shows. If it appears lower or unusually high, recheck every digit; do not change it just to remove a warning.</span></div>
+        
+  <div class="callout bad"><b>Do not switch products</b><span>Premium entered under Regular can create very large sales and variance.</span></div>
+        
+  <div class="callout info"><b>Typing problem?</b><span>Click once inside the box, press Ctrl+A or Select All, then type the full number. Do not use the mouse wheel to change values.</span></div>
+        <div class="example"><b>Quick check</b><span>409019.92 - 408967.16 = 52.76 liters</span></div>
+      </div>
+    </div>
+    <div class="bottom-strip"><b>Before Next:</b> Every configured pump/nozzle is checked, decimals are present, and no Premium/Regular/Diesel row is switched.</div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Steps 2-3 - Tank And Deductions</h1><p>Record actual underground inventory and all shift deductions</p></div>
+      <div class="page-no">CASHIER<b>3/6</b></div>
+    </header>
+    <main>
+    <h2>Step 2 of 8 - Underground Tank</h2>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Underground Tank</b><span class="badge ">Premium / Regular / Diesel</span></div>
+    
+      <table>
+        <thead><tr><th>Product</th><th>Previous Dip</th><th>Delivery</th><th>Pull-Out</th><th>Calibration</th><th>Current Actual Dip</th></tr></thead>
+        <tbody>
+          <tr><td><b>Premium</b></td><td class="readonly">3,500 L</td><td class="input">0</td><td class="input">0</td><td class="input">5.00</td><td class="input">3,420.50</td></tr>
+          <tr><td><b>Regular</b></td><td class="readonly">4,800 L</td><td class="input">2,000</td><td class="input">0</td><td class="input">0</td><td class="input">6,620.25</td></tr>
+          <tr><td><b>Diesel</b></td><td class="readonly">5,100 L</td><td class="input">0</td><td class="input">0</td><td class="input">0</td><td class="input">5,010.75</td></tr>
+        </tbody>
+      </table>
+    
+  </div>
+    <div class="three">
+      <div class="tile"><b>Delivery</b><span>Liters physically received during this shift. Enter under the correct product.</span></div>
+      <div class="tile"><b>Pull-Out</b><span>Liters physically removed from the tank. Do not use for sales.</span></div>
+      <div class="tile"><b>Calibration</b><span>Test liters returned to the tank. Enter liters only; no calibration cash deduction.</span></div>
+    </div>
+    
+  <div class="callout info"><b>Tank dip is a reference check</b><span>Use the actual measured dip. Pump register sales remain the official fuel sales; the app compares them with tank movement.</span></div>
+    <h2>Step 3 of 8 - Deductions</h2>
+    <div class="two">
+      
+  <div class="screen">
+    <div class="screen-head"><b>Payments And Redemptions</b></div>
+    
+        
+  <div class="field ">
+    <span>FuelTech Pay Total</span><b>Card + GCash + PayMaya</b>
+  </div>
+        
+  <div class="field ">
+    <span>Cash Redemption</span><b>Cash value redeemed</b>
+  </div>
+        
+  <div class="field ">
+    <span>Fuel Redemption</span><b>Fuel value redeemed</b>
+  </div>
+        
+  <div class="field ">
+    <span>Points Issued</span><b>Points earned</b>
+  </div>
+      
+  </div>
+      <div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>FuelTech Pay Total</h3><p>Combine all approved non-cash payments for the shift. Do not include bank deposits.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Cash / Fuel Redemption</h3><p>Enter actual redeemed value only. Points Withdrawn is derived by the system; do not count redemption twice.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Other deductions</h3><p>Use only the named field that matches the real transaction. Keep receipts or supporting documents.</p></div>
+  </div>
+        
+  <div class="callout bad"><b>Bank deposits are manager work</b><span>Never type a bank deposit into deductions, PO, PR, FuelTech Pay, or physical cash.</span></div>
+      </div>
+    </div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Steps 4-6 - PO, PR, Oil, Coke, Cash</h1><p>Enter each transaction separately and count physical cash honestly</p></div>
+      <div class="page-no">CASHIER<b>4/6</b></div>
+    </header>
+    <main>
+    <div class="three equal">
+      <div>
+        <h2>Step 4 - PO and PR</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>PO Accounts</b></div>
+    
+          
+  <div class="field ">
+    <span>Account / Customer</span><b>Example: ABC Company</b>
+  </div>
+          
+  <div class="field ">
+    <span>Amount</span><b>5,000.00</b>
+  </div>
+          <div class="button small">+ Add PO</div>
+        
+  </div>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Purchase Requests</b></div>
+    
+          
+  <div class="field ">
+    <span>Purpose</span><b>Example: Station supplies</b>
+  </div>
+          
+  <div class="field ">
+    <span>Amount</span><b>2,500.00</b>
+  </div>
+          <div class="button small">+ Add PR</div>
+        
+  </div>
+        
+  <div class="callout warn"><b>Separate rows</b><span>Use + Add for each customer/account or purchase. Do not combine unrelated transactions.</span></div>
+      </div>
+      <div>
+        <h2>Step 5 - Oil and Coke</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Oil Sales</b></div>
+    
+          
+  <div class="field ">
+    <span>Product</span><b>Engine Oil 1L</b>
+  </div>
+          
+  <div class="field ">
+    <span>Quantity Sold</span><b>3</b>
+  </div>
+          
+  <div class="field ">
+    <span>Selling Price</span><b>350.00</b>
+  </div>
+          <div class="button small">+ Add Oil Sale</div>
+        
+  </div>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Coke Count</b></div>
+    
+          
+  <div class="field ghost">
+    <span>Coke Beginning</span><b>24</b>
+  </div>
+          
+  <div class="field ">
+    <span>Coke Ending</span><b>18</b>
+  </div>
+        
+  </div>
+        
+  <div class="callout info"><b>Coke is inventory</b><span>There is no Coke Redemption. Beginning is carried from setup/previous shift; cashier enters Ending.</span></div>
+      </div>
+      <div>
+        <h2>Step 6 - Physical Cash</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>End-of-Shift Cash Count</b></div>
+    
+          
+  <div class="field ">
+    <span>Physical Cash Counted</span><b>47,190.00</b>
+  </div>
+          <div class="button small">Save & Next</div>
+        
+  </div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Count the actual cash</h3><p>Count bills and coins physically present at end of shift.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Enter only what you counted</h3><p>Cashier does not see expected cash or the difference. Do not ask someone what amount to type.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Do not include non-cash items</h3><p>Exclude FuelTech Pay, PO, PR, bank deposits, and receipts from physical cash.</p></div>
+  </div>
+      </div>
+    </div>
+    <h2>Meaning of each amount</h2>
+    <table>
+      <thead><tr><th>Item</th><th>What it means</th><th>Where it goes</th></tr></thead>
+      <tbody>
+        <tr><td><b>PO</b></td><td>Customer/company fuel billed to an account</td><td>One PO row per account</td></tr>
+        <tr><td><b>PR</b></td><td>Cash used for an approved station purchase</td><td>One PR row per purpose</td></tr>
+        <tr><td><b>Physical cash counted</b></td><td>Actual bills and coins at shift end</td><td>Step 6 only</td></tr>
+        <tr><td><b>Bank deposit</b></td><td>Money deposited in the bank</td><td>Manager page only</td></tr>
+      </tbody>
+    </table>
+    <div class="bottom-strip"><b>Never force the physical cash to match.</b> Accurate counting lets admin find shortages, overages, missing deductions, or input mistakes.</div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Steps 7-8 - Name, Review, Submit</h1><p>Confirm the responsible cashier, fix warnings, and wait for a report ID</p></div>
+      <div class="page-no">CASHIER<b>5/6</b></div>
+    </header>
+    <main>
+    <div class="two">
+      <div>
+        <h2>Step 7 of 8 - Cashier Information</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Cashier Information</b><span class="badge ">Editable name</span></div>
+    
+          
+  <div class="field ">
+    <span>Cashier Name</span><b>JUAN DELA CRUZ</b>
+  </div>
+          
+  <div class="field ghost">
+    <span>Report Date</span><b>2026-07-23</b>
+  </div>
+          
+  <div class="field ghost">
+    <span>Active Shift</span><b>Shift 1</b>
+  </div>
+          <div class="button">Save & Next</div>
+        
+  </div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Type the full cashier name</h3><p>This identifies who counted and submitted the report.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Check date and active shift</h3><p>These must match the shift card you opened. Go Back if wrong.</p></div>
+  </div>
+      </div>
+      <div>
+        <h2>Step 8 of 8 - Review and Submit</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Review and Submit</b><span class="badge ">Final check</span></div>
+    
+          <div class="review"><span>Total Liters Sold</span><b>243.80 L</b></div>
+          <div class="review warn"><span>Pump 2 Regular</span><b>Unusually high - recheck</b></div>
+          <div class="review"><span>Physical Cash Counted</span><b>Entered</b></div>
+          <div class="button warning">Fix This Reading</div>
+          <div class="button success">Submit Shift Report</div>
+        
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Read every summary</h3><p>Check total liters, payments, PO/PR, oil/coke, tank entries, and physical cash status.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">4</span>
+    <div><h3>Use Fix This Reading</h3><p>A yellow warning jumps to the exact pump row. Recheck the physical register and correct only if your copy is wrong.</p></div>
+  </div>
+      </div>
+    </div>
+    <h2>Final confirmation</h2>
+    <div class="flow">
+      <div><span class="icon">1</span><b>Press Submit Shift Report</b><span>Only once</span></div>
+      <div><span class="icon">2</span><b>Read the confirmation popup</b><span>Confirm Report or Go Back</span></div>
+      <div><span class="icon">3</span><b>Wait for Submitted</b><span>Do not close during the request</span></div>
+      <div><span class="icon">4</span><b>Check the shift card</b><span>Must show Submitted / Complete</span></div>
+    </div>
+    
+  <div class="callout good"><b>Successful submission</b><span>The server returns a confirmed report ID and locks the report. Repeated clicks must not create duplicate reports.</span></div>
+    
+  <div class="callout warn"><b>Still Draft?</b><span>The report was not fully submitted. Stay on the page, check the message, correct the named field, then submit again.</span></div>
+    
+  <div class="callout info"><b>Missing manager price?</b><span>Wait briefly after the manager confirms prices. The cashier page checks for new prices automatically; do not erase the report.</span></div>
+    
+  <div class="callout bad"><b>Never share PINs</b><span>Use only your assigned cashier PIN. Press Log Out when leaving the device.</span></div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page blue">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Missing Reports, Corrections, And Quick Sticker</h1><p>What to press when the normal shift flow cannot continue</p></div>
+      <div class="page-no">CASHIER<b>6/6</b></div>
+    </header>
+    <main>
+    <div class="two">
+      <div>
+        <h2>Missing shift warning</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Previous Shift Is Missing</b></div>
+    
+          <p class="screen-copy">Please complete July 22, Shift 3 first so pump readings stay connected.</p>
+          <div class="button warning">Go To Missing Shift</div>
+        
+  </div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Read the exact date and shift</h3><p>Each missing shift has its own button. Do not open a different report.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Press Go To Missing Shift</h3><p>The app opens that specific report and records the jump for admin.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Complete and submit it</h3><p>Return to today only after the missing shift shows Submitted.</p></div>
+  </div>
+        <h2>Request Date Correction</h2>
+        
+  <div class="screen">
+    <div class="screen-head"><b>Request Date Correction</b></div>
+    
+          
+  <div class="field ">
+    <span>Correct Report Date</span><b>2026-07-22</b>
+  </div>
+          
+  <div class="field ">
+    <span>Shift</span><b>Shift 2</b>
+  </div>
+          
+  <div class="field ">
+    <span>Reason</span><b>Entered wrong report date</b>
+  </div>
+          <div class="button">Send Request To Admin</div>
+        
+  </div>
+        
+  <div class="callout warn"><b>Use only for a real correction</b><span>The report opens only after admin approval, then locks again after the corrected submission.</span></div>
+      </div>
+      <div>
+        <h2>Cashier troubleshooting</h2>
+        <table class="compact">
+          <thead><tr><th>Problem</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Cannot type</td><td>Tap field once; Select All; type full number. Avoid rapid repeated clicks.</td></tr>
+            <tr><td>Entry disappeared</td><td>Stay on the same branch/date/shift; wait a moment; refresh once. Draft should restore.</td></tr>
+            <tr><td>Price missing</td><td>Tell manager product/date/shift. Wait for automatic price update.</td></tr>
+            <tr><td>Submit button fails</td><td>Read the exact red/yellow message and fix that field. Do not make a new report.</td></tr>
+            <tr><td>Wrong date/shift</td><td>Go Back before typing. If already submitted, request correction.</td></tr>
+            <tr><td>Someone editing</td><td>Another device holds the report. Use the device already editing or wait for the lock to clear.</td></tr>
+          </tbody>
+        </table>
+        <h2>Print-and-cut cashier sticker</h2>
+        <div class="sticker">
+          <h3>CASHIER - 8 STEPS</h3>
+          <ol>
+            <li>Pump Register - exact readings</li>
+            <li>Underground Tank - actual dip</li>
+            <li>Deductions - payments/redemptions</li>
+            <li>PO and Purchase Requests - separate rows</li>
+            <li>Oil and Coke - sales + ending count</li>
+            <li>Physical Cash - actual bills/coins only</li>
+            <li>Cashier Information - real full name</li>
+            <li>Review and Submit - fix warnings, confirm once</li>
+          </ol>
+          <b>CHECK: Branch • Date • Shift • Decimals • Product rows • Submitted status • Log Out</b>
+        </div>
+      </div>
+    </div>
+  </main>
+    <footer><span>FuelTech CASHIER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section></body></html>

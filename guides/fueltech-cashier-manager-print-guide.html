@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FuelTech Cashier and Manager Print Guide</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #5d6b7c;
+      --line: #d9e0e8;
+      --soft: #f5f7fa;
+      --blue: #1769e0;
+      --blue-soft: #e9f2ff;
+      --green: #0c8a4a;
+      --green-soft: #e9f8f0;
+      --yellow: #9a6400;
+      --yellow-soft: #fff6dc;
+      --red: #b42318;
+      --red-soft: #ffeceb;
+      --dark: #111827;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.45;
+    }
+    .book {
+      width: min(1120px, calc(100% - 32px));
+      margin: 24px auto;
+    }
+    .page {
+      background: white;
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 48px rgba(20, 33, 51, .13);
+      margin: 0 0 24px;
+      padding: 34px;
+      min-height: 980px;
+      break-after: page;
+    }
+    .cover {
+      min-height: 780px;
+      display: grid;
+      align-content: center;
+      gap: 26px;
+      background:
+        linear-gradient(135deg, rgba(23, 105, 224, .09), transparent 38%),
+        linear-gradient(315deg, rgba(12, 138, 74, .09), transparent 35%),
+        white;
+    }
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--dark);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.12; }
+    h1 { font-size: 54px; max-width: 850px; }
+    h2 { font-size: 30px; margin-bottom: 16px; }
+    h3 { font-size: 19px; margin-bottom: 8px; }
+    p { margin: 0 0 10px; }
+    ul, ol { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 4px 0; }
+    .lead { font-size: 20px; color: var(--muted); max-width: 820px; }
+    .grid { display: grid; gap: 14px; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .card strong {
+      display: block;
+      font-size: 20px;
+      margin-top: 3px;
+    }
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .callout {
+      border-left: 6px solid var(--blue);
+      background: var(--blue-soft);
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin: 14px 0;
+    }
+    .good { border-color: #9bd8b8; background: var(--green-soft); }
+    .warn { border-color: #f0cf74; background: var(--yellow-soft); }
+    .bad { border-color: #f4aaa5; background: var(--red-soft); }
+    .section { margin-top: 26px; }
+    .steps {
+      counter-reset: step;
+      display: grid;
+      gap: 12px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: white;
+    }
+    .step:before {
+      counter-increment: step;
+      content: counter(step);
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--blue);
+      color: white;
+      font-weight: 900;
+    }
+    .mock-screen {
+      border: 2px solid #151b23;
+      border-radius: 18px;
+      background: #fbfcfe;
+      padding: 14px;
+      box-shadow: inset 0 0 0 1px #edf1f6;
+      margin-top: 10px;
+    }
+    .mock-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 10px;
+    }
+    .mock-title {
+      font-weight: 900;
+      font-size: 15px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      background: #edf2f7;
+      color: #344054;
+    }
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .fake-field {
+      min-height: 44px;
+      border: 1px solid #cfd8e3;
+      border-radius: 9px;
+      background: white;
+      padding: 8px 10px;
+    }
+    .fake-field b { display: block; font-size: 14px; }
+    .fake-input {
+      border: 2px solid #9ab7e8;
+      background: #fff;
+      border-radius: 8px;
+      padding: 9px;
+      font-weight: 800;
+    }
+    .fake-readonly {
+      background: #edf1f5;
+      color: #4b5563;
+      border: 1px solid #cdd5df;
+      border-radius: 8px;
+      padding: 9px;
+      font-weight: 800;
+    }
+    .arrow {
+      margin: 8px 0;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    .mini-table th {
+      background: #f0f4f8;
+      color: #344054;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .mini-table th, .mini-table td {
+      border: 1px solid var(--line);
+      padding: 8px;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border-radius: 9px;
+      padding: 9px 13px;
+      font-weight: 900;
+      background: var(--blue);
+      color: white;
+      margin-top: 8px;
+    }
+    .button.green { background: var(--green); }
+    .button.dark { background: var(--dark); }
+    .button.gray { background: #64748b; }
+    .do-dont {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .checklist {
+      columns: 2;
+      column-gap: 28px;
+    }
+    .checklist li { break-inside: avoid; }
+    .sticker-sheet {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .sticker {
+      border: 2px dashed #9aa7b5;
+      border-radius: 16px;
+      padding: 14px;
+      min-height: 178px;
+      background: white;
+    }
+    .sticker h3 { font-size: 18px; }
+    .sticker ul { font-size: 14px; }
+    .footer {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+    .small { font-size: 13px; }
+    .mono { font-family: Consolas, Monaco, monospace; }
+
+    @media print {
+      body { background: white; }
+      .book { width: 100%; margin: 0; }
+      .page {
+        box-shadow: none;
+        border: none;
+        margin: 0;
+        min-height: auto;
+        padding: 14mm;
+      }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="book">
+    <section class="page cover">
+      <div>
+        <span class="eyebrow">FuelTech Accounting</span>
+        <h1>Cashier and Manager Training Guide</h1>
+        <p class="lead">A step-by-step print guide for daily station reports, pump readings, price setup, bank deposits, and correction requests.</p>
+      </div>
+      <div class="grid four">
+        <div class="card"><span class="label">Cashier Link</span><strong>/cashier</strong><span class="note">Submit shift reports</span></div>
+        <div class="card"><span class="label">Manager Link</span><strong>/manager</strong><span class="note">Prices and deposits</span></div>
+        <div class="card"><span class="label">Shift 1</span><strong>4 AM - 1 PM</strong></div>
+        <div class="card"><span class="label">Shift 2 / 3</span><strong>1 PM - 10 PM / 10 PM - 4 AM</strong></div>
+      </div>
+      <div class="callout">
+        <b>Training rule:</b> Staff should never guess. If the date, shift, pump number, product, or deposit coverage looks wrong, stop and ask before pressing confirm.
+      </div>
+      <div class="footer">
+        <span>Print version: cashier and manager only</span>
+        <span>Use with https://fueltechphil.vercel.app</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>1. What The System Does</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>Cashier records the shift</h3>
+          <p>The cashier enters pump closing readings, underground tank readings, deductions, PO/PR, oil sales, Coke ending, and then submits the shift report.</p>
+        </div>
+        <div class="card">
+          <h3>Manager controls prices and deposits</h3>
+          <p>The manager enters fuel prices and bank deposits. If a deposit is wrong, the manager requests change/removal and waits for admin approval.</p>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Daily Flow</h2>
+        <div class="mock-screen">
+          <div class="mock-top">
+            <span class="mock-title">Correct Daily Order</span>
+            <span class="pill">Simple flow</span>
+          </div>
+          <table class="mini-table">
+            <tr><th>Order</th><th>Person</th><th>Action</th><th>Result</th></tr>
+            <tr><td>1</td><td>Manager</td><td>Enter fuel prices</td><td>Cashier can calculate sales</td></tr>
+            <tr><td>2</td><td>Cashier</td><td>Enter pump and shift report</td><td>Report becomes Submitted</td></tr>
+            <tr><td>3</td><td>Manager</td><td>Enter bank deposit</td><td>Deposit waits for admin verification</td></tr>
+            <tr><td>4</td><td>Admin</td><td>Review and verify</td><td>Summary and reports are trusted</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Shift Times</h2>
+        <div class="grid three">
+          <div class="card good"><span class="label">Shift 1</span><strong>4:00 AM to 1:00 PM</strong></div>
+          <div class="card good"><span class="label">Shift 2</span><strong>1:00 PM to 10:00 PM</strong></div>
+          <div class="card good"><span class="label">Shift 3</span><strong>10:00 PM to 4:00 AM</strong></div>
+        </div>
+        <div class="callout warn">
+          <b>Important:</b> Shift 3 after midnight still belongs to the shift that started at 10:00 PM. Example: 2:00 AM on July 10 is still July 9 Shift 3.
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>FuelTech Accounting Guide</span>
+        <span>Page 1</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>2. Cashier Login and First Check</h2>
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>Open cashier page</h3>
+            <p>Go to <b>https://fueltechphil.vercel.app/cashier</b>. Select the correct branch, enter cashier PIN, then press <b>Proceed</b>.</p>
+            <div class="mock-screen">
+              <div class="mock-top"><span class="mock-title">Cashier Branch Access</span><span class="pill">Login</span></div>
+              <div class="field-row">
+                <div class="fake-field"><span class="label">Selected Branch</span><b>Liloan</b></div>
+                <div class="fake-field"><span class="label">Cashier PIN</span><b>******</b></div>
+              </div>
+              <span class="button">Proceed</span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Check branch, date, and shift before typing</h3>
+            <p>The report information is the first thing to check. If branch/date/shift is wrong, do not type readings yet.</p>
+            <div class="mock-screen">
+              <div class="mock-top"><span class="mock-title">Report Information</span><span class="pill">Check first</span></div>
+              <div class="grid four">
+                <div class="fake-field"><span class="label">Branch</span><b>Liloan</b></div>
+                <div class="fake-field"><span class="label">Report Date</span><b>2026-07-09</b></div>
+                <div class="fake-field"><span class="label">Active Shift</span><b>Shift 1 - 4 AM to 1 PM</b></div>
+                <div class="fake-field"><span class="label">Status</span><b>Draft</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Enter cashier name</h3>
+            <p>Use the real cashier/teller name for that shift. This helps admin trace who submitted the report.</p>
+            <div class="mock-screen">
+              <div class="fake-field"><span class="label">Cashier Name</span><b>Example: Jhunmar</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout bad">
+        <b>Do not share PINs.</b> Cashier uses cashier login only. Manager uses manager login only. Do not let one person use another role.
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 2</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>3. Cashier First Opening Setup</h2>
+      <p>Opening setup appears only when the system has no previous confirmed readings. This is the starting point of the station.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">First Opening Setup</span><span class="pill">Only when starting from zero</span></div>
+        <table class="mini-table">
+          <tr><th>Pump</th><th>Nozzle</th><th>First Opening Pump Reading</th></tr>
+          <tr><td>Pump 1</td><td>Premium</td><td><div class="fake-input">408967.16</div></td></tr>
+          <tr><td>Pump 1</td><td>Regular</td><td><div class="fake-input">325929.76</div></td></tr>
+          <tr><td>Pump 1</td><td>Diesel</td><td><div class="fake-input">212631.95</div></td></tr>
+        </table>
+        <div class="field-row">
+          <div class="fake-field"><span class="label">First Opening Underground Tank</span><b>Example: 3,500 L</b></div>
+          <div class="fake-field"><span class="label">Coke Beginning</span><b>Example: 24</b></div>
+        </div>
+        <span class="button green">Confirm First Opening</span>
+      </div>
+
+      <div class="section do-dont">
+        <div class="card good">
+          <h3>Do</h3>
+          <ul>
+            <li>Copy the exact pump reading from the register.</li>
+            <li>Use decimals when the pump has decimals.</li>
+            <li>Enter underground tank beginning inventory.</li>
+            <li>Confirm only once the starting values are correct.</li>
+          </ul>
+        </div>
+        <div class="card bad">
+          <h3>Do Not</h3>
+          <ul>
+            <li>Do not guess starting pump readings.</li>
+            <li>Do not switch Premium and Regular.</li>
+            <li>Do not put tank dip numbers into pump readings.</li>
+            <li>Do not press confirm if one number looks wrong.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <b>After opening setup is confirmed:</b> the system carries the previous closing into the next shift automatically. Cashier should only type current closing after that.
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 3</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>4. Cashier Pump Reading Register</h2>
+      <p>This is the most important cashier section. Official fuel sales come from pump readings.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">Official Pump Reading Register</span><span class="pill">Sales source</span></div>
+        <table class="mini-table">
+          <tr><th>Pump</th><th>Nozzle</th><th>Previous Shift Closing</th><th>Current Closing</th><th>Liters Sold</th></tr>
+          <tr><td>Pump 1</td><td>Premium</td><td><div class="fake-readonly">408967.16</div></td><td><div class="fake-input">409019.92</div></td><td><b>52.76 L</b></td></tr>
+          <tr><td>Pump 1</td><td>Regular</td><td><div class="fake-readonly">325929.76</div></td><td><div class="fake-input">326030.05</div></td><td><b>100.29 L</b></td></tr>
+          <tr><td>Pump 1</td><td>Diesel</td><td><div class="fake-readonly">212631.95</div></td><td><div class="fake-input">212631.95</div></td><td><b>0 L</b></td></tr>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>How To Understand This</h2>
+        <div class="grid three">
+          <div class="card">
+            <span class="label">Gray number</span>
+            <strong>Previous Shift Closing</strong>
+            <p class="note">Read-only. Do not change. It comes from the last submitted shift.</p>
+          </div>
+          <div class="card">
+            <span class="label">White input</span>
+            <strong>Current Closing</strong>
+            <p class="note">Cashier types the current pump register reading here.</p>
+          </div>
+          <div class="card">
+            <span class="label">Formula</span>
+            <strong>Current - Previous</strong>
+            <p class="note">This becomes liters sold.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="section do-dont">
+        <div class="card good">
+          <h3>Correct examples</h3>
+          <ul>
+            <li>Previous 1000, Current 1015 = 15 L sold.</li>
+            <li>Previous 1000, Current 1000 = 0 L sold. This is allowed if no gasoline/no sales.</li>
+            <li>Decimal numbers like 1015.50 are allowed.</li>
+          </ul>
+        </div>
+        <div class="card bad">
+          <h3>Blocked example</h3>
+          <ul>
+            <li>Previous 1000, Current 990 = not allowed.</li>
+            <li>This means negative liters and the report should not be submitted.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <b>Closed station / no gasoline:</b> If there were no sales, input the same number in Current Closing as Previous Shift Closing. The system will count it as 0 liters sold.
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 4</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>5. Cashier Underground Tank</h2>
+      <p>The underground tank section checks inventory. It is not the official sales source. Official fuel sales still come from pump readings.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">Underground Tank</span><span class="pill">Reference check</span></div>
+        <table class="mini-table">
+          <tr><th>Tank</th><th>Previous Shift Dip</th><th>Delivery</th><th>Pull-Out</th><th>Calibration</th><th>Current Actual Dip</th><th>Difference</th></tr>
+          <tr><td>Premium</td><td><div class="fake-readonly">3,500 L</div></td><td><div class="fake-input">0</div></td><td><div class="fake-input">0</div></td><td><div class="fake-input">0</div></td><td><div class="fake-input">3,447.24</div></td><td><b>Check</b></td></tr>
+          <tr><td>Diesel</td><td><div class="fake-readonly">4,200 L</div></td><td><div class="fake-input">2,000</div></td><td><div class="fake-input">0</div></td><td><div class="fake-input">10</div></td><td><div class="fake-input">6,190</div></td><td><b>Check</b></td></tr>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="grid four">
+          <div class="card"><span class="label">Delivery</span><strong>Fuel added</strong><p class="note">Enter liters delivered into the tank.</p></div>
+          <div class="card"><span class="label">Pull-Out</span><strong>Fuel removed</strong><p class="note">Enter fuel pulled out from tank.</p></div>
+          <div class="card"><span class="label">Calibration</span><strong>Test fuel</strong><p class="note">Enter liters used for calibration and returned to the tank.</p></div>
+          <div class="card"><span class="label">Actual Dip</span><strong>Measured tank</strong><p class="note">Enter the real dip reading at shift end.</p></div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <b>Calibration rule:</b> If fuel was used for calibration and returned to the tank, enter the calibration liters. The system reduces official sales by calibration liters, but does not treat it as missing from the tank.
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 5</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>6. Cashier Deductions, PO/PR, Oil, Coke</h2>
+
+      <div class="grid two">
+        <div class="mock-screen">
+          <div class="mock-top"><span class="mock-title">Deductions</span><span class="pill">Cash not on hand</span></div>
+          <div class="field-row">
+            <div class="fake-field"><span class="label">FuelTech Pay Total</span><b>Card + GCash + Paymaya</b></div>
+            <div class="fake-field"><span class="label">Points Issued</span><b>Type amount issued</b></div>
+          </div>
+          <div class="field-row">
+            <div class="fake-field"><span class="label">Points Withdrawn</span><b>Auto: Cash + Fuel Redemption</b></div>
+            <div class="fake-field"><span class="label">Other deductions</span><b>Only if applicable</b></div>
+          </div>
+        </div>
+
+        <div class="mock-screen">
+          <div class="mock-top"><span class="mock-title">PO and Purchase Requests</span><span class="pill">Cash taken from station</span></div>
+          <table class="mini-table">
+            <tr><th>Type</th><th>What to enter</th><th>Example</th></tr>
+            <tr><td>PO Accounts</td><td>Account + Amount</td><td>Customer PO</td></tr>
+            <tr><td>Purchase Requests</td><td>Particular + Amount</td><td>Station expense</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="mock-screen">
+          <div class="mock-top"><span class="mock-title">Oil Sales and Coke Count</span><span class="pill">End of shift</span></div>
+          <div class="grid four">
+            <div class="fake-field"><span class="label">Oil Sales</span><b>Example: 1200</b></div>
+            <div class="fake-field"><span class="label">Coke Beginning</span><b>Read-only</b></div>
+            <div class="fake-field"><span class="label">Coke Ending</span><b>Type ending count</b></div>
+            <div class="fake-field"><span class="label">Coke Sold</span><b>Auto</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section do-dont">
+        <div class="card good">
+          <h3>Do</h3>
+          <ul>
+            <li>Use FuelTech Pay Total for all non-cash payments together.</li>
+            <li>Use PO/PR only for real approved station transactions.</li>
+            <li>Enter Coke Ending only. Beginning is carried forward.</li>
+          </ul>
+        </div>
+        <div class="card bad">
+          <h3>Do Not</h3>
+          <ul>
+            <li>Do not enter the same PO/PR twice.</li>
+            <li>Do not manually type Points Withdrawn if it is shown as read-only.</li>
+            <li>Do not put cash deposit amount under deductions.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 6</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>7. Cashier Submit Report</h2>
+
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>Fix warnings first</h3>
+            <p>If the app says previous shift is missing, opening missing, closing lower than opening, or price missing for sold liters, fix it before submitting.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Press Submit Shift Report</h3>
+            <p>This opens a final confirmation popup. This is the last chance to go back.</p>
+            <div class="mock-screen">
+              <div class="mock-top"><span class="mock-title">Report Information</span><span class="pill">Ready</span></div>
+              <span class="button green">Submit Shift Report</span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Confirm Report popup</h3>
+            <p>Read the branch, shift, and total liters. If correct, press <b>Confirm Report</b>. If not sure, press <b>Go Back</b>.</p>
+            <div class="mock-screen">
+              <div class="mock-top"><span class="mock-title">Submit this shift report?</span><span class="pill">Final check</span></div>
+              <ul>
+                <li>Liloan - Shift 1 - 4:00 AM to 1:00 PM</li>
+                <li>Total liters: 153.05 L</li>
+                <li>Status after submit: Submitted</li>
+              </ul>
+              <span class="button gray">Go Back</span>
+              <span class="button green">Confirm Report</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout bad">
+        <b>Submitted means sent to admin.</b> Do not press confirm if the cashier is not finished or if numbers were copied from the wrong paper.
+      </div>
+
+      <div class="section">
+        <h2>If A Wrong Date/Shift Is Needed</h2>
+        <p>Cashier cannot freely change old shifts. Use <b>Request Date Correction</b>. Admin must approve before the old shift opens again.</p>
+      </div>
+
+      <div class="footer">
+        <span>Cashier guide</span>
+        <span>Page 7</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>8. Manager Login and Fuel Price Setup</h2>
+
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>Open manager page</h3>
+            <p>Go to <b>https://fueltechphil.vercel.app/manager</b>. Select your own branch only. Enter manager PIN and press <b>Proceed</b>.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Enter fuel prices before cashier submits</h3>
+            <p>Choose price effective date, pricing coverage, then enter Premium, Regular, and Diesel manager price.</p>
+            <div class="mock-screen">
+              <div class="mock-top"><span class="mock-title">Fuel Price Setup</span><span class="pill">Manager</span></div>
+              <div class="grid four">
+                <div class="fake-field"><span class="label">Branch</span><b>Liloan</b></div>
+                <div class="fake-field"><span class="label">Price Effective Date</span><b>2026-07-09</b></div>
+                <div class="fake-field"><span class="label">Pricing Coverage</span><b>Daily</b></div>
+                <div class="fake-field"><span class="label">Pricing Basis</span><b>Carries forward</b></div>
+              </div>
+              <div class="field-row">
+                <div class="fake-field"><span class="label">Premium Manager Price</span><b>72.50</b></div>
+                <div class="fake-field"><span class="label">Regular Manager Price</span><b>71.50</b></div>
+              </div>
+              <div class="fake-field"><span class="label">Diesel Manager Price</span><b>67.80</b></div>
+              <span class="button green">Confirm Fuel Prices</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section do-dont">
+        <div class="card good">
+          <h3>Daily price</h3>
+          <p>Use <b>Daily</b> when the same price applies to the whole day and carries forward until changed.</p>
+        </div>
+        <div class="card warn">
+          <h3>Shift price</h3>
+          <p>Use <b>Shift</b> only when a specific shift has a different price.</p>
+        </div>
+      </div>
+
+      <div class="callout bad">
+        <b>Do not leave prices blank when there are sales.</b> Cashier reports with sold liters need a price to calculate fuel sales.
+      </div>
+
+      <div class="footer">
+        <span>Manager guide</span>
+        <span>Page 8</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>9. Manager Price Change During Shift</h2>
+      <p>Use this only if the fuel price changed in the middle of a shift. Do not use it for normal daily prices.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">Price Change During Shift</span><span class="pill">Only if price changed mid-shift</span></div>
+        <div class="field-row">
+          <div class="fake-field"><span class="label">Product</span><b>Regular</b></div>
+          <div class="fake-field"><span class="label">Effective Time</span><b>13:30</b></div>
+        </div>
+        <div class="fake-field"><span class="label">New Manager Price</span><b>72.00</b></div>
+        <table class="mini-table">
+          <tr><th>Pump</th><th>Nozzle</th><th>Opening</th><th>Price-Change Reading</th><th>Current Closing</th></tr>
+          <tr><td>Pump 1</td><td>Regular</td><td>325929.76</td><td><div class="fake-input">325950.00</div></td><td>326030.05</td></tr>
+          <tr><td>Pump 2</td><td>Regular</td><td>209393.00</td><td><div class="fake-input">209410.00</div></td><td>209455.00</td></tr>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>Manager Must Know</h2>
+        <ul>
+          <li>The price-change reading must be between opening and current closing.</li>
+          <li>Enter the reading for every matching nozzle/product.</li>
+          <li>If price did not change in the middle of the shift, leave this section closed.</li>
+          <li>Wrong price-change readings can make sales look wrong.</li>
+        </ul>
+      </div>
+
+      <div class="footer">
+        <span>Manager guide</span>
+        <span>Page 9</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>10. Manager Daily Bank Deposit</h2>
+      <p>Deposit entries explain where the station cash went. They must be attached to the correct sales date and covered shifts.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">Daily Bank Deposit</span><span class="pill">Manager</span></div>
+        <div class="grid four">
+          <div class="fake-field"><span class="label">Deposit Date</span><b>2026-07-10</b></div>
+          <div class="fake-field"><span class="label">Sales Date Covered</span><b>2026-07-09</b></div>
+          <div class="fake-field"><span class="label">Covers</span><b>Shift 2 + Shift 3</b></div>
+          <div class="fake-field"><span class="label">Will Count Under</span><b>Shift 2, Shift 3</b></div>
+        </div>
+        <div class="grid four">
+          <div class="fake-field"><span class="label">Bank</span><b>BDO</b></div>
+          <div class="fake-field"><span class="label">Reference</span><b>123456</b></div>
+          <div class="fake-field"><span class="label">Amount</span><b>100000</b></div>
+          <span class="button green">Save Daily Bank Deposit</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Deposit Examples</h2>
+        <table class="mini-table">
+          <tr><th>Situation</th><th>Deposit Date</th><th>Sales Date Covered</th><th>Covers</th></tr>
+          <tr><td>Depositing yesterday Shift 2 and Shift 3 today</td><td>Today</td><td>Yesterday</td><td>Shift 2 + Shift 3</td></tr>
+          <tr><td>Depositing all shifts of one sales date together</td><td>Deposit day</td><td>Sales day</td><td>All Shifts</td></tr>
+          <tr><td>Depositing only today Shift 1</td><td>Today</td><td>Today</td><td>Shift 1</td></tr>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <b>Do not double count deposits.</b> If one bank deposit covers multiple shifts, enter it once using the correct coverage. Do not enter the same 100,000 separately under Shift 1, Shift 2, and Shift 3.
+      </div>
+
+      <div class="footer">
+        <span>Manager guide</span>
+        <span>Page 10</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>11. Manager Deposit History and Requests</h2>
+      <p>Managers can view their own station deposit history. If something is wrong, they request a change/removal. Admin approves before anything changes.</p>
+
+      <div class="mock-screen">
+        <div class="mock-top"><span class="mock-title">Deposit History</span><span class="pill">Last 7 days by default</span></div>
+        <div class="field-row">
+          <div class="fake-field"><span class="label">Deposit From</span><b>2026-07-03</b></div>
+          <div class="fake-field"><span class="label">Deposit To</span><b>2026-07-10</b></div>
+        </div>
+        <table class="mini-table">
+          <tr><th>Sales Date</th><th>Counted Shift</th><th>Deposit Date</th><th>Bank</th><th>Amount</th><th>Status</th><th>Action</th></tr>
+          <tr><td>2026-07-09</td><td>Shift 2 + Shift 3</td><td>2026-07-10</td><td>BDO</td><td>100000</td><td>Pending</td><td>Request Change / Removal</td></tr>
+          <tr><td>2026-07-08</td><td>Shift 1</td><td>2026-07-08</td><td>BPI</td><td>58000</td><td>Verified</td><td>Request Change / Removal</td></tr>
+        </table>
+      </div>
+
+      <div class="section do-dont">
+        <div class="card good">
+          <h3>Use Request Change when</h3>
+          <ul>
+            <li>Amount is wrong.</li>
+            <li>Bank or reference is wrong.</li>
+            <li>Deposit date or sales date is wrong.</li>
+          </ul>
+        </div>
+        <div class="card warn">
+          <h3>Use Request Removal when</h3>
+          <ul>
+            <li>The deposit was entered twice.</li>
+            <li>The deposit belongs to another station.</li>
+            <li>The deposit was attached to the wrong sales date and should be removed.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>Manager guide</span>
+        <span>Page 11</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>12. Quick Troubleshooting</h2>
+      <table class="mini-table">
+        <tr><th>Message / Problem</th><th>Meaning</th><th>What to do</th></tr>
+        <tr><td>Previous shift is missing</td><td>The report before this one was not submitted.</td><td>Press Go to Missing Shift and complete it first.</td></tr>
+        <tr><td>Closing pump reading is lower than opening</td><td>Current closing is less than previous closing.</td><td>Check if number was typed wrong or product was switched.</td></tr>
+        <tr><td>Pump price is missing or zero</td><td>There are sold liters but no price.</td><td>Manager must enter price, then cashier can submit.</td></tr>
+        <tr><td>0 liters sold</td><td>Current closing equals previous closing.</td><td>Allowed if station had no gasoline/no sales.</td></tr>
+        <tr><td>Check Required</td><td>System sees unusually high liters or variance.</td><td>Review pump readings, deposits, PO/PR, and deductions.</td></tr>
+        <tr><td>Not saved online yet</td><td>Device has not finished syncing.</td><td>Keep page open until saved online.</td></tr>
+        <tr><td>Currently being edited on another device</td><td>Same report is open elsewhere.</td><td>Wait. Do not submit from two devices.</td></tr>
+      </table>
+
+      <div class="section">
+        <h2>Simple Formula Staff Should Remember</h2>
+        <div class="grid three">
+          <div class="card"><span class="label">Liters Sold</span><strong>Current Closing - Previous Closing</strong></div>
+          <div class="card"><span class="label">Fuel Sales</span><strong>Liters Sold x Price</strong></div>
+          <div class="card"><span class="label">Expected Cash</span><strong>Gross Sales - Deductions</strong></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Final Cashier Before-Submit Check</h2>
+        <ul class="checklist">
+          <li>Correct branch</li>
+          <li>Correct date</li>
+          <li>Correct shift</li>
+          <li>Cashier name filled</li>
+          <li>Pump readings copied exactly</li>
+          <li>No product switched</li>
+          <li>Tank dip entered</li>
+          <li>Delivery/pull-out/calibration entered if any</li>
+          <li>FuelTech Pay Total entered</li>
+          <li>PO/PR entered if any</li>
+          <li>Oil sales entered if any</li>
+          <li>Coke ending entered</li>
+          <li>No warning ignored</li>
+          <li>Confirm popup checked</li>
+        </ul>
+      </div>
+
+      <div class="footer">
+        <span>Cashier and manager guide</span>
+        <span>Page 12</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>Sticker Reminders - Cashier</h2>
+      <p class="note">Print this page and cut into small reminders for the cashier area.</p>
+      <div class="sticker-sheet">
+        <div class="sticker">
+          <h3>Before Typing</h3>
+          <ul>
+            <li>Check branch.</li>
+            <li>Check report date.</li>
+            <li>Check shift time.</li>
+            <li>Enter real cashier name.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>Pump Reading Rule</h3>
+          <ul>
+            <li>Type Current Closing only.</li>
+            <li>Gray Previous Closing is read-only.</li>
+            <li>Current lower than previous is wrong.</li>
+            <li>Same number is OK for zero sales.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>Zero Sales / No Gasoline</h3>
+          <ul>
+            <li>Previous: 1000</li>
+            <li>Current: 1000</li>
+            <li>Liters Sold: 0 L</li>
+            <li>This is allowed.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>Submit Rule</h3>
+          <ul>
+            <li>Read the confirm popup.</li>
+            <li>If unsure, press Go Back.</li>
+            <li>Submit only when finished.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">
+        <span>Sticker sheet</span>
+        <span>Cashier</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <h2>Sticker Reminders - Manager</h2>
+      <p class="note">Print this page and cut into small reminders for the manager area.</p>
+      <div class="sticker-sheet">
+        <div class="sticker">
+          <h3>Fuel Price Setup</h3>
+          <ul>
+            <li>Set effective date.</li>
+            <li>Choose Daily unless one shift only.</li>
+            <li>Enter Premium, Regular, Diesel.</li>
+            <li>Press Confirm Fuel Prices.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>Bank Deposit Rule</h3>
+          <ul>
+            <li>Deposit Date = day money was deposited.</li>
+            <li>Sales Date Covered = shift sales day.</li>
+            <li>Covers = shift/s included.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>Combined Deposit</h3>
+          <ul>
+            <li>One bank deposit covering many shifts?</li>
+            <li>Enter it once.</li>
+            <li>Pick Shift 2 + Shift 3 or All Shifts.</li>
+          </ul>
+        </div>
+        <div class="sticker">
+          <h3>If Deposit Is Wrong</h3>
+          <ul>
+            <li>Do not secretly edit.</li>
+            <li>Press Request Change or Removal.</li>
+            <li>Wait for admin approval.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">
+        <span>Sticker sheet</span>
+        <span>Manager</span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

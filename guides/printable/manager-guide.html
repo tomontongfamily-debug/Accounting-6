@@ -1,0 +1,422 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #dfe7ee; font-family: Arial, Helvetica, sans-serif; color: #17212b; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; }
+  .page { --accent:#1267d6; --soft:#eaf3ff; width:1240px; height:1754px; background:#fff; padding:54px 58px 42px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 12px 36px #12203330; page-break-after:always; }
+  .page.green { --accent:#087f5b; --soft:#e9f8f2; }
+  header { display:flex; align-items:flex-start; justify-content:space-between; border-bottom:5px solid var(--accent); padding-bottom:24px; margin-bottom:28px; }
+  .brand { display:inline-block; background:#17212b; color:#fff; font-size:16px; font-weight:800; letter-spacing:1.5px; padding:9px 14px; border-radius:5px; }
+  h1 { font-size:45px; line-height:1.05; margin:16px 0 8px; letter-spacing:0; }
+  header p { margin:0; font-size:20px; color:#526171; }
+  .page-no { color:var(--accent); font-size:16px; font-weight:800; text-align:right; letter-spacing:1px; }
+  .page-no b { display:block; font-size:35px; margin-top:4px; letter-spacing:0; }
+  main { flex:1; }
+  h2 { font-size:27px; line-height:1.15; margin:24px 0 14px; color:#111b25; }
+  h3 { font-size:20px; margin:0 0 5px; }
+  p { font-size:17px; line-height:1.42; margin:0; }
+  footer { border-top:2px solid #dce4eb; padding-top:14px; display:flex; justify-content:space-between; font-size:14px; color:#647384; }
+  .hero-grid, .two { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  .three { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
+  .four { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; }
+  .equal > div { min-width:0; }
+  .shift-grid { display:grid; gap:12px; }
+  .shift-card { border:2px solid #ccd8e3; padding:18px; border-radius:8px; display:grid; gap:5px; }
+  .shift-card.active { border:4px solid var(--accent); background:var(--soft); }
+  .shift-card small { color:var(--accent); font-weight:800; }
+  .shift-card b { font-size:20px; }
+  .shift-card span { color:#5f6d7a; font-size:15px; }
+  .screen { border:2px solid #b8c5d1; border-radius:8px; overflow:hidden; background:#fbfcfe; margin-bottom:14px; }
+  .screen-head { background:#17212b; color:#fff; padding:13px 16px; display:flex; align-items:center; justify-content:space-between; font-size:18px; }
+  .screen > .field, .screen > .two, .screen > .three, .screen > .four, .screen > table, .screen > .mini-cards, .screen > .review, .screen > .screen-copy { margin:13px 15px; }
+  .field { min-height:64px; border:2px solid #d6e0e8; border-radius:7px; background:#fff; padding:10px 13px; display:flex; flex-direction:column; justify-content:center; }
+  .field span { font-size:13px; text-transform:uppercase; color:#627282; font-weight:800; margin-bottom:5px; }
+  .field b { font-size:18px; }
+  .field.ghost, .readonly { background:#edf1f4 !important; color:#50606f; }
+  .button { margin:13px 15px; background:var(--accent); color:#fff; font-size:17px; font-weight:800; padding:13px 20px; border-radius:6px; text-align:center; }
+  .button.success { background:#078548; }
+  .button.warning { background:#e4a11b; color:#221a05; }
+  .button.secondary { background:#e7edf3; color:#17212b; border:1px solid #becbd6; }
+  .button.small { padding:10px 12px; margin:10px 12px; }
+  .badge { display:inline-block; border-radius:999px; background:#dbe9f8; color:#124a84; padding:5px 10px; font-size:13px; font-weight:800; }
+  .badge.green { background:#d6f5e5; color:#07643e; }
+  .badge.yellow { background:#fff0bd; color:#765500; }
+  .instruction { display:grid; grid-template-columns:38px 1fr; gap:11px; margin:0 0 14px; }
+  .step, .icon { width:34px; height:34px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-weight:900; flex:none; }
+  .instruction p { font-size:16px; }
+  .callout { border-left:7px solid #1b70d0; background:#eef6ff; border-radius:5px; padding:14px 16px; margin:12px 0; display:grid; gap:4px; }
+  .callout b { font-size:18px; }
+  .callout span { font-size:16px; line-height:1.4; }
+  .callout.good { border-color:#13935f; background:#e9f8f0; }
+  .callout.warn { border-color:#d59817; background:#fff6d9; }
+  .callout.bad { border-color:#d74444; background:#fff0f0; }
+  table { width:100%; border-collapse:collapse; font-size:16px; background:#fff; }
+  th { background:#e9eff5; text-align:left; font-size:14px; text-transform:uppercase; color:#465767; }
+  th, td { border:1px solid #ccd7e1; padding:11px 10px; vertical-align:top; }
+  td.input, .input { background:#fff; outline:3px solid #90bef4; outline-offset:-4px; font-weight:800; }
+  .ghost-cell { color:#adb8c2; }
+  .wizard-nav { display:flex; justify-content:flex-end; gap:8px; }
+  .wizard-nav .button { min-width:180px; }
+  .example { border:2px dashed var(--accent); border-radius:8px; padding:18px; display:grid; gap:8px; margin-top:14px; }
+  .example b { font-size:20px; color:var(--accent); }
+  .example span { font-size:17px; line-height:1.4; }
+  .bottom-strip { margin-top:18px; padding:16px 20px; border-radius:7px; background:#17212b; color:#fff; font-size:17px; line-height:1.4; }
+  .tile { border:2px solid #d2dce5; border-radius:7px; padding:15px; background:#fff; }
+  .tile b { display:block; color:var(--accent); font-size:19px; margin-bottom:6px; }
+  .tile span { font-size:15px; line-height:1.4; }
+  .review { padding:12px 14px; border:1px solid #d4dee6; border-radius:6px; display:flex; justify-content:space-between; font-size:16px; }
+  .review.warn { background:#fff5cc; border-color:#e3b644; }
+  .flow { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; }
+  .flow > div { border:2px solid #d3dee7; border-radius:8px; padding:15px; display:grid; gap:8px; }
+  .flow b { font-size:17px; }
+  .flow span { font-size:14px; color:#5c6c79; }
+  .three-flow { grid-template-columns:repeat(3, 1fr); }
+  .mini-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .mini-cards > div, .mini-grid > div { border:1px solid #cdd8e2; border-radius:6px; padding:12px; display:grid; gap:6px; }
+  .mini-cards small { color:var(--accent); font-weight:800; }
+  .mini-cards b { font-size:17px; }
+  .mini-cards span { font-size:13px; color:#607080; }
+  .mini-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .mini-grid > div { grid-template-columns:40px 1fr; align-items:center; }
+  .mini-grid b, .mini-grid span { grid-column:2; }
+  .compact { font-size:15px; }
+  .compact th, .compact td { padding:9px; }
+  .sticker { border:5px dashed #17212b; border-radius:10px; padding:20px; background:#f8fbfd; }
+  .sticker h3 { text-align:center; font-size:25px; color:var(--accent); margin-bottom:12px; }
+  .sticker ol { margin:0 0 14px 24px; padding:0; }
+  .sticker li { font-size:16px; line-height:1.45; margin-bottom:6px; }
+  .sticker > b { display:block; border-top:2px solid #b7c4cf; padding-top:12px; line-height:1.5; font-size:15px; }
+  .sticker.manager li { font-size:15px; }
+  @media print {
+    body { display:block; padding:0; background:#fff; }
+    .page { box-shadow:none; margin:0; }
+  }
+</style></head><body>
+  <section class="page green">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Manager Start And Fuel Prices</h1><p>Choose the correct station, set prices, and confirm before cashier submits</p></div>
+      <div class="page-no">MANAGER<b>1/4</b></div>
+    </header>
+    <main>
+    <div class="hero-grid">
+      
+  <div class="screen">
+    <div class="screen-head"><b>Manager Login</b><span class="badge ">Manager</span></div>
+    
+        
+  <div class="field ">
+    <span>Branch</span><b>Liloan</b>
+  </div>
+        
+  <div class="field ">
+    <span>Manager PIN</span><b>••••••</b>
+  </div>
+        <div class="button">Log In</div>
+      
+  </div>
+      <div>
+        <h2>Manager responsibilities</h2>
+        <div class="mini-grid">
+          <div><span class="icon">₱</span><b>Fuel prices</b><span>Daily or selected shift</span></div>
+          <div><span class="icon">↗</span><b>Mid-shift change</b><span>Exact time/register</span></div>
+          <div><span class="icon">B</span><b>Bank deposit</b><span>Date, coverage, reference</span></div>
+          <div><span class="icon">H</span><b>History</b><span>Request change/removal</span></div>
+        </div>
+        
+  <div class="callout warn"><b>Role boundary</b><span>Manager does not use cashier login, edit cashier pump readings, see cashier cash variance, or verify bank deposits for admin.</span></div>
+      </div>
+    </div>
+    <h2>Confirm fuel prices</h2>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Fuel Price Setup</b><span class="badge ">Manager</span></div>
+    
+      <div class="four">
+        
+  <div class="field ">
+    <span>Price Effective Date</span><b>2026-07-23</b>
+  </div>
+        
+  <div class="field ">
+    <span>Price Coverage</span><b>Daily</b>
+  </div>
+        
+  <div class="field ">
+    <span>Pricing Basis</span><b>Cashier Entered</b>
+  </div>
+        
+  <div class="field ghost">
+    <span>Branch</span><b>Liloan</b>
+  </div>
+      </div>
+      <div class="three">
+        
+  <div class="field ">
+    <span>Premium Manager Price</span><b>76.80</b>
+  </div>
+        
+  <div class="field ">
+    <span>Regular Manager Price</span><b>75.80</b>
+  </div>
+        
+  <div class="field ">
+    <span>Diesel Manager Price</span><b>72.30</b>
+  </div>
+      </div>
+      <div class="button success">Confirm Fuel Prices</div>
+    
+  </div>
+    <div class="two">
+      <div>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Confirm branch and effective date</h3><p>Prices must belong to the station and sales date the cashier is reporting.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Choose Daily or a specific shift</h3><p>Daily applies to all three shifts. Use Shift coverage only when that shift had a different price.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Enter Premium, Regular, and Diesel</h3><p>Use the official pump selling prices. Keep decimal centavos.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">4</span>
+    <div><h3>Press Confirm Fuel Prices</h3><p>Wait for the success message. Cashier receives the update automatically.</p></div>
+  </div>
+      </div>
+      <div>
+        
+  <div class="callout bad"><b>Do not leave sold products blank</b><span>If liters were sold and the price is zero/missing, the cashier report cannot calculate correct fuel sales.</span></div>
+        
+  <div class="callout info"><b>Do not subtract points/discounts</b><span>Enter the official base pump price. Redemptions and points are recorded separately in the cashier report.</span></div>
+        
+  <div class="callout warn"><b>Check before confirming</b><span>Wrong price, date, branch, or coverage changes sales totals. Re-read all four selectors first.</span></div>
+      </div>
+    </div>
+  </main>
+    <footer><span>FuelTech MANAGER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page green">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Price Change During Shift</h1><p>Use only when the official pump price changes before the shift ends</p></div>
+      <div class="page-no">MANAGER<b>2/4</b></div>
+    </header>
+    <main>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Price Change During Shift</b><span class="badge ">Only if price changed</span></div>
+    
+      <div class="three">
+        
+  <div class="field ">
+    <span>Product</span><b>Regular</b>
+  </div>
+        
+  <div class="field ">
+    <span>Effective Time</span><b>1:30 PM</b>
+  </div>
+        
+  <div class="field ">
+    <span>New Manager Price</span><b>76.30</b>
+  </div>
+      </div>
+      <table>
+        <thead><tr><th>Pump / Nozzle</th><th>Opening</th><th>Reading At Change</th><th>Current Closing</th></tr></thead>
+        <tbody>
+          <tr><td><b>Pump 1 - Regular</b></td><td class="readonly">325,929.76</td><td class="input">325,950.00</td><td class="readonly">326,030.05</td></tr>
+          <tr><td><b>Pump 2 - Regular</b></td><td class="readonly">209,393.00</td><td class="input">209,410.00</td><td class="readonly">209,455.00</td></tr>
+        </tbody>
+      </table>
+      <div class="button success">Confirm Price Change</div>
+    
+  </div>
+    <div class="two">
+      <div>
+        <h2>Correct procedure</h2>
+        
+  <div class="instruction">
+    <span class="step">1</span>
+    <div><h3>Choose the affected product</h3><p>Premium, Regular, or Diesel.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">2</span>
+    <div><h3>Enter the exact effective time</h3><p>Use the time the pump selling price officially changed.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">3</span>
+    <div><h3>Enter the new selling price</h3><p>Do not overwrite the old part of the shift.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">4</span>
+    <div><h3>Get every matching nozzle reading</h3><p>Enter the physical register reading at the change time for all nozzles selling that product.</p></div>
+  </div>
+        
+  <div class="instruction">
+    <span class="step">5</span>
+    <div><h3>Confirm once</h3><p>The system divides sales before and after the change reading.</p></div>
+  </div>
+      </div>
+      <div>
+        <h2>Do not do these</h2>
+        
+  <div class="callout bad"><b>Do not use final closing</b><span>The change reading is the reading at the exact price-change time, not the shift-end reading.</span></div>
+        
+  <div class="callout bad"><b>Do not skip a nozzle</b><span>Every nozzle selling the affected product needs a change reading.</span></div>
+        
+  <div class="callout warn"><b>Do not use this for tomorrow</b><span>A price effective before the next shift begins belongs in normal Fuel Price Setup.</span></div>
+        <div class="example"><b>Example</b><span>Regular changed from ₱75.80 to ₱76.30 at 1:30 PM. Sales before register 325950.00 use ₱75.80; sales after it use ₱76.30.</span></div>
+      </div>
+    </div>
+    <div class="bottom-strip"><b>Before confirming:</b> product, effective time, new price, and every matching pump/nozzle reading are complete.</div>
+  </main>
+    <footer><span>FuelTech MANAGER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page green">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Daily Bank Deposit</h1><p>Record one real bank transaction with the correct sales coverage</p></div>
+      <div class="page-no">MANAGER<b>3/4</b></div>
+    </header>
+    <main>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Daily Bank Deposit</b><span class="badge ">Manager</span></div>
+    
+      <div class="three">
+        
+  <div class="field ">
+    <span>Deposit Date</span><b>2026-07-23</b>
+  </div>
+        
+  <div class="field ">
+    <span>Sales Date Covered</span><b>2026-07-22</b>
+  </div>
+        
+  <div class="field ">
+    <span>Covers</span><b>Shift 2 + Shift 3</b>
+  </div>
+        
+  <div class="field ">
+    <span>Bank</span><b>BDO</b>
+  </div>
+        
+  <div class="field ">
+    <span>Reference / Minutes & Seconds</span><b>14:36</b>
+  </div>
+        
+  <div class="field ">
+    <span>Amount</span><b>100,000.00</b>
+  </div>
+      </div>
+      <div class="button success">Save Daily Bank Deposit</div>
+    
+  </div>
+    <div class="two">
+      <div>
+        <h2>Meaning of each field</h2>
+        <table class="compact">
+          <tbody>
+            <tr><td><b>Deposit Date</b></td><td>The day the bank accepted the money.</td></tr>
+            <tr><td><b>Sales Date Covered</b></td><td>The sales day that produced the cash.</td></tr>
+            <tr><td><b>Covers</b></td><td>Shift 1, Shift 2, Shift 3, a combination, or All Shifts.</td></tr>
+            <tr><td><b>Bank</b></td><td>The receiving bank.</td></tr>
+            <tr><td><b>Reference</b></td><td>Bank reference; Liloan may use Minutes and Seconds.</td></tr>
+            <tr><td><b>Amount</b></td><td>The exact amount of this one bank transaction.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h2>Coverage rules</h2>
+        
+  <div class="callout good"><b>One deposit covers many shifts</b><span>Enter it once and select the combined coverage. Never repeat the full amount under every shift.</span></div>
+        
+  <div class="callout warn"><b>One deposit covers two sales dates</b><span>Split it into separate entries by sales date and correct covered shifts. The split totals must equal the real bank transaction.</span></div>
+        
+  <div class="callout info"><b>Not deposited yet</b><span>Do not create a fake deposit. The amount remains pending cash on hand until the real deposit is entered.</span></div>
+        
+  <div class="callout info"><b>Admin verification</b><span>Saving creates a Pending deposit. Only admin verifies it against bank records.</span></div>
+      </div>
+    </div>
+    <h2>Common example</h2>
+    <div class="flow three-flow">
+      <div><span class="icon">1</span><b>Yesterday Shift 2 + 3</b><span>Select yesterday as Sales Date</span></div>
+      <div><span class="icon">2</span><b>Deposited today</b><span>Select today as Deposit Date</span></div>
+      <div><span class="icon">3</span><b>One combined amount</b><span>Save once with Shift 2 + Shift 3</span></div>
+    </div>
+  </main>
+    <footer><span>FuelTech MANAGER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section>
+  <section class="page green">
+    <header>
+      <div><span class="brand">FUELTECH ACCOUNTING</span><h1>Deposit History, Requests, And Quick Sticker</h1><p>Check the last seven days and send corrections through admin</p></div>
+      <div class="page-no">MANAGER<b>4/4</b></div>
+    </header>
+    <main>
+    <h2>Manager deposit history</h2>
+    
+  <div class="screen">
+    <div class="screen-head"><b>Deposit History</b><span class="badge ">Own station only</span></div>
+    
+      <div class="two">
+  <div class="field ">
+    <span>Deposit From</span><b>2026-07-17</b>
+  </div>
+  <div class="field ">
+    <span>Deposit To</span><b>2026-07-23</b>
+  </div></div>
+      <table class="compact">
+        <thead><tr><th>Sales Date</th><th>Covered Shifts</th><th>Deposit Date</th><th>Bank</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Jul 22</td><td>Shift 2 + 3</td><td>Jul 23</td><td>BDO</td><td>₱100,000</td><td><span class="badge yellow">Pending</span></td></tr>
+          <tr><td>Jul 21</td><td>All Shifts</td><td>Jul 22</td><td>BPI</td><td>₱158,000</td><td><span class="badge green">Verified</span></td></tr>
+        </tbody>
+      </table>
+    
+  </div>
+    <div class="two">
+      <div>
+        <h2>Wrong saved deposit?</h2>
+        
+  <div class="callout info"><b>Request Change</b><span>Use when the deposit is real but amount, bank, reference, sales date, deposit date, or covered shifts are wrong.</span></div>
+        
+  <div class="callout warn"><b>Request Removal</b><span>Use when the row should not exist: duplicate, wrong station, or completely invalid transaction.</span></div>
+        
+  <div class="callout bad"><b>Wait for admin</b><span>The original record remains unchanged until admin approves. Do not add a second row to hide the mistake.</span></div>
+        <h2>Status meanings</h2>
+        <table class="compact">
+          <tbody>
+            <tr><td><span class="badge yellow">Pending</span></td><td>Saved, waiting for admin bank verification.</td></tr>
+            <tr><td><span class="badge green">Verified</span></td><td>Admin matched it with bank records.</td></tr>
+            <tr><td><span class="badge ">Change Requested</span></td><td>Correction is waiting for admin approval.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h2>Print-and-cut manager sticker</h2>
+        <div class="sticker manager">
+          <h3>MANAGER - DAILY CHECK</h3>
+          <ol>
+            <li>Log in to the correct branch.</li>
+            <li>Set fuel prices for correct effective date.</li>
+            <li>Choose Daily or exact Shift coverage.</li>
+            <li>Enter Premium, Regular, Diesel base prices.</li>
+            <li>Press Confirm Fuel Prices.</li>
+            <li>Use Mid-Shift Change only when price changed during the shift.</li>
+            <li>Save each real bank deposit once with correct dates and coverage.</li>
+            <li>Check Deposit History; request Change/Removal for mistakes.</li>
+            <li>Press Log Out before leaving the device.</li>
+          </ol>
+        </div>
+        
+  <div class="callout warn"><b>Cashier cannot submit after price update?</b><span>Confirm the correct station/date/shift coverage first. Cashier receives manager prices automatically; do not edit cashier report values.</span></div>
+      </div>
+    </div>
+  </main>
+    <footer><span>FuelTech MANAGER Guide</span><b>Read the screen before pressing Confirm.</b></footer>
+  </section></body></html>
