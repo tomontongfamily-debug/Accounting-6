@@ -60,8 +60,34 @@ test("totals only confirmed reports for the requested date and shift", () => {
     currentDate: "2026-09-01",
   });
   assert.equal(summary.submittedReportCount, 4);
+  assert.deepEqual(summary.missingBranches, ["Barili", "Moalboal"]);
   assert.equal(summary.totalSales, 4000);
   assert.equal(summary.totalTankWorth, 8280);
+  assert.equal(formatOwnerSms(summary), [
+    "Sep. 1, 2026",
+    "1st shift",
+    "Sales - 4,000",
+    "Tank - 8,280",
+    "Barili / Moalboal not sent",
+  ].join("\n"));
+});
+
+test("adds one missing station as a simple final SMS line", () => {
+  const summary = buildOwnerSmsSummary({
+    reportRows: branches.slice(1).map((branch) => reportRow(branch)),
+    currentDate: "2026-09-01",
+  });
+
+  assert.equal(formatOwnerSms(summary).split("\n").at(-1), "Mabolo not sent");
+});
+
+test("does not add a missing-station line when every station submitted", () => {
+  const summary = buildOwnerSmsSummary({
+    reportRows: branches.map((branch) => reportRow(branch)),
+    currentDate: "2026-09-01",
+  });
+
+  assert.equal(formatOwnerSms(summary).split("\n").length, 4);
 });
 
 test("daily and exact shift prices are applied in the same order as the dashboard", () => {

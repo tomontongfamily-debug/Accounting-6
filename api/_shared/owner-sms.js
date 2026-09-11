@@ -58,6 +58,7 @@ export function buildOwnerSmsSummary({ cashRows = [], reportRows = cashRows, pri
     shiftId,
     stationCount: BRANCHES.length,
     submittedReportCount: stationRows.filter((row) => row.submitted).length,
+    missingBranches: stationRows.filter((row) => !row.submitted).map((row) => row.branch),
     stationRows,
     totalSales: stationRows.reduce((sum, row) => sum + numberValue(row.sales), 0),
     totalTankWorth: stationRows.reduce((sum, row) => sum + numberValue(row.tankValue), 0),
@@ -90,12 +91,16 @@ function ownerSmsDate(date) {
 }
 
 export function formatOwnerSms(summary, sendDate = summary.currentDate) {
-  return [
+  const lines = [
     ownerSmsDate(sendDate),
     shiftOrdinal(summary.shiftId),
     `Sales - ${pesoAmount(summary.totalSales)}`,
     `Tank - ${pesoAmount(summary.totalTankWorth)}`,
-  ].join("\n");
+  ];
+  const missingBranches = summary.missingBranches
+    || (summary.stationRows || []).filter((row) => !row.submitted).map((row) => row.branch);
+  if (missingBranches.length > 0) lines.push(`${missingBranches.join(" / ")} not sent`);
+  return lines.join("\n");
 }
 
 export function normalizePhilippineMobile(value) {
