@@ -4,6 +4,7 @@ import { validateSubmission } from "../api/reports/save.js";
 
 function validReport(closing) {
   return {
+    branch: "Mabolo",
     date: "2026-07-29",
     cashierName: "Test Cashier",
     prices: { Premium: 70 },
@@ -32,6 +33,28 @@ test("server rejects more than 1,500 liters on one pump product", () => {
 test("server allows equal readings and exactly 1,500 liters", () => {
   assert.equal(validateSubmission(validReport(10000)), "");
   assert.equal(validateSubmission(validReport(11500)), "");
+});
+
+test("server temporarily allows only Liloan Pump 1 Diesel above 1,500 liters on September 15, 2026", () => {
+  const report = validReport(11800);
+  report.branch = "Liloan";
+  report.date = "2026-09-15";
+  report.prices = { Diesel: 68 };
+  report.pumpRows[0] = {
+    ...report.pumpRows[0],
+    id: "pump-1-diesel",
+    pump: "Pump 1",
+    nozzle: "Diesel",
+    product: "Diesel",
+  };
+
+  assert.equal(validateSubmission(report), "");
+  assert.match(validateSubmission({ ...report, branch: "Mabolo" }), /exceeds the 1,500 L maximum/i);
+  assert.match(validateSubmission({ ...report, date: "2026-09-16" }), /exceeds the 1,500 L maximum/i);
+  assert.match(validateSubmission({
+    ...report,
+    pumpRows: [{ ...report.pumpRows[0], pump: "Pump 2" }],
+  }), /exceeds the 1,500 L maximum/i);
 });
 
 test("server accepts a complete cash voucher on new reports", () => {
