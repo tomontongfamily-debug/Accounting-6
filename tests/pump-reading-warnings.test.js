@@ -60,3 +60,31 @@ test("allows equal, exactly 1,500 liters, and untouched ghost-zero readings", ()
 
   assert.deepEqual(warnings, []);
 });
+
+test("temporarily allows Liloan Pump 1 Diesel above 1,500 liters only on September 15, 2026", () => {
+  const targetReport = {
+    branch: "Liloan",
+    date: "2026-09-15",
+    pumpRows: [{
+      id: "pump-1-diesel",
+      pump: "Pump 1",
+      nozzle: "Diesel",
+      product: "Diesel",
+      opening: 10000,
+      closing: 11800,
+      closingEntered: true,
+    }],
+  };
+
+  assert.deepEqual(blockingPumpReadings(targetReport), []);
+  assert.equal(blockingPumpReadings({ ...targetReport, branch: "Mabolo" }).length, 1);
+  assert.equal(blockingPumpReadings({ ...targetReport, date: "2026-09-16" }).length, 1);
+  assert.equal(blockingPumpReadings({
+    ...targetReport,
+    pumpRows: [{ ...targetReport.pumpRows[0], pump: "Pump 2" }],
+  }).length, 1);
+  assert.equal(blockingPumpReadings({
+    ...targetReport,
+    pumpRows: [{ ...targetReport.pumpRows[0], product: "Premium", nozzle: "Premium" }],
+  }).length, 1);
+});

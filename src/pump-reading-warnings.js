@@ -5,6 +5,13 @@ function numeric(value) {
 
 export const MAX_PUMP_LITERS_PER_SHIFT = 1500;
 
+export function hasTemporaryPumpLimitException(report = {}, row = {}) {
+  return report.branch === "Liloan"
+    && report.date === "2026-09-15"
+    && row.pump === "Pump 1"
+    && row.product === "Diesel";
+}
+
 export function blockingPumpReadings(report = {}, maximumLiters = MAX_PUMP_LITERS_PER_SHIFT) {
   return (report.pumpRows || [])
     .flatMap((row) => {
@@ -12,7 +19,7 @@ export function blockingPumpReadings(report = {}, maximumLiters = MAX_PUMP_LITER
       const opening = numeric(row.opening);
       const closing = numeric(row.closing);
       const liters = closing - opening;
-      if (liters >= 0 && liters <= maximumLiters) return [];
+      if (liters >= 0 && (liters <= maximumLiters || hasTemporaryPumpLimitException(report, row))) return [];
       return [{
         rowId: row.id,
         pump: row.pump,

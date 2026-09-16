@@ -4,6 +4,7 @@ import { canWriteBranch, getRequestSession } from "../_shared/session.js";
 import { normalizeCashCountInput } from "../../src/cash-count-input.js";
 import { sendCorrectionRequestNotification } from "../_shared/push.js";
 import { authoritativePoRowsForReport } from "../_shared/po.js";
+import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -98,7 +99,7 @@ export function validateSubmission(report) {
     if (Number(row.opening) <= 0) return `${row.pump} ${row.nozzle}: previous closing is missing.`;
     const litersSold = Number(row.closing) - Number(row.opening);
     if (litersSold < 0) return `${row.pump} ${row.nozzle} (${row.product}): negative liters are not allowed. Current closing cannot be below previous closing.`;
-    if (litersSold > MAX_PUMP_LITERS_PER_SHIFT) return `${row.pump} ${row.nozzle} (${row.product}): ${litersSold.toFixed(2)} liters is too high or unusual and exceeds the ${MAX_PUMP_LITERS_PER_SHIFT.toLocaleString("en-US")} L maximum for one shift.`;
+    if (litersSold > MAX_PUMP_LITERS_PER_SHIFT && !hasTemporaryPumpLimitException(report, row)) return `${row.pump} ${row.nozzle} (${row.product}): ${litersSold.toFixed(2)} liters is too high or unusual and exceeds the ${MAX_PUMP_LITERS_PER_SHIFT.toLocaleString("en-US")} L maximum for one shift.`;
     if (litersSold > 0 && Number(report.prices?.[row.product]) <= 0) return `${row.product}: pump price is missing or zero.`;
   }
   if (!Array.isArray(report.tankRows) || report.tankRows.some((row) => !validNumber(row.actualDip))) return "Underground tank readings are incomplete.";
