@@ -59,7 +59,7 @@ function pumpRowSales(report, row) {
   return { liters: closing - opening, sales };
 }
 
-export function computeReportCash(report = {}) {
+export function computeReportFuel(report = {}) {
   const fuelByProduct = {};
   (report.pumpRows || []).forEach((row) => {
     const totals = fuelByProduct[row.product] || { liters: 0, sales: 0, calibration: 0 };
@@ -73,11 +73,17 @@ export function computeReportCash(report = {}) {
     totals.calibration += numberValue(row.calibration);
     fuelByProduct[row.product] = totals;
   });
-  const fuelSales = Object.values(fuelByProduct).reduce((sum, totals) => {
+  return Object.values(fuelByProduct).reduce((result, totals) => {
     const returnedCalibration = Math.min(totals.liters, totals.calibration);
     const averagePrice = totals.liters > 0 ? totals.sales / totals.liters : 0;
-    return sum + Math.max(0, totals.sales - returnedCalibration * averagePrice);
-  }, 0);
+    result.liters += Math.max(0, totals.liters - returnedCalibration);
+    result.sales += Math.max(0, totals.sales - returnedCalibration * averagePrice);
+    return result;
+  }, { liters: 0, sales: 0 });
+}
+
+export function computeReportCash(report = {}) {
+  const fuelSales = computeReportFuel(report).sales;
   const poTotal = (report.poRows || []).reduce((sum, row) => sum + numberValue(row.amount), 0);
   const purchaseTotal = (report.purchaseRows || []).reduce((sum, row) => sum + numberValue(row.amount), 0);
   const deductionTotal = countedDeductions(report.deductions || {}).reduce((sum, [, value]) => sum + numberValue(value), 0)

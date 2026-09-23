@@ -1,4 +1,4 @@
-import { buildOwnerSmsSummary, formatOwnerSms, sendUniSms } from "../_shared/owner-sms.js";
+import { buildOwnerSmsSummary, formatOwnerSms, previousOwnerSmsDate, sendUniSms } from "../_shared/owner-sms.js";
 import { manilaDateOffset } from "../_shared/health.js";
 import { supabaseAdmin } from "../_shared/supabase.js";
 
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
 
   try {
     const currentDate = req.query.date || manilaDateOffset(0);
-    const sendDate = currentDate;
+    const previousDate = previousOwnerSmsDate(currentDate);
     const dryRun = req.query.dryRun === "1";
     const startSegment = Math.max(1, Number.parseInt(req.query.startSegment || "1", 10) || 1);
     const endSegment = Math.max(
@@ -30,16 +30,12 @@ export default async function handler(req, res) {
       Number.parseInt(req.query.endSegment || String(Number.MAX_SAFE_INTEGER), 10) || Number.MAX_SAFE_INTEGER,
     );
     const supabase = supabaseAdmin();
-    const [reportResult, priceResult, healthResult] = await Promise.all([
+    const [reportResult, healthResult] = await Promise.all([
       supabase
         .from("fueltech_reports")
         .select("report_key,branch,report_date,shift_id,data,updated_at")
-        .eq("report_date", currentDate)
-        .eq("shift_id", "shift-1"),
-      supabase
-        .from("fueltech_price_book")
-        .select("branch,effective_date,coverage,shift_id,prices,updated_at")
-        .lte("effective_date", currentDate),
+        .in("report_date", [previousDate, currentDate])
+        .in("shift_id", ["shift-1", "shift-2", "shift-3"]),
       supabase
         .from("fueltech_system_health")
         .select("payload")
@@ -48,17 +44,15 @@ export default async function handler(req, res) {
     ]);
 
     if (reportResult.error) throw reportResult.error;
-    if (priceResult.error) throw priceResult.error;
     const healthTableMissing = isMissingHealthTable(healthResult.error);
     if (healthResult.error && !healthTableMissing) throw healthResult.error;
 
     const summary = buildOwnerSmsSummary({
       reportRows: reportResult.data || [],
-      priceRows: priceResult.data || [],
       currentDate,
       shiftId: "shift-1",
     });
-    const content = formatOwnerSms(summary, sendDate);
+    const content = formatOwnerSms(summary);
     if (dryRun) {
       res.status(200).json({ ok: true, dryRun: true, currentDate, content, length: content.length, summary });
       return;
