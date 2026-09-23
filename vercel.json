@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/daily-owner-sms",
-      "schedule": "30 5 * * *"
+      "schedule": "40 5 * * *"
     }
   ],
   "headers": [
