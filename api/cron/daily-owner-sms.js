@@ -24,11 +24,6 @@ export default async function handler(req, res) {
     const currentDate = req.query.date || manilaDateOffset(0);
     const previousDate = previousOwnerSmsDate(currentDate);
     const dryRun = req.query.dryRun === "1";
-    const startSegment = Math.max(1, Number.parseInt(req.query.startSegment || "1", 10) || 1);
-    const endSegment = Math.max(
-      startSegment,
-      Number.parseInt(req.query.endSegment || String(Number.MAX_SAFE_INTEGER), 10) || Number.MAX_SAFE_INTEGER,
-    );
     const supabase = supabaseAdmin();
     const [reportResult, healthResult] = await Promise.all([
       supabase
@@ -69,8 +64,6 @@ export default async function handler(req, res) {
       recipients: String(process.env.OWNER_MOBILE_NUMBERS || process.env.OWNER_MOBILE_NUMBER || "").split(","),
       senderId: process.env.UNISMS_SENDER_ID || "Unisoft",
       content,
-      startSegment,
-      endSegment,
     });
     const ownerSms = {
       status: "sent",
