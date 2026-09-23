@@ -128,45 +128,17 @@ export function normalizePhilippineMobile(value) {
   return "";
 }
 
-export function splitSmsContent(content, maxChunkLength = 145) {
-  const chunks = [];
-  let current = "";
-  for (const originalLine of String(content || "").split("\n")) {
-    let line = originalLine;
-    while (line.length > maxChunkLength) {
-      if (current) {
-        chunks.push(current);
-        current = "";
-      }
-      chunks.push(line.slice(0, maxChunkLength));
-      line = line.slice(maxChunkLength);
-    }
-    const candidate = current ? `${current}\n${line}` : line;
-    if (candidate.length <= maxChunkLength) {
-      current = candidate;
-    } else {
-      if (current) chunks.push(current);
-      current = line;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
-}
-
 export async function sendUniSms({
   apiKey,
   recipient,
   recipients,
   senderId,
   content,
-  startSegment = 1,
-  endSegment = Number.POSITIVE_INFINITY,
   fetchImpl = fetch,
-  delayImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }) {
   if (!apiKey) throw new Error("Missing UNISMS_API_KEY.");
   if (!senderId) throw new Error("Missing UNISMS_SENDER_ID.");
-  if (!content || content.length > 5000) throw new Error("UniSMS content must contain 1 to 5,000 characters.");
+  if (!content || content.length > 670) throw new Error("UniSMS content must contain 1 to 670 characters.");
   const mobileNumbers = [...new Set((recipients?.length ? recipients : [recipient])
     .map(normalizePhilippineMobile)
     .filter(Boolean))];
@@ -192,29 +164,6 @@ export async function sendUniSms({
     }
     return body;
   };
-
-  if (content.length > 160) {
-    const chunks = splitSmsContent(content);
-    const messages = [];
-    const firstIndex = Math.max(0, Math.min(chunks.length - 1, numberValue(startSegment) - 1));
-    const requestedLastIndex = Number.isFinite(Number(endSegment)) ? Number(endSegment) - 1 : chunks.length - 1;
-    const lastIndex = Math.max(firstIndex, Math.min(chunks.length - 1, requestedLastIndex));
-    for (let index = firstIndex; index <= lastIndex; index += 1) {
-      if (index > firstIndex) await delayImpl(4000);
-      const segment = `FUELTECH ${index + 1}/${chunks.length}\n${chunks[index]}`;
-      messages.push(await requestSms(
-        mobileNumbers.length > 1 ? "blast" : "sms",
-        mobileNumbers.length > 1 ? { recipients: mobileNumbers } : { recipient: mobileNumbers[0] },
-        segment,
-      ));
-    }
-    return {
-      referenceId: messages.map((body) => body?.blast_id || body?.message?.reference_id || "").filter(Boolean).join(","),
-      status: messages.every((body) => body?.message?.status === "sent") ? "sent" : "queued",
-      recipientCount: mobileNumbers.length,
-      segmentCount: chunks.length,
-    };
-  }
 
   const isBlast = mobileNumbers.length > 1;
   const body = await requestSms(isBlast ? "blast" : "sms", (

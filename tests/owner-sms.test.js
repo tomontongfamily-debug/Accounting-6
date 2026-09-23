@@ -193,37 +193,44 @@ test("normalizes Philippine mobile numbers and sends both owners as one blast", 
   assert.deepEqual(result, { referenceId: "blast_123", status: "queued", recipientCount: 2 });
 });
 
-test("sends a detailed long report as numbered SMS segments", async () => {
+test("sends a detailed long report in one complete provider request", async () => {
   const requests = [];
-  const content = "D".repeat(800);
+  const content = "D".repeat(600);
   const result = await sendUniSms({
     apiKey: "secret",
     recipients: ["09778088883", "09999988880"],
     senderId: "Unisoft",
     content,
-    delayImpl: async () => {},
     fetchImpl: async (url, options) => {
       requests.push({ url, body: JSON.parse(options.body) });
-      const requestNumber = requests.length;
       return {
         ok: true,
         status: 200,
-        json: async () => ({ blast_id: `blast_${requestNumber}` }),
+        json: async () => ({ blast_id: "blast_1" }),
       };
     },
   });
-  assert.equal(requests.length, 6);
-  assert.ok(requests.every((request) => request.url === "https://unismsapi.com/api/blast"));
-  assert.ok(requests.every((request) => request.body.content.length <= 160));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://unismsapi.com/api/blast");
   assert.deepEqual(requests[0].body.recipients, ["+639778088883", "+639999988880"]);
-  assert.match(requests[0].body.content, /^FUELTECH 1\/6\n/);
-  assert.match(requests[5].body.content, /^FUELTECH 6\/6\n/);
+  assert.equal(requests[0].body.content, content);
   assert.deepEqual(result, {
-    referenceId: "blast_1,blast_2,blast_3,blast_4,blast_5,blast_6",
+    referenceId: "blast_1",
     status: "queued",
     recipientCount: 2,
-    segmentCount: 6,
   });
+});
+
+test("rejects content above the UniSMS long-message limit", async () => {
+  await assert.rejects(() => sendUniSms({
+    apiKey: "secret",
+    recipient: "09778088883",
+    senderId: "Unisoft",
+    content: "D".repeat(671),
+    fetchImpl: async () => {
+      throw new Error("Provider should not be called.");
+    },
+  }), /1 to 670 characters/);
 });
 
 test("rejects a provider error even when UniSMS returns HTTP 200", async () => {
