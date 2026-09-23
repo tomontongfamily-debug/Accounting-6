@@ -1,13 +1,11 @@
 import { BRANCHES } from "./supabase.js";
-import { computeReportCash } from "./health.js";
+import { computeReportCash, computeReportFuel } from "./health.js";
+
+const OWNER_SMS_BRANCHES = ["Mabolo", "Liloan", "Arpili", "Pondol", "Barili", "Moalboal"];
 
 function numberValue(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function hasValue(value) {
-  return value !== "" && value !== null && value !== undefined;
 }
 
 function latestPriceRow(rows, predicate) {
@@ -28,33 +26,60 @@ export function effectiveSellingPrices(priceRows = [], branch, reportDate, shift
   return { ...fallback, ...(daily?.prices || {}), ...(shift?.prices || {}) };
 }
 
-export function buildOwnerSmsSummary({ cashRows = [], reportRows = cashRows, priceRows = [], currentDate, shiftId = "shift-1" }) {
-  const stationRows = BRANCHES.map((branch) => {
-    const row = reportRows
-      .filter((candidate) => (
-        candidate.branch === branch
-        && candidate.report_date === currentDate
-        && candidate.shift_id === shiftId
-      ))
-      .sort((a, b) => String(a.updated_at || "").localeCompare(String(b.updated_at || "")))
-      .at(-1);
-    if (row?.data?.confirmed !== true) {
-      return { branch, submitted: false, sales: 0, tankValue: 0 };
-    }
+export function previousOwnerSmsDate(date) {
+  const [year, month, day] = String(date || "").split("-").map(numberValue);
+  if (!year || !month || !day) return "";
+  const previous = new Date(Date.UTC(year, month - 1, day));
+  previous.setUTCDate(previous.getUTCDate() - 1);
+  return previous.toISOString().slice(0, 10);
+}
 
-    const sales = computeReportCash(row.data).grossSales;
-    const prices = effectiveSellingPrices(priceRows, branch, row.report_date, row.shift_id, row.data?.prices || {});
-    const tanks = row.data?.tankRows || [];
-    const hasTankData = tanks.length > 0 && tanks.every((tank) => hasValue(tank.actualDip));
-    const hasPrices = tanks.every((tank) => numberValue(prices[tank.product]) > 0);
-    const tankValue = hasTankData && hasPrices
-      ? tanks.reduce((sum, tank) => sum + numberValue(tank.actualDip) * numberValue(prices[tank.product]), 0)
-      : 0;
-    return { branch, submitted: true, sales, tankValue };
+function latestReportRow(reportRows, branch, date, shiftId) {
+  return reportRows
+    .filter((candidate) => (
+      candidate.branch === branch
+      && candidate.report_date === date
+      && candidate.shift_id === shiftId
+    ))
+    .sort((a, b) => String(a.updated_at || "").localeCompare(String(b.updated_at || "")))
+    .at(-1);
+}
+
+function stationDiscount(branch) {
+  return branch === "Liloan" ? 3 : 2;
+}
+
+export function buildOwnerSmsSummary({ cashRows = [], reportRows = cashRows, currentDate, shiftId = "shift-1" }) {
+  const previousDate = previousOwnerSmsDate(currentDate);
+  const cashSlots = [
+    { date: previousDate, shiftId: "shift-2" },
+    { date: previousDate, shiftId: "shift-3" },
+    { date: currentDate, shiftId: "shift-1" },
+  ];
+  const stationRows = OWNER_SMS_BRANCHES.map((branch) => {
+    const row = latestReportRow(reportRows, branch, currentDate, shiftId);
+    const discount = stationDiscount(branch);
+    const periodTotals = cashSlots.reduce((totals, slot) => {
+      const cashRow = latestReportRow(reportRows, branch, slot.date, slot.shiftId);
+      if (cashRow?.data?.confirmed !== true) return totals;
+      const cash = computeReportCash(cashRow.data);
+      const fuel = computeReportFuel(cashRow.data);
+      totals.reportCount += 1;
+      totals.sales += cash.grossSales;
+      totals.cashOnHand += cash.pendingCashOnHand;
+      totals.tankValue += Math.max(0, fuel.sales - fuel.liters * discount);
+      return totals;
+    }, { reportCount: 0, sales: 0, tankValue: 0, cashOnHand: 0 });
+    return {
+      branch,
+      submitted: row?.data?.confirmed === true,
+      ...periodTotals,
+    };
   });
 
   return {
     currentDate,
+    previousDate,
     shiftId,
     stationCount: BRANCHES.length,
     submittedReportCount: stationRows.filter((row) => row.submitted).length,
@@ -62,44 +87,37 @@ export function buildOwnerSmsSummary({ cashRows = [], reportRows = cashRows, pri
     stationRows,
     totalSales: stationRows.reduce((sum, row) => sum + numberValue(row.sales), 0),
     totalTankWorth: stationRows.reduce((sum, row) => sum + numberValue(row.tankValue), 0),
+    totalCashOnHand: stationRows.reduce((sum, row) => sum + numberValue(row.cashOnHand), 0),
   };
 }
 
-function pesoAmount(value) {
+function pesoAmount(value, fractionDigits = 0) {
   return numberValue(value).toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   });
 }
 
-function shiftOrdinal(shiftId) {
-  return ({
-    "shift-1": "1st shift",
-    "shift-2": "2nd shift",
-    "shift-3": "3rd shift",
-  })[shiftId] || String(shiftId || "").replace("shift-", "Shift ");
-}
-
-function ownerSmsDate(date) {
-  const [year, month, day] = String(date || "").split("-").map(numberValue);
-  if (!year || !month || !day) return String(date || "");
-  const monthName = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    timeZone: "Asia/Manila",
-  }).format(new Date(Date.UTC(year, month - 1, day)));
-  return `${monthName}. ${day}, ${year}`;
-}
-
-export function formatOwnerSms(summary, sendDate = summary.currentDate) {
+export function formatOwnerSms(summary) {
   const lines = [
-    ownerSmsDate(sendDate),
-    shiftOrdinal(summary.shiftId),
-    `Sales - ${pesoAmount(summary.totalSales)}`,
-    `Tank - ${pesoAmount(summary.totalTankWorth)}`,
+    "Good afternoon",
+    "",
+    "Tank Total Value",
+    ...(summary.stationRows || [])
+      .filter((row) => numberValue(row.reportCount) > 0)
+      .map((row) => `${row.branch}- ${pesoAmount(row.tankValue, 2)}`),
+    `Grand total - ${pesoAmount(summary.totalTankWorth, 2)}`,
+    "",
+    "COH shift 2 yesterday, shift 3 yesterday, shift 1 today",
+    ...(summary.stationRows || [])
+      .filter((row) => numberValue(row.cashOnHand) > 0)
+      .map((row) => `${row.branch}- ${pesoAmount(row.cashOnHand)}`),
+    `Grand total = ${pesoAmount(summary.totalCashOnHand)}`,
   ];
   const missingBranches = summary.missingBranches
     || (summary.stationRows || []).filter((row) => !row.submitted).map((row) => row.branch);
   if (missingBranches.length > 0) lines.push(`${missingBranches.join(" / ")} not sent`);
+  lines.push("Salamat");
   return lines.join("\n");
 }
 
