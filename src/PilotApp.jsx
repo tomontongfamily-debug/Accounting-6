@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { pilotPost } from './pilot-client.js';
+import { loadReportsWithDraftSync } from "./demo-report-load.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
+import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
+import { StationHealthReview } from "./shift-health.jsx";
+import { AutomaticVouchers } from "./cash-denominations.jsx";
+import { denominationTotal, readingComplete } from "./error-reduction.ts";
 import { cashierReportDateDisplay } from "./cashier-date.js";
 import { OWNER_PERIOD_OPTIONS, ownerCashTrendRows, ownerPeriodRange, ownerReportsForPeriod } from "./owner-period.js";
 import { blockingPumpReadings, MAX_PUMP_LITERS_PER_SHIFT } from "./pump-reading-warnings.js";
@@ -24,10 +31,10 @@ import { midShiftChangeOrder, midShiftReadingRows, midShiftSalesBreakdown } from
 import { applyEffectivePricing } from "./report-price-sync.js";
 import { subscribeToStoreChanges } from "./realtime-store.js";
 
-const BRANCHES = ["Mabolo", "Arpili", "Liloan", "Pondol", "Barili", "Moalboal"];
+const BRANCHES = ["Liloan"];
 const HEALTH_BRANCH_OPTIONS = ["All Stations", ...BRANCHES];
 const FUEL_TYPES = ["Premium", "Regular", "Diesel"];
-const CASH_VOUCHER_CATEGORIES = ["OPEX", "Personal", "Construction"];
+const CASH_VOUCHER_CATEGORIES = ["OPEX", "Personal", "Construction", "Personnel"];
 const CASH_VOUCHER_START_DATE = "2026-07-29";
 const SHIFT_OPTIONS = [
   { id: "shift-1", label: "Shift 1 - 4:00 AM to 1:00 PM" },
@@ -62,11 +69,11 @@ const GLOBAL_REPORTING_START_DATE = "2026-07-30";
 const REPORT_SAVE_DEBOUNCE_MS = 650;
 const LOCAL_DRAFT_CACHE_DEBOUNCE_MS = 180;
 const TODAY = localDateKey();
-const STORE_KEY = "fueltech-official-branch-reporting-v2";
-const OFFLINE_QUEUE_KEY = "fueltech-report-offline-queue-v2";
-const LOCAL_DRAFTS_KEY = "fueltech-report-local-drafts-v1";
-const LOCAL_WIZARD_STEPS_KEY = "fueltech-cashier-wizard-steps-v1";
-const CASHIER_SESSION_CACHE_KEY = "fueltech-cashier-session-v1";
+const STORE_KEY = "fueltech-pilot-store_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
+const OFFLINE_QUEUE_KEY = "fueltech-pilot-offline_queue_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
+const LOCAL_DRAFTS_KEY = "fueltech-pilot-local_drafts_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
+const LOCAL_WIZARD_STEPS_KEY = "fueltech-pilot-local_wizard_steps_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
+const CASHIER_SESSION_CACHE_KEY = "fueltech-pilot-cashier_session_cache_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
 const PUMP_CONFIG_VERSION = "2026-07-25-mabolo-pump-5";
 const PUMP_LAYOUTS = {
   Mabolo: [
@@ -106,11 +113,11 @@ const PUMP_LAYOUTS = {
   ],
 };
 
-const OWNER_DISPLAY_BRANCHES = ["Mabolo", "Liloan", "Arpili", "Pondol", "Barili", "Moalboal"];
+const OWNER_DISPLAY_BRANCHES = ["Liloan"];
 const OWNER_ACCOUNTING_START_DATE = "2026-07-30";
 const DECIMAL_INPUT_PATTERN = /^-?\d*([.,]\d*)?$/;
-const DEVICE_CLIENT_ID_KEY = "fueltech-device-client-id";
-const DEVICE_SAVE_VERSION_KEY = "fueltech-device-save-version";
+const DEVICE_CLIENT_ID_KEY = "fueltech-pilot-device_client_id_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
+const DEVICE_SAVE_VERSION_KEY = "fueltech-pilot-device_save_version_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
 const BRANCH_DATA_VERSIONS = {
   Mabolo: "2026-07-31-rewind-to-july-30-1",
   Arpili: "2026-07-30-arpili-opening-reset-2",
@@ -217,7 +224,8 @@ function nextShiftFor(date, shiftId) {
 }
 
 function branchReportingDate(reports = {}, branch) {
-  let date = GLOBAL_REPORTING_START_DATE;
+  const demoDates = Object.values(reports).filter(r => r.branch === branch && r.pilot && !r.baselineReport).map(r => r.date).sort();
+  let date = demoDates[0] || GLOBAL_REPORTING_START_DATE;
   for (let checked = 0; checked < 3650; checked += 1) {
     const complete = SHIFT_OPTIONS.every((shift) => reportCompleted(reports[reportKey(branch, date, shift.id)]));
     if (!complete) return date;
@@ -280,6 +288,7 @@ function shiftPriceKey(date, shiftId) {
 }
 
 function roleFromPath(pathname) {
+  pathname=pathname.replace(/^\/pilot/, "");
   if (pathname === "/cashier") return "Cashier";
   if (pathname === "/manager") return "Manager";
   if (pathname === "/admin") return "Admin";
@@ -385,20 +394,7 @@ async function endLoginSession() {
   if (!response.ok) throw new Error("Unable to log out safely.");
 }
 
-async function apiPost(path, body, sessionToken = "") {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(sessionToken && sessionToken !== "cookie" ? { "x-fueltech-session": sessionToken } : {}) },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || result.ok === false) {
-    const error = new Error(result.error || "Unable to save online.");
-    Object.assign(error, result, { status: response.status });
-    throw error;
-  }
-  return result;
-}
+async function apiPost(path,body,sessionToken='') {return pilotPost(path,body,sessionToken);}
 
 function productFromNozzle(nozzle) {
   const x = String(nozzle).toLowerCase();
@@ -776,7 +772,7 @@ function reportWarnings(report, result) {
 }
 
 function pumpFieldWarnings(report) {
-  return blockingPumpReadings(report).map((warning) => ({
+  return blockingPumpReadings(report).filter((warning) => warning.kind === "negative").map((warning) => ({
     ...warning,
     message: warning.kind === "negative"
       ? `${warning.pump} ${warning.nozzle} (${warning.product}): closing is below opening by ${liter(Math.abs(warning.liters))}. Negative liters are not allowed.`
@@ -839,6 +835,8 @@ function removeLocalDraft(report) {
 function readSavedWizardStep(report, maximumStep) {
   const steps = readStorageMap(LOCAL_WIZARD_STEPS_KEY);
   const saved = Number(steps[reportKey(report.branch, report.date, report.shiftId)]);
+  // Resume the former sixth step at the combined final step.
+  if (saved === 5 && maximumStep === 4) return 4;
   return Number.isInteger(saved) && saved >= 0 && saved <= maximumStep ? saved : 0;
 }
 
@@ -895,7 +893,13 @@ function storeWithLocalDrafts(store = emptyStore(), allowedBranch = "") {
       removeQueuedReportByKey(key);
       continue;
     }
-    reports[key] = draft;
+    reports[key] = {...draft,midShiftPriceChanges:(draft.midShiftPriceChanges||[]).map(change=>{
+      const saved=onlineReport?.midShiftPriceChanges?.find(c=>c.id===change.id&&c.product===change.product&&c.effectiveTime===change.effectiveTime);
+      return saved?{...change,readings:saved.readings,readingPhotos:saved.readingPhotos,confirmedAt:saved.confirmedAt}:change;
+    }),pumpRows:draft.pumpRows.map(row=>{
+      const saved=onlineReport?.pumpRows.find(p=>midShiftPumpKey(p)===midShiftPumpKey(row));
+      return saved?.readingRevision>=Number(row.readingRevision||0)&&saved?.readingRevision?saved:saved?{...row,id:saved.id,opening:saved.opening}:row;
+    }),cashReviewState:onlineReport?.cashReviewState??draft.cashReviewState,recountRequired:onlineReport?.recountRequired??draft.recountRequired};
   }
   return { ...store, reports };
 }
@@ -1004,7 +1008,8 @@ function compute(report) {
   const confirmedBank = deposits.filter((row) => row.verified).reduce((sum, row) => sum + n(row.amount), 0);
   const pendingBank = Math.max(0, bankDeposit - confirmedBank);
   const pendingCashOnHand = report.pilot && Number.isFinite(report.pilotCashAwaitingDeposit)
-    ? report.pilotCashAwaitingDeposit : Math.max(0, expectedCash - bankDeposit);
+    ? report.pilotCashAwaitingDeposit
+    : Math.max(0, expectedCash - bankDeposit);
   const actualCashCountEntered = hasActualCashCounted(report);
   const actualCashCounted = actualCashCountEntered ? n(report.actualCashCounted) : 0;
   const cashVariance = physicalCashVariance(actualCashCounted, expectedCash, actualCashCountEntered);
@@ -1049,6 +1054,7 @@ function compute(report) {
 }
 
 function reportReviewFlags(report, result = compute(report)) {
+  if (report.pilot && report.confirmed && report.checkCategories) return report.checkCategories.map((category) => category.replaceAll("_", " "));
   if (!report.confirmed) return [];
 
   const flags = [];
@@ -1245,7 +1251,7 @@ function summarizeReports(reports) {
     pumpVariance: 0,
     poTotal: 0,
     purchaseTotal: 0,
-    cashVoucherCategories: { OPEX: 0, Personal: 0, Construction: 0 },
+    cashVoucherCategories: Object.fromEntries(CASH_VOUCHER_CATEGORIES.map(category => [category, 0])),
     pointsIssued: 0,
     pointsWithdrawn: 0,
     tankVariance: 0,
@@ -1339,6 +1345,8 @@ function depositHealthStatus(report, branch, date, shiftId) {
   if (!report) return { label: "No Report", tone: "red" };
   if (openingSetupCompleted(report)) return { label: "Not Required", tone: "green" };
   if (!report.confirmed) return { label: "Draft", tone: "yellow" };
+  if (report.depositCoverage?.status === "pending") return { label: "Deposit Pending", tone: "yellow" };
+  if (report.depositCoverage?.status === "verified") return { label: "Deposit Saved", tone: "green" };
   const deposits = activeDeposits(report);
   if (deposits.length === 0) return { label: "Deposit Missing", tone: "red" };
   if (deposits.some((deposit) => !deposit.verified)) return { label: "Deposit Pending", tone: "yellow" };
@@ -2221,6 +2229,9 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
       effectiveTime: change.effectiveTime || "",
       newPrice: n(change.newPrice),
       readings: change.readings || {},
+      readingPhotos: change.readingPhotos || {},
+      photoRequired: !!change.photoRequired,
+      confirmedAt: change.confirmedAt || "",
     }))
     : [];
   next.pointsIssued = n(next.pointsIssued);
@@ -2703,7 +2714,7 @@ export default function App() {
   const [cachedCashierSession] = useState(() => roleFromPath(window.location.pathname) === "Cashier" ? readCachedCashierSession() : null);
   const [store, setStore] = useState(() => storeWithLocalDrafts());
   const [role, setRole] = useState(() => roleFromPath(window.location.pathname));
-  const [branch, setBranch] = useState(() => cachedCashierSession?.branch || "Mabolo");
+  const [branch, setBranch] = useState(() => cachedCashierSession?.branch || "Liloan");
   const [currentDate, setCurrentDate] = useState(currentShift.date);
   const [selectedDate, setSelectedDate] = useState(TODAY);
   const [selectedShiftId, setSelectedShiftId] = useState(currentShift.id);
@@ -2716,7 +2727,7 @@ export default function App() {
   const [mobileStationBranch, setMobileStationBranch] = useState("Liloan");
   const [mobileStationStartDate, setMobileStationStartDate] = useState(dateOffset(TODAY, -7));
   const [mobileStationEndDate, setMobileStationEndDate] = useState(TODAY);
-  const [healthStartDate, setHealthStartDate] = useState(TODAY);
+  const [healthStartDate, setHealthStartDate] = useState(dateOffset(TODAY, -6));
   const [healthEndDate, setHealthEndDate] = useState(TODAY);
   const [depositDate, setDepositDate] = useState(TODAY);
   const [depositSalesDate, setDepositSalesDate] = useState(TODAY);
@@ -2737,6 +2748,7 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState("Connecting online accounting database...");
   const [showReportConfirm, setShowReportConfirm] = useState(false);
   const [submitReportError, setSubmitReportError] = useState("");
+  const phoneView = usePhoneView();
   const [cashierReportOpen, setCashierReportOpen] = useState(false);
   const [cashierReportDateOverride, setCashierReportDateOverride] = useState("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
@@ -2754,6 +2766,7 @@ export default function App() {
   const hasUnsavedOnlineChangeRef = useRef(false);
   const localChangeVersionRef = useRef(readDeviceSaveVersion());
   const pendingSaveCountRef = useRef(0);
+  const pumpMutationVersionRef = useRef(0);
   const pendingSaveRef = useRef(Promise.resolve());
   const draftSaveTimerRef = useRef(null);
   const pendingDraftReportRef = useRef(null);
@@ -2896,15 +2909,15 @@ export default function App() {
     async function refreshOnlineStore(silent = false) {
       if (silent && (pendingSaveCountRef.current > 0 || isSavingOnlineRef.current || hasUnsavedOnlineChangeRef.current)) return;
       const refreshStartedAtVersion = localChangeVersionRef.current;
+      const pumpVersion = pumpMutationVersionRef.current;
       if (!silent) setSyncMessage("Connecting online accounting database...");
       try {
-        let onlineStore = await loadOnlineStore(sessionToken);
-        if (navigator.onLine && role !== "Approver") {
-          await flushOfflineReports(sessionToken, role === "Admin" ? "" : branch);
-          onlineStore = await loadOnlineStore(sessionToken);
-        }
+        const { onlineStore, draftSyncError } = await loadReportsWithDraftSync({
+          load: () => loadOnlineStore(sessionToken),
+          flush: navigator.onLine && role !== "Approver" ? () => flushOfflineReports(sessionToken, role === "Admin" ? "" : branch) : null,
+        });
         if (!mounted) return;
-        if (refreshStartedAtVersion !== localChangeVersionRef.current || pendingSaveCountRef.current > 0) return;
+        if (refreshStartedAtVersion !== localChangeVersionRef.current || pumpVersion !== pumpMutationVersionRef.current || pendingSaveCountRef.current > 0) return;
         setStore(role === "Approver" ? onlineStore : storeWithLocalDrafts(onlineStore, role === "Admin" ? "" : branch));
         hasLoadedOnlineStoreRef.current = true;
         if (role === "Admin") {
@@ -2915,7 +2928,7 @@ export default function App() {
         setHasUnsavedOnlineChange(false);
         setInitialLoadError("");
         setLastRefreshedAt(new Date().toISOString());
-        setSyncMessage("Online database connected.");
+        setSyncMessage(draftSyncError ? `Saved reports loaded. A local draft still needs syncing: ${draftSyncError.message}. Your draft is kept on this device.` : "Online database connected.");
       } catch (error) {
         if (!mounted) return;
         if (error.status === 401) {
@@ -2984,15 +2997,19 @@ export default function App() {
       if (!document.hidden) refreshOnlineStore(true);
     }
 
+    const demoRefreshInterval = window.setInterval(refreshWhenVisible, 15000);
     window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("fueltech-pilot-change", refreshWhenVisible);
     window.addEventListener("online", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       mounted = false;
       window.clearTimeout(realtimeRefreshTimer);
+      window.clearInterval(demoRefreshInterval);
       stopRealtime();
       window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("fueltech-pilot-change", refreshWhenVisible);
       window.removeEventListener("online", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -3031,6 +3048,7 @@ export default function App() {
   }, [accessAllowed, sessionToken, role, branch, cashierReportOpen, activeDate, activeShiftId]);
 
   function openRole(path) {
+    path="/pilot"+path.replace(/^\/pilot/,"");
     window.history.pushState({}, "", path);
     setRole(roleFromPath(path));
     setAuthMessage("");
@@ -3367,10 +3385,28 @@ export default function App() {
     setCashierReportOpen(true);
   }
 
+  function acceptDemoReport(next) {
+    removeLocalDraft(next); removeQueuedReport(next);
+    activeReportRef.current = next;
+    setStore(old => ({ ...old, reports: { ...old.reports, [reportKey(next.branch, next.date, next.shiftId)]: normalizeExistingReport(next) } }));
+  }
+
+  async function updatePumpReading(nextRow) {
+    const current = latestActiveReportForEdit();
+    pumpMutationVersionRef.current += 1;
+    const saved = await savePumpReading(current,nextRow);
+    pumpMutationVersionRef.current += 1;
+    const savedRow = saved.report.pumpRows.find(row=>row.id===nextRow.id);
+    const key = reportKey(current.branch,current.date,current.shiftId);
+    setStore(old=>({...old,reports:{...old.reports,[key]:{...old.reports[key],pumpRows:old.reports[key].pumpRows.map(row=>row.id===savedRow.id?savedRow:row),pilotRevision:saved.report.pilotRevision,cashReviewState:saved.report.cashReviewState,recountRequired:saved.report.recountRequired}}}));
+    window.dispatchEvent(new Event('fueltech-pilot-change'));
+    return savedRow;
+  }
+
   function patchReport(path, value) {
     const next = clone(activeReport);
     const [section, key, subKey] = path;
-    if (section === "root") next[key] = value;
+    if (section === "root") { next[key] = value; if (key === "cashDenominations") { try { next.actualCashCounted = denominationTotal(value); } catch { next.actualCashCounted = ""; } } if (key === "deliveries") next.tankRows = next.tankRows.map(row => ({ ...row, delivery: value.filter(d => d.product === row.product).reduce((sum,d) => sum + Number(d.liters),0) })); }
     else if (section === "pumpRows") {
       next.pumpRows[key][subKey] = value;
       if (subKey === "closing") {
@@ -3465,8 +3501,26 @@ export default function App() {
     saveReport(nextReport);
   }
 
-  function patchMidShiftPriceReading(id, rowId, value) {
-    saveReport(patchMidShiftReading(latestActiveReportForEdit(), id, rowId, value));
+  async function prepareMidShiftPhotos() {
+    // Finish metadata autosaves before uploading a reading for this change.
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);draftSaveTimerRef.current=null;
+      const pending=pendingDraftReportRef.current;pendingDraftReportRef.current=null;
+      if(pending) await persistReport(pending,"save",true);
+    }
+    await pendingSaveRef.current.catch(()=>{});
+  }
+
+  async function patchMidShiftPriceReading(change,row) {
+    await prepareMidShiftPhotos();
+    const current=latestActiveReportForEdit();
+    pumpMutationVersionRef.current += 1;
+    let saved;
+    try { saved=await demoApi('midshift-reading',{reportKey:reportKey(current.branch,current.date,current.shiftId),changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,row,revision:row.readingRevision||0}); }
+    finally { pumpMutationVersionRef.current += 1; }
+    acceptDemoReport(saved.report);
+    const updated=saved.report.midShiftPriceChanges.find(item=>item.id===change.id);
+    return {...row,...updated.readingPhotos[midShiftPumpKey(row)],closing:midShiftReadingValue(updated,row)};
   }
 
   function removeMidShiftPriceChange(id) {
@@ -3481,8 +3535,8 @@ export default function App() {
       return;
     }
     const matchingRows = (latestReport.pumpRows || []).filter((row) => row.product === change.product);
-    if (matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0)) {
-      setSyncMessage(`Complete every ${change.product} price-change pump reading before confirming.`);
+    if (matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0 || !change.readingPhotos?.[midShiftPumpKey(row)]?.readingConfirmed)) {
+      setSyncMessage(`Photograph and confirm every ${change.product} nozzle before confirming the price change.`);
       return;
     }
     const confirmedReport = {
@@ -3870,6 +3924,10 @@ export default function App() {
   }
 
   function patchEffectivePrice(product, value) {
+    const previous = displayedManagerPrices[product];
+    if (Number(value) === Number(previous)) return;
+    if (!window.confirm(`${Number(value) > Number(previous) * 2 || Number(value) < Number(previous) / 2 ? "PLEASE CHECK THIS PRICE\n" : ""}${product}: ${peso(previous)} → ${peso(value)}\nEffective: ${selectedDate}\nConfirm this price change?`)) return;
+
     localChangeVersionRef.current = nextDeviceSaveVersion(localChangeVersionRef.current);
     const nextPrices = { ...defaultPrices(), ...displayedManagerPrices, [product]: value };
     const priceKey = pricingCoverage === "Shift" ? shiftPriceKey(selectedDate, pricingShiftId) : dailyPriceKey(selectedDate);
@@ -4039,6 +4097,10 @@ export default function App() {
     }
   }
 
+  if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError) {
+    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} />;
+  }
+
   if (!role) {
     return (
       <main className="app">
@@ -4047,7 +4109,7 @@ export default function App() {
             <div>
               <div className="brand">FUELTECH ACCOUNTING</div>
               <h1>FuelTech Accounting</h1>
-              <p>Official online branch reporting for cashier reports, manager fuel prices, bank deposits, and admin verification.</p>
+              <p>Use the Liloan role links and your existing station credentials.</p>
             </div>
             <div className="hero-card">
               <button type="button" className="primary" onClick={() => openRole("/cashier")}>Open Cashier</button>
@@ -4081,7 +4143,7 @@ export default function App() {
               {role === "Admin" && (
                 <Field label="Report Date"><TextInput type="date" value={selectedDate} onChange={setSelectedDate} /></Field>
               )}
-              {role === "Admin" && (
+              {(role === "Admin" || role === "Manager") && (
                 <Field label="Report Shift"><SelectInput value={selectedShiftId} onChange={setSelectedShiftId} options={SHIFT_OPTIONS.map((shift) => ({ value: shift.id, label: shift.label }))} /></Field>
               )}
               {role === "Cashier" && (
@@ -4093,7 +4155,7 @@ export default function App() {
                   activeDate,
                 })} />
               )}
-              <Card title="Live Updates" value="On database change" note={formatRefreshTime(lastRefreshedAt)} />
+              <Card title="Live Updates" value="Every 3 seconds" note={formatRefreshTime(lastRefreshedAt)} />
               {accessAllowed && role === "Cashier" && <button type="button" className="secondary" onClick={logout}>Log Out</button>}
             </div>
           </header>
@@ -4145,9 +4207,9 @@ export default function App() {
                   <button type="button" className="secondary" onClick={() => window.location.reload()}>Try Again</button>
                 </Section>
               : cashierReportOpen
-              ? <CashierPage report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
+              ? <CashierPage onReading={updatePumpReading} onDemoSaved={acceptDemoReport} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
               : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={GLOBAL_OPENING_DATE} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
-            {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
+            {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
               ? <Section title="Loading Bank Verifications"><p className="neutral">Loading deposits from all stations...</p></Section>
               : initialLoadError
@@ -4156,6 +4218,8 @@ export default function App() {
                   <button type="button" className="secondary" onClick={() => window.location.reload()}>Try Again</button>
                 </Section>
               : <ApproverPage allReports={store.reports} consolidatedDeposits={consolidatedDeposits} startDate={summaryStartDate} setStartDate={setSummaryStartDate} endDate={summaryEndDate} setEndDate={setSummaryEndDate} approveDepositVerification={approveDepositVerification} reviewDepositRemovalRequest={reviewDepositRemovalRequest} lastRefreshedAt={lastRefreshedAt} logout={logout} />)}
+
+
             {role === "Admin" && <AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} />}
             {showReportConfirm && (
               <ConfirmReportDialog
@@ -4226,7 +4290,7 @@ function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting
           <ul>
             <li>{report.branch} - {shiftById(report.shiftId).label}</li>
             <li>Total liters: {liter(result.totalLiters)}</li>
-            <li>Status after submit: {reviewFlags.length ? "Submitted - Check Required" : "Submitted"}</li>
+            <li>Admin receives the full result after final validation.</li>
           </ul>
         </div>
         <div className="modal-actions">
@@ -4329,21 +4393,22 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
   );
 }
 
-function CashierPage({ report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
+function CashierPage({ onReading, onDemoSaved, report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
   const reviewFlags = reportReviewFlags(report, result);
   const activeRequest = correctionRequest(report);
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
-    !String(report.cashierName || "").trim() ? "Cashier name is required. Complete Step 7 before submitting." : "",
+    !String(report.cashierName || "").trim() ? "Cashier name is required. Complete Step 5 before submitting." : "",
     !Array.isArray(report.tankRows) || report.tankRows.some((row) => row.actualDip === "" || row.actualDip === null || row.actualDip === undefined)
-      ? "Underground tank readings are incomplete. Complete Step 3 before submitting."
+      ? "Underground tank readings are incomplete. Complete Step 4 before submitting."
       : "",
     cashVoucherValidationError(report),
   ].filter(Boolean);
   const submitBlockers = [...new Set([
     ...requiredFieldBlockers,
+    ...(!reportCompleted(report) && report.pumpRows.some(row => !readingComplete(row)) ? ["Complete all pump photos and confirmed readings before submitting."] : []),
     ...fieldWarnings.map((warning) => warning.message),
     ...criticalWarnings,
     ...warnings.filter((warning) =>
@@ -4354,11 +4419,11 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
     ),
   ])];
   const [highlightedPumpRowId, setHighlightedPumpRowId] = useState("");
-  const [wizardStep, setWizardStep] = useState(() => openingSetupMode ? 1 : reportCompleted(report) ? 7 : readSavedWizardStep(report, 7));
+  const [wizardStep, setWizardStep] = useState(() => openingSetupMode ? 1 : reportCompleted(report) ? 4 : readSavedWizardStep(report, 4));
   const [cashierNameDraft, setCashierNameDraft] = useState(report.cashierName || "");
   const [cashierNameError, setCashierNameError] = useState("");
   const [cashVoucherError, setCashVoucherError] = useState("");
-  const wizardSteps = ["Physical Cash", "Pump Register", "Underground Tank", "Deductions", "PO and Cash Vouchers", "Oil and Coke", "Cashier Information", "Review and Submit"];
+  const wizardSteps = ["Physical Cash", "Pump Register", "Payments, Deductions and Other Sales", "Reference Inventory and Deliveries", "Review and Submit"];
 
   useEffect(() => {
     setWizardStep((report.baselineMissing || report.baselineReport) ? 1 : reportCompleted(report) ? wizardSteps.length - 1 : readSavedWizardStep(report, wizardSteps.length - 1));
@@ -4406,15 +4471,19 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
   }
 
   function requestWizardStep(nextStep) {
+    if (!openingSetupMode && !reportCompleted(report)) {
+      if (nextStep > 0 && !report.cashCountConfirmed) { setWizardStep(0); return; }
+      if (nextStep > 1 && report.pumpRows.some(row => !readingComplete(row))) { setWizardStep(1); return; }
+    }
     if (openingSetupMode) {
       setWizardStep(1);
       return;
     }
-    if (nextStep > 4) {
+    if (nextStep > 2) {
       const voucherError = cashVoucherValidationError(report);
       if (voucherError) {
         setCashVoucherError(voucherError);
-        setWizardStep(4);
+        setWizardStep(2);
         return;
       }
     }
@@ -4422,6 +4491,9 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
   }
 
   function attemptSubmitReport() {
+    if (!report.cashCountConfirmed) { setWizardStep(0); return; }
+    if (report.pumpRows.some(row => !readingComplete(row))) { setWizardStep(1); return; }
+    if (!report.cashReviewState || (report.recountRequired && report.cashReviewState !== "final")) { setWizardStep(4); return; }
     if (!hasActualCashCounted(report)) {
       setWizardStep(0);
       return;
@@ -4431,18 +4503,18 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
       return;
     }
     if (!Array.isArray(report.tankRows) || report.tankRows.some((row) => row.actualDip === "" || row.actualDip === null || row.actualDip === undefined)) {
-      setWizardStep(2);
+      setWizardStep(3);
       return;
     }
     const voucherError = cashVoucherValidationError(report);
     if (voucherError) {
       setCashVoucherError(voucherError);
-      setWizardStep(4);
+      setWizardStep(2);
       return;
     }
     if (!String(report.cashierName || "").trim()) {
       setCashierNameError("Please enter the cashier's name.");
-      setWizardStep(6);
+      setWizardStep(4);
       return;
     }
     confirmReport();
@@ -4509,12 +4581,9 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
       <fieldset className="cashier-wizard-step" disabled={reportCompleted(report)}>
       {wizardStep === 0 && (
       <Section title="End-of-Shift Cash Count">
-        <p className="neutral">Count the physical cash at the end of the shift and enter the total below. Expected cash and the difference are shown only to admin.</p>
-        <div className="grid two">
-          <Field label="End-of-Shift Cash Count">
-            <CashCountInput value={report.actualCashCounted} onChange={(value) => patchReport(["root", "actualCashCounted"], value)} />
-          </Field>
-        </div>
+
+        <p className="neutral">Count the notes and coins at the end of the shift. The total is calculated automatically. Expected cash and the difference are shown only to admin.</p>
+        <CashConfirmation report={report} onSaved={onDemoSaved} onCountsChange={value => patchReport(["root", "cashDenominations"], value)} />
       </Section>
       )}
 
@@ -4531,37 +4600,18 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
           <b>New pump setup required.</b> Enter the exact starting physical register reading for each highlighted new pump nozzle. This is its first Previous Shift Closing and does not change older reports.
         </div>
       )}
-      {!openingSetupMode && <Section title="Official Pump Reading Register">
-        <Table headers={["Pump", "Nozzle", "Previous Shift Closing", "Current Closing", "Liters Sold"]} minWidth="900px">
-          {report.pumpRows.map((row, index) => (
-            <tr key={row.id} data-pump-row-id={row.id} className={highlightedPumpRowId === row.id ? "pump-row-highlight" : ""}>
-              <td>{row.pump}</td>
-              <td>{row.nozzle}</td>
-              <td>
-                {row.setupRequired && !reportCompleted(report)
-                  ? <>
-                    <NumberInput ghostZero value={row.opening} onChange={(value) => patchReport(["pumpRows", index, "opening"], value)} />
-                    <small>New pump starting reading</small>
-                  </>
-                  : <b className="read-only-value">{row.opening}</b>}
-              </td>
-              <td><NumberInput ghostZero className="pump-closing-input" value={row.closingEntered ? row.closing : ""} onChange={(value) => { setHighlightedPumpRowId(""); patchReport(["pumpRows", index, "closing"], value); }} /></td>
-              <td><b>{liter(pumpLitersSold(row))}</b></td>
-            </tr>
-          ))}
-        </Table>
-      </Section>}
+      {!openingSetupMode && <PumpPhotoWorkflow report={report} onReading={onReading} />}
       </>}
 
-      {wizardStep === 2 && (
-      <Section title="Underground Tank">
-        <p className="neutral">Underground tank check. Official fuel sales are based on pump readings; cash variance is the main accounting check.</p>
+      {wizardStep === 3 && (
+      <Section title="Reference Inventory">
+        <p className="neutral">Reference inventory only. Tank differences do not create a financial error. Sales come from pump readings.</p>
         <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Calibration", "Current Actual Dip", "Underground Tank Difference"]} minWidth="980px">
           {result.tankRows.map((row, index) => (
             <tr key={row.id}>
               <td><b>{row.tank}</b></td>
               <td><b className="read-only-value">{liter(row.opening)}</b></td>
-              <td><NumberInput ghostZero value={row.delivery} onChange={(value) => patchReport(["tankRows", index, "delivery"], value)} /></td>
+              <td><b>{liter(row.delivery)}</b></td>
               <td><NumberInput ghostZero value={row.pullOut} onChange={(value) => patchReport(["tankRows", index, "pullOut"], value)} /></td>
               <td><NumberInput ghostZero value={row.calibration} onChange={(value) => patchReport(["tankRows", index, "calibration"], value)} /></td>
               <td><NumberInput ghostZero value={row.actualDip} onChange={(value) => patchReport(["tankRows", index, "actualDip"], value)} /></td>
@@ -4569,19 +4619,14 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
             </tr>
           ))}
         </Table>
+        <TankDeliveries report={report} patchReport={patchReport} />
       </Section>
       )}
 
-      {wizardStep === 3 && (
+      {wizardStep === 2 && (
       <Section title="Deductions">
         <div className="grid four">
-          <Field label="FuelTech Pay Total">
-            <NumberInput
-              ghostZero
-              value={fuelTechPayTotal(report.deductions)}
-              onChange={(next) => patchReport(["fuelTechPayTotal"], next)}
-            />
-          </Field>
+          <AutomaticPay report={report} onSaved={onDemoSaved} />
           {visibleDeductionEntries(report.deductions).map(([key, value]) => (
             <Field key={key} label={deductionLabel(key)}><NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} /></Field>
           ))}
@@ -4594,7 +4639,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
       </Section>
       )}
 
-      {wizardStep === 4 && (
+      {wizardStep === 2 && (
       <div className="grid two">
         {report.date >= PO_INTEGRATION_START_DATE ? (
           <PoTransactionList rows={report.poRows} total={result.poTotal} />
@@ -4602,19 +4647,13 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
           <EditableList ghostZero title="PO Accounts" rows={report.poRows} firstLabel="Account" firstKey="account" total={result.poTotal} onChange={(rows) => updateRows("poRows", rows)} onAdd={() => addRow("poRows", { id: uid(), account: "", amount: 0 })} onDelete={(id) => removeRow("poRows", id)} />
         )}
         <div>
-          <CashVoucherList
-            rows={report.purchaseRows}
-            total={result.purchaseTotal}
-            onChange={(rows) => { setCashVoucherError(""); updateRows("purchaseRows", rows); }}
-            onAdd={() => { setCashVoucherError(""); addRow("purchaseRows", { id: uid(), category: "", item: "", amount: 0 }); }}
-            onDelete={(id) => { setCashVoucherError(""); removeRow("purchaseRows", id); }}
-          />
+          <AutomaticVouchers report={report} />
           {cashVoucherError && <p className="error">{cashVoucherError}</p>}
         </div>
       </div>
       )}
 
-      {wizardStep === 5 && (
+      {wizardStep === 2 && (
       <Section title="Oil Sales and Coke Count">
         <div className="grid four">
           <Field label="Oil Sales"><NumberInput ghostZero value={report.oilSales} onChange={(value) => patchReport(["root", "oilSales"], value)} /></Field>
@@ -4625,7 +4664,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
       </Section>
       )}
 
-      {wizardStep === 6 && (
+      {wizardStep === 4 && (
         <Section title="Cashier Information">
           <div className="grid two">
             <Field label="Cashier Name"><TextInput value={cashierNameDraft} onChange={(value) => { setCashierNameDraft(value); setCashierNameError(""); }} onBlur={saveCashierName} maxLength={80} /></Field>
@@ -4635,8 +4674,10 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
         </Section>
       )}
 
-      {wizardStep === 7 && (
+      {wizardStep === 4 && (
         <Section title="Review and Submit">
+          <div className="upgrade-review-summary"><h3>Final review</h3>{FUEL_TYPES.map(p => <p key={p}>{p}: {peso(result.fuelSalesByProduct[p])}</p>)}<p>Total sales: <b>{peso(result.grossSales)}</b></p><p>Online Pay: {peso(fuelTechPayTotal(report.deductions))} · PO: {peso(result.poTotal)} · Cash vouchers: {peso(result.purchaseTotal)}</p>{visibleDeductionEntries(report.deductions).map(([k,v]) => <p key={k}>{deductionLabel(k)}: {peso(v)}</p>)}<p>Physical cash entered: <b>{peso(report.actualCashCounted)}</b></p></div>
+          <CashConfirmation report={report} onSaved={onDemoSaved} review />
           <div className="grid four">
             <Card title="Cashier" value={report.cashierName || "Missing"} tone={report.cashierName ? "green" : "yellow"} />
             <Card title="Total Liters Sold" value={liter(result.totalLiters)} />
@@ -4692,15 +4733,19 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
   );
 }
 
-function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const changes = report.midShiftPriceChanges || [];
+  const phoneView = usePhoneView();
+  const [busyRows,setBusyRows]=useState({});
+  const onBusy=useCallback((id,busy)=>setBusyRows(old=>({...old,[id]:busy})),[]);
+  const photoBusy=Object.values(busyRows).some(Boolean);
 
   return (
     <Section title="Price Change During Shift">
-      <details className="details-panel">
+      <details className="details-panel" open={phoneView || undefined}>
         <summary>Open only if fuel price changed in the middle of this shift</summary>
         <div className="warning-box">
-          Do not overwrite the whole shift price. Enter the exact price-change time, the new price, and each pump reading at the moment the price changed.
+          Do not overwrite the whole shift price. Enter the exact price-change time and new price, then photograph the affected pump readings.
         </div>
         {changes.length === 0 ? (
           <p className="neutral">No mid-shift price changes recorded for this report.</p>
@@ -4708,40 +4753,33 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
           const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
           return (
             <div className="price-box form-space" key={change.id}>
-              <div className="grid four">
+              <fieldset className="grid four" disabled={photoBusy || report.confirmed}>
                 <Field label="Product"><SelectInput value={change.product} onChange={(value) => patchMidShiftPriceChange(change.id, "product", value)} options={FUEL_TYPES} /></Field>
                 <Field label="Effective Time"><TextInput type="time" value={change.effectiveTime} onChange={(value) => patchMidShiftPriceChange(change.id, "effectiveTime", value)} /></Field>
                 <Field label="New Manager Price"><ManagerPriceInput ghostZero value={change.newPrice} onCommit={(value) => patchMidShiftPriceChange(change.id, "newPrice", value)} /></Field>
                 <button type="button" className="small-danger" onClick={() => removeMidShiftPriceChange(change.id)}>Remove Change #{changeIndex + 1}</button>
-              </div>
-              <Table headers={["Pump", "Nozzle", "Opening", "Price-Change Reading", "Current Closing"]} minWidth="860px">
-                {matchingRows.map((row) => (
-                  <tr key={`${change.id}-${row.id}`}>
-                    <td>{row.pump}</td>
-                    <td>{row.nozzle}</td>
-                    <td>{row.opening}</td>
-                    <td><NumberInput value={midShiftReadingValue(change, row)} onChange={(value) => patchMidShiftPriceReading(change.id, midShiftPumpKey(row), value)} /></td>
-                    <td>{row.closing}</td>
-                  </tr>
-                ))}
-              </Table>
-              <button type="button" className="confirm-button form-space" onClick={() => confirmMidShiftPriceChange(change.id)}>Confirm {change.product} Mid-Shift Price</button>
+              </fieldset>
+              <p className="neutral">{report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')} — readings are saved to this shift.</p>
+              {change.confirmedAt && <p className="success-box">✓ Price change confirmed</p>}
+              <MidShiftPhotoReadings report={report} change={change} onReading={patchMidShiftPriceReading} onBusy={onBusy} onPrepare={prepareMidShiftPhotos}/>
+              <button type="button" className="confirm-button form-space" disabled={photoBusy || report.confirmed || !change.effectiveTime || n(change.newPrice)<=0 || matchingRows.some(row=>!change.readingPhotos?.[midShiftPumpKey(row)]?.readingConfirmed)} onClick={() => confirmMidShiftPriceChange(change.id)}>Confirm {change.product} Mid-Shift Price</button>
             </div>
           );
         })}
-        <button type="button" className="secondary" onClick={addMidShiftPriceChange}>Add Mid-Shift Price Change</button>
+        <button type="button" className="secondary" disabled={photoBusy || report.confirmed} onClick={addMidShiftPriceChange}>Add Mid-Shift Price Change</button>
       </details>
     </Section>
   );
 }
 
-function ManagerPage({ branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function ManagerPage({ branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const depositReferenceLabel = branch === "Liloan" ? "Minutes and Seconds" : "Reference";
-  const groupedManagerDepositRows = groupedDepositRows(managerDepositRows);
+  const phoneView=usePhoneView();
 
   return (
     <div className="stack">
-      <Section title="Fuel Price Setup">
+      {phoneView && <Section title="Price-change photos"><Field label="Report Date"><TextInput type="date" value={selectedDate} onChange={setSelectedDate}/></Field><p>Take and confirm the price-change photos here. They automatically appear on the PC manager screen for the same station, date and shift.</p></Section>}
+      {!phoneView && <Section title="Fuel Price Setup">
         <div className="grid four">
           <Card title="Branch" value={branch} tone="dark" />
           <Field label="Price Effective Date"><TextInput type="date" value={selectedDate} onChange={setSelectedDate} /></Field>
@@ -4760,65 +4798,11 @@ function ManagerPage({ branch, selectedDate, setSelectedDate, prices, pricingCov
             </div>
           ))}
         </div>
-      </Section>
+      </Section>}
 
-      <MidShiftPriceChangeSection report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
+      <MidShiftPriceChangeSection report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
 
-      <Section title="Manager Summary">
-        <div className="grid four">
-          <Card title="Report Status" value={report.confirmed ? "Submitted" : "Draft"} tone={report.confirmed ? "green" : "yellow"} />
-          <Card title="Bank Deposits" value={peso(result.bankDeposit)} />
-          <Card title="Pending Verification" value={peso(result.pendingBank)} tone={n(result.pendingBank) ? "yellow" : "green"} />
-          <Card title="Deposit Rows" value={`${groupedManagerDepositRows.length}`} />
-        </div>
-      </Section>
-
-      <Section title="Daily Bank Deposit">
-        <div className="warning-box">
-          Deposits are saved by the sales date and shifts they cover. For a 1 PM deposit covering yesterday Shift 2 and Shift 3, set Deposit Date to today, Sales Date Covered to yesterday, and Covers to Shift 2 + Shift 3.
-        </div>
-        <div className="grid four">
-          <Field label="Deposit Date"><TextInput type="date" value={depositDate} onChange={setDepositDate} /></Field>
-          <Field label="Sales Date Covered"><TextInput type="date" value={depositSalesDate} onChange={setDepositSalesDate} /></Field>
-          <Field label="Covers"><SelectInput value={depositCoverage} onChange={setDepositCoverage} options={DEPOSIT_COVERAGE_OPTIONS} /></Field>
-          <Card title="Will Count Under" value={depositShiftIds.map((shiftId) => shiftById(shiftId).label.split(" - ")[0]).join(", ")} note={`${branch} sales date ${depositSalesDate}`} tone="dark" />
-          <Field label="Bank"><TextInput value={depositDraft.bank} onChange={(value) => setDepositDraft((old) => ({ ...old, bank: value }))} /></Field>
-          <Field label={depositReferenceLabel}><TextInput value={depositDraft.reference} onChange={(value) => setDepositDraft((old) => ({ ...old, reference: value }))} /></Field>
-          <Field label="Amount"><NumberInput value={depositDraft.amount} onChange={(value) => setDepositDraft((old) => ({ ...old, amount: value }))} /></Field>
-          <button type="button" className="confirm-button" onClick={saveDailyBankDeposit}>Save Daily Bank Deposit</button>
-        </div>
-        <div className="grid four form-space">
-          <Field label="Deposit From"><TextInput type="date" value={depositHistoryFrom} onChange={setDepositHistoryFrom} /></Field>
-          <Field label="Deposit To"><TextInput type="date" value={depositHistoryTo} onChange={setDepositHistoryTo} /></Field>
-          <Card title="Deposit History" value={`${groupedManagerDepositRows.length}`} note={`${branch} only`} tone="dark" />
-          <Card title="Default Range" value="Last 7 days" />
-        </div>
-        <Table headers={["Sales Date", "Counted Shift", "Deposit Date", "Bank", depositReferenceLabel, "Amount", "Status", "Action"]} minWidth="1080px">
-          {groupedManagerDepositRows.length === 0 ? (
-            <tr><td colSpan="8">No saved bank deposits for this station yet.</td></tr>
-          ) : groupedManagerDepositRows.map(({ report: depositReport, deposit, items, shifts }) => (
-            <tr key={`${deposit.groupId || deposit.id}-${depositReport.branch}-${depositReport.date}`}>
-              <td>{deposit.salesDateCovered || depositReport.date}</td>
-              <td>{deposit.coverageLabel || shifts.map((shiftId) => shiftById(shiftId).label.split(" - ")[0]).join(", ")}</td>
-              <td>{deposit.depositDate || depositReport.date}</td>
-              <td>{deposit.bank}</td>
-              <td>{deposit.reference}</td>
-              <td><b>{peso(deposit.amount)}</b></td>
-              <td><Status tone={isRemovalRequested(deposit) ? "yellow" : deposit.verified ? "green" : "yellow"}>{isRemovalRequested(deposit) ? depositRequestLabel(deposit) : deposit.verified ? "Verified" : "Pending"}</Status></td>
-              <td>
-                <div className="action-row">
-                  <button type="button" className="small-success" disabled={isRemovalRequested(deposit)} onClick={() => items.forEach((item) => requestDepositRemovalFromReport(item.deposit.id, item.report, "change"))}>
-                    {isRemovalRequested(deposit) ? "Requested" : "Request Change"}
-                  </button>
-                  <button type="button" className="small-danger" disabled={isRemovalRequested(deposit)} onClick={() => items.forEach((item) => requestDepositRemovalFromReport(item.deposit.id, item.report, "removal"))}>
-                    {isRemovalRequested(deposit) ? "Requested" : "Request Removal"}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </Table>
-      </Section>
+      {!phoneView && <DepositUpgrade branch={branch} />}
     </div>
   );
 }
@@ -5309,6 +5293,7 @@ function ApproverPage({ allReports, consolidatedDeposits, startDate, setStartDat
           <div className="approver-empty">No {statusFilter.toLowerCase()} bank deposits in this date range.</div>
         ) : visibleGroups.map((group) => {
           const { report, deposit } = group;
+          if (deposit.pilotAutomatic) return <DepositHistoryCard key={deposit.id} deposit={deposit} role="Approver" />;
           const key = deposit.groupId || `${report.branch}-${report.date}-${report.shiftId}-${deposit.id}`;
           const onHold = isRemovalRequested(deposit);
           const coveredShifts = (deposit.coveredShiftIds?.length ? deposit.coveredShiftIds : group.shifts)
@@ -5473,7 +5458,7 @@ function AdminControlStrip({ branch, setBranch, selectedDate, setSelectedDate, s
       <Field label="Branch"><SelectInput value={branch} onChange={setBranch} options={BRANCHES} /></Field>
       <Field label="Report Date"><TextInput type="date" value={selectedDate} onChange={setSelectedDate} /></Field>
       <Field label="Report Shift"><SelectInput value={selectedShiftId} onChange={setSelectedShiftId} options={SHIFT_OPTIONS.map((shift) => ({ value: shift.id, label: shift.label }))} /></Field>
-      <Card title="Live Updates" value="On database change" note={formatRefreshTime(lastRefreshedAt)} />
+      <Card title="Live Updates" value="Every 3 seconds" note={formatRefreshTime(lastRefreshedAt)} />
     </div>
   );
 }
@@ -5853,9 +5838,9 @@ function urlBase64ToUint8Array(value) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
-function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBook, allReports, correctionRequests, approveCorrectionRequest, rejectCorrectionRequest }) {
+function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBook, allReports, correctionRequests, approveCorrectionRequest, rejectCorrectionRequest, healthRows, healthStartDate, healthEndDate, setHealthStartDate, setHealthEndDate, branch }) {
   const [activeView, setActiveView] = useState(() => (
-    new URLSearchParams(window.location.search).get("view") === "corrections" ? "corrections" : "performance"
+    ["corrections", "station-health", "error-analytics", "deposit-settings"].includes(new URLSearchParams(window.location.search).get("view")) ? new URLSearchParams(window.location.search).get("view") : "performance"
   ));
   const [notificationStatus, setNotificationStatus] = useState(() => (
     typeof Notification === "undefined" ? "Notifications are not supported on this phone." : ""
@@ -5931,8 +5916,9 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
 
   function selectView(view) {
     setActiveView(view);
+    window.scrollTo({ top: 0 });
     const url = new URL(window.location.href);
-    if (view === "corrections") url.searchParams.set("view", "corrections");
+    if (view !== "performance") url.searchParams.set("view", view);
     else url.searchParams.delete("view");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }
@@ -5989,12 +5975,18 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
       </header>
 
       <nav className="admin-mobile-primary-nav" aria-label="Admin mobile categories">
+        <button type="button" className={activeView === "error-analytics" ? "active" : ""} onClick={() => selectView("error-analytics")}>Error Analytics</button>
+        <button type="button" className={activeView === "station-health" ? "active" : ""} onClick={() => selectView("station-health")}>Station Health</button>
+        <button type="button" className={activeView === "deposit-settings" ? "active" : ""} onClick={() => selectView("deposit-settings")}>Deposit Settings</button>
         <button type="button" className={activeView === "performance" ? "active" : ""} onClick={() => selectView("performance")}>Performance</button>
         <button type="button" className={activeView === "corrections" ? "active" : ""} onClick={() => selectView("corrections")}>
           Corrections{correctionRequests.length ? ` (${correctionRequests.length})` : ""}
         </button>
       </nav>
 
+      {activeView === "error-analytics" && <ErrorAnalytics reports={allReports} />}
+      {activeView === "station-health" && <StationHealthReview reports={allReports} rows={healthRows} from={healthStartDate} to={healthEndDate} setFrom={setHealthStartDate} setTo={setHealthEndDate} />}
+      {activeView === "deposit-settings" && <DepositSettings branch={branch} role="Admin" />}
       {activeView === "performance" && <>
       <section className="admin-mobile-performance-filters" aria-label="Performance filters">
         <Field label="Station">
@@ -6204,8 +6196,8 @@ function OwnerValueList({ rows, total }) {
   );
 }
 
-function MobileAdminPanel({ logout, sessionToken, branch, selectedDate, selectedShiftId, lastRefreshedAt, priceBook, allReports, report, result, reviewFlags, adminSummary, adminSummaryReports, adminInsights, mobileStationBranch, setMobileStationBranch, mobileStationStartDate, setMobileStationStartDate, mobileStationEndDate, setMobileStationEndDate, mobileStationSummary, healthRows, healthCounts, depositCounts, correctionRequests, approveCorrectionRequest, rejectCorrectionRequest, rankingRows, consolidatedDeposits, verifyDeposit, approveDepositRemoval, rejectDepositRemoval, weeklyCashFlow, monthlyCashFlow, summaryStartDate, setSummaryStartDate, summaryEndDate, setSummaryEndDate, exportDailyBackup, systemHealth }) {
-  return <AdminMobilePerformance logout={logout} sessionToken={sessionToken} lastRefreshedAt={lastRefreshedAt} priceBook={priceBook} allReports={allReports} correctionRequests={correctionRequests} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} />;
+function MobileAdminPanel({ logout, sessionToken, branch, selectedDate, selectedShiftId, lastRefreshedAt, priceBook, allReports, report, result, reviewFlags, adminSummary, adminSummaryReports, adminInsights, mobileStationBranch, setMobileStationBranch, mobileStationStartDate, setMobileStationStartDate, mobileStationEndDate, setMobileStationEndDate, mobileStationSummary, healthStartDate, healthEndDate, setHealthStartDate, setHealthEndDate, healthRows, healthCounts, depositCounts, correctionRequests, approveCorrectionRequest, rejectCorrectionRequest, rankingRows, consolidatedDeposits, verifyDeposit, approveDepositRemoval, rejectDepositRemoval, weeklyCashFlow, monthlyCashFlow, summaryStartDate, setSummaryStartDate, summaryEndDate, setSummaryEndDate, exportDailyBackup, systemHealth }) {
+  return <AdminMobilePerformance logout={logout} healthRows={healthRows} healthStartDate={healthStartDate} healthEndDate={healthEndDate} setHealthStartDate={setHealthStartDate} setHealthEndDate={setHealthEndDate} branch={branch} sessionToken={sessionToken} lastRefreshedAt={lastRefreshedAt} priceBook={priceBook} allReports={allReports} correctionRequests={correctionRequests} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} />;
 
   const [activeCategory, setActiveCategory] = useState("overview");
   const system = systemHealthSummary(systemHealth);
@@ -6689,6 +6681,8 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
     { id: "price-history", label: "Price History" },
     { id: "corrections", label: "Corrections" },
     { id: "station-health", label: "Station Health" },
+    { id: "error-analytics", label: "Error Analytics" },
+    { id: "deposit-settings", label: "Deposit Settings" },
     { id: "deposit-health", label: "Deposit Health" },
     { id: "summary", label: "Station Summary" },
     { id: "consolidated", label: "Consolidated" },
@@ -6730,6 +6724,10 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
           mobileStationEndDate={mobileStationEndDate}
           setMobileStationEndDate={setMobileStationEndDate}
           mobileStationSummary={mobileStationSummary}
+          healthStartDate={healthStartDate}
+          healthEndDate={healthEndDate}
+          setHealthStartDate={setHealthStartDate}
+          setHealthEndDate={setHealthEndDate}
           healthRows={healthRows}
           healthCounts={healthCounts}
           depositCounts={depositCounts}
@@ -6764,7 +6762,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
               key={category.id}
               type="button"
               className={activeDesktopCategory === category.id ? "active" : ""}
-              onClick={() => setActiveDesktopCategory(category.id)}
+              onClick={() => { setActiveDesktopCategory(category.id); window.scrollTo({ top: 0 }); }}
             >
               {category.label}
             </button>
@@ -7323,33 +7321,9 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
       </Section>
       )}
 
-      {activeDesktopCategory === "station-health" && (
-      <Section id="admin-section-station-health" title="Station Health Summary">
-        <div className="grid four">
-          <Field label="Station"><SelectInput value={healthBranch} onChange={setHealthBranch} options={HEALTH_BRANCH_OPTIONS} /></Field>
-          <Field label="Health From Date"><TextInput type="date" value={healthStartDate} onChange={setHealthStartDate} /></Field>
-          <Field label="Health To Date"><TextInput type="date" value={healthEndDate} onChange={setHealthEndDate} /></Field>
-          <Card title="Health Rows" value={`${filteredHealthRows.length}`} note={healthBranch === "All Stations" ? "All stations" : healthBranch} tone="dark" />
-        </div>
-        <div className="grid four">
-          <Card title="Submitted" value={`${n(filteredHealthCounts.Submitted)}`} tone="green" />
-          <Card title="Draft" value={`${n(filteredHealthCounts.Draft)}`} tone={n(filteredHealthCounts.Draft) ? "yellow" : "green"} />
-          <Card title="Missing" value={`${n(filteredHealthCounts.Missing)}`} tone={n(filteredHealthCounts.Missing) ? "red" : "green"} />
-          <Card title="Check Required" value={`${n(filteredHealthCounts["Check Required"])}`} tone={n(filteredHealthCounts["Check Required"]) ? "yellow" : "green"} />
-        </div>
-        <Table headers={["Date", "Station", ...SHIFT_OPTIONS.map((shift) => shift.label)]} minWidth="1040px">
-          {filteredHealthRows.map((row) => (
-            <tr key={`${row.date}-${row.branch}`}>
-              <td>{row.date}</td>
-              <td><b>{row.branch}</b></td>
-              {row.shifts.map(({ shift, status }) => (
-                <td key={shift.id}><Status tone={status.tone}>{status.label}</Status></td>
-              ))}
-            </tr>
-          ))}
-        </Table>
-      </Section>
-      )}
+      {activeDesktopCategory === "station-health" && <StationHealthReview reports={allReports} rows={healthRows} from={healthStartDate} to={healthEndDate} setFrom={setHealthStartDate} setTo={setHealthEndDate} />}
+      {activeDesktopCategory === "error-analytics" && <ErrorAnalytics reports={allReports} />}
+      {activeDesktopCategory === "deposit-settings" && <DepositSettings branch={branch} role="Admin" />}
 
       {activeDesktopCategory === "deposit-health" && (
       <Section id="admin-section-deposit-health" title="Deposit Health Summary">

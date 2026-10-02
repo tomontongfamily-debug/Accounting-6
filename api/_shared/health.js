@@ -93,8 +93,10 @@ export function computeReportCash(report = {}) {
   const deposits = activeDeposits(report);
   const bankDeposit = deposits.reduce((sum, row) => sum + numberValue(row.amount), 0);
   const expectedCash = grossSales - deductionTotal;
-  const pendingCashOnHand = Math.max(0, expectedCash - bankDeposit);
-  const cashVariance = bankDeposit + pendingCashOnHand - expectedCash;
+  const pendingCashOnHand = report.pilot && Number.isFinite(report.pilotCashAwaitingDeposit)
+    ? report.pilotCashAwaitingDeposit : Math.max(0, expectedCash - bankDeposit);
+  const cashVariance = report.pilot && report.actualCashCounted!=='' && report.actualCashCounted!=null
+    ? numberValue(report.actualCashCounted)-expectedCash : bankDeposit + pendingCashOnHand - expectedCash;
   return { grossSales, bankDeposit, expectedCash, pendingCashOnHand, cashVariance };
 }
 
@@ -112,7 +114,7 @@ export function buildDailyHealth({ reportRows = [], date }) {
       return {
         shiftId,
         status: "Submitted",
-        depositStatus: deposits.length ? deposits.some((deposit) => !deposit.verified) ? "Deposit Pending" : "Deposit Saved" : "Deposit Missing",
+        depositStatus: report.pilot && report.depositCoverage ? report.depositCoverage.status==='verified' ? 'Deposit Saved' : 'Deposit Pending' : deposits.length ? deposits.some((deposit) => !deposit.verified) ? "Deposit Pending" : "Deposit Saved" : "Deposit Missing",
         cashVariance: cash.cashVariance,
       };
     });
