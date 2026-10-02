@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { manilaDateOffset } from "../_shared/health.js";
+import { backupImmutable } from '../../pilot/backup.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://chqinknijqtixeenhtvu.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
@@ -48,12 +49,15 @@ export default async function handler(req, res) {
       return;
     }
 
+    const pilotSnapshot=await supabase.from('fueltech_pilot_state').select('mode,revision,data,updated_at');
+    if(pilotSnapshot.error) return res.status(500).json({ok:false,error:'Pilot state backup could not be verified.'});
     const payload = {
       backup_date: backupDate,
       generated_at: new Date().toISOString(),
       timezone: "Asia/Manila",
       reports: reports || [],
       price_book_snapshot: prices || [],
+      pilot_state_snapshot: pilotSnapshot.data || [],
     };
 
     const backupRecord = {
@@ -96,7 +100,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    res.status(200).json({ ok: true, backupDate, reportCount: payload.reports.length });
+    const snapshot=Buffer.from(JSON.stringify({schemaVersion:1,...payload}));
+    const offProject=await backupImmutable(`snapshots/${backupDate}/${Date.now()}.json`,snapshot,'application/json');
+    res.status(200).json({ ok: true, backupDate, reportCount: payload.reports.length,offProjectBackup:offProject });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "Nightly backup failed." });
     return;

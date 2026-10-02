@@ -26,7 +26,8 @@ export async function authoritativePoRowsForReport(supabase, report) {
 }
 
 export async function attachAuthoritativePoRows(supabase, reportRows, allowedBranch = "") {
-  const eligible = (reportRows || []).filter((row) => row.report_date >= PO_INTEGRATION_START_DATE && (!allowedBranch || row.branch === allowedBranch));
+  const pilotSnapshot = row => row.branch === 'Liloan' && row.data?.pilot === true;
+  const eligible = (reportRows || []).filter((row) => !pilotSnapshot(row) && row.report_date >= PO_INTEGRATION_START_DATE && (!allowedBranch || row.branch === allowedBranch));
   if (!eligible.length) return reportRows || [];
   const from = eligible.reduce((value, row) => row.report_date < value ? row.report_date : value, eligible[0].report_date);
   const to = eligible.reduce((value, row) => row.report_date > value ? row.report_date : value, eligible[0].report_date);
@@ -52,7 +53,7 @@ export async function attachAuthoritativePoRows(supabase, reportRows, allowedBra
     const key = `${branchByStationId[transaction.station_id]}__${transaction.business_date}__${transaction.shift_id}`;
     byReport.set(key, [...(byReport.get(key) || []), toAccountingPoRow(transaction)]);
   });
-  return (reportRows || []).map((row) => row.report_date < PO_INTEGRATION_START_DATE ? row : {
+  return (reportRows || []).map((row) => pilotSnapshot(row) || row.report_date < PO_INTEGRATION_START_DATE ? row : {
     ...row,
     data: { ...(row.data || {}), poRows: byReport.get(row.report_key) || [], poSource: "FuelTech Pay" },
   });

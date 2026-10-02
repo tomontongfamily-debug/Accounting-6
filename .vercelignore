@@ -1,0 +1,8 @@
+node_modules
+tests
+supabase
+docs
+.env*
+*.log
+README*
+PILOT-*.md

@@ -3,20 +3,40 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "prebuild": "node scripts/verify-data-preservation.cjs",
+    "dev": "vite --host 127.0.0.1 --port 4318 --strictPort",
+    "prebuild": "node scripts/build-pilot-domain.mjs && node scripts/verify-data-preservation.cjs",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/*.test.js"
+    "preview": "vite preview --host 127.0.0.1 --port 4318 --strictPort",
+    "test": "node --test tests/*.test.js",
+    "lint": "eslint src/upgrade-components.jsx src/deposit-cards.jsx src/shift-health.jsx src/cash-denominations.jsx src/mobile-pump-capture.jsx src/admin-deposits.jsx src/error-reduction.ts pilot/*.mjs api/pilot/*.js",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck src/error-reduction.ts",
+    "test:demo": "node --test tests/demo-*.test.mjs",
+    "dev:phone": "vite --host 0.0.0.0 --port 4317 --strictPort",
+    "preview:phone": "vite preview --host 0.0.0.0 --port 4317 --strictPort",
+    "test:pilot": "node --test tests/pilot-*.test.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "latest",
+    "@supabase/supabase-js": "2.106.1",
+    "@tesseract.js-data/eng": "1.0.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "tesseract.js": "7.0.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
     "@vitejs/plugin-react": "^6.0.3",
+    "eslint": "10.10.0",
+    "globals": "17.12.0",
+    "supabase": "2.117.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
     "vite": "^8.1.0"
+  },
+  "name": "fueltech-liloan-pilot",
+  "engines": {
+    "node": "24.x"
   }
 }
