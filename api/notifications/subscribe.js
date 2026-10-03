@@ -1,6 +1,6 @@
 import { getRequestSession } from "../_shared/session.js";
 import { readBody, supabaseAdmin } from "../_shared/supabase.js";
-import { removePushSubscription, savePushSubscription, vapidPublicKey } from "../_shared/push.js";
+import { removePushSubscription, savePushSubscription, sendTestNotification, vapidPublicKey } from "../_shared/push.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -17,6 +17,7 @@ export default async function handler(req, res) {
     if (action === "config") return res.status(200).json({ ok: true, publicKey });
 
     const supabase = supabaseAdmin();
+    if(action==='test')return res.status(200).json({ok:true,...await sendTestNotification(supabase,endpoint)});
     if (action === "subscribe") {
       await savePushSubscription(supabase, subscription);
       return res.status(200).json({ ok: true, enabled: true });
