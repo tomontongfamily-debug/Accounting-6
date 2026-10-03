@@ -1,0 +1,6 @@
+Seven-segment OCR model: ssd_int.traineddata
+Source: https://github.com/Shreeshrii/tessdata_ssd
+Commit: e493a10a4bf81632506cf24ba99d83854afff9f6
+License: Apache-2.0 (see ssd_int.LICENSE.txt)
+Model is unchanged; gzip compression only.
+Original SHA-256: 557759383e030694420ee9f6a88e824abae4acf17f7b94415ca07e1152339339

@@ -1,7 +1,7 @@
 import { pilotPost } from './pilot-client.js';
 import { useEffect, useRef, useState } from 'react';
-import { createWorker } from 'tesseract.js';
-import { ERROR_CATEGORIES, denominationTotal, parseOcrReading, readingComplete, readingWarning } from './error-reduction.ts';
+import { detectTotalizer as detect } from './totalizer-ocr.js';
+import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
 import { midShiftPumpKey, midShiftReadingValue } from './mid-shift-price-change.js';
@@ -17,28 +17,6 @@ export async function demoApi(path,body={}) {
 }
 export async function savePumpReading(report,row) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0});
-}
-let workerPromise;
-let detectionQueue=Promise.resolve();
-function detect(data) {
-  const request=detectionQueue.catch(()=>{}).then(()=>recognizePhoto(data));
-  detectionQueue=request;return request;
-}
-async function recognizePhoto(data) {
-  workerPromise ||= createWorker('eng',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false});
-  let worker;
-  try {
-    worker=await workerPromise;
-    await worker.setParameters({tessedit_char_whitelist:'0123456789.,',tessedit_pageseg_mode:'7'});
-    const result=await worker.recognize(data);
-    const value=parseOcrReading(result.data.text);
-    if(value!==null)return value;
-    // The photo can contain a label above the display; try sparse text layout
-    // before asking the cashier to transcribe. Ambiguous numbers stay unselected.
-    await worker.setParameters({tessedit_pageseg_mode:'11'});
-    const retry=await worker.recognize(data);
-    return parseOcrReading(retry.data.text);
-  } catch(error) {workerPromise=undefined;if(worker) await worker.terminate();throw error;}
 }
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
