@@ -1,14 +1,23 @@
 // Local contrast removes broad reflections while retaining narrow LCD segments.
 // Coordinates are found from the image; no pump-specific crop or expected value.
 export function totalizerRegions(gray,width,height){
+  const mask=totalizerMask(gray,width,height);
+  return totalizerRegionsFromMask(mask,width,height);
+}
+
+export function totalizerMask(gray,width,height,threshold=10){
   const stride=width+1,integral=new Float64Array(stride*(height+1));
   for(let y=0;y<height;y++){let sum=0;for(let x=0;x<width;x++){sum+=gray[y*width+x];integral[(y+1)*stride+x+1]=integral[y*stride+x+1]+sum;}}
   const radius=Math.max(8,Math.round(Math.min(width,height)*.026)),mask=new Uint8Array(width*height);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++){
     const x0=Math.max(0,x-radius),x1=Math.min(width,x+radius+1),y0=Math.max(0,y-radius),y1=Math.min(height,y+radius+1);
     const mean=(integral[y1*stride+x1]-integral[y0*stride+x1]-integral[y1*stride+x0]+integral[y0*stride+x0])/((x1-x0)*(y1-y0));
-    mask[y*width+x]=mean-gray[y*width+x]>10?1:0;
+    mask[y*width+x]=mean-gray[y*width+x]>threshold?1:0;
   }
+  return mask;
+}
+
+function totalizerRegionsFromMask(mask,width,height){
   const seen=new Uint8Array(mask.length),queue=new Int32Array(mask.length),components=[],projection=new Uint32Array(height);
   for(let i=0;i<mask.length;i++){
     if(!mask[i]||seen[i])continue;
@@ -113,13 +122,60 @@ export function readingWithVisibleDecimal(symbols,components){
   if(digits.some(s=>Math.abs(s.bbox.y1-bottom)>h*.2))return null;
   const centers=digits.map(s=>(s.bbox.x0+s.bbox.x1)/2);
   if(centers.some((x,i)=>i>0&&x<=centers[i-1]))return null;
-  const points=components.filter(c=>c.width>=Math.max(2,h*.025)&&c.height>=Math.max(2,h*.025)&&c.width<h*.22&&c.height<h*.22&&c.width/c.height>.5&&c.width/c.height<1.8&&c.area/(c.width*c.height)>.6&&Math.abs(c.y+c.height-bottom)<h*.15&&c.y>bottom-h*.25&&c.x>centers[0]&&c.x<centers.at(-1));
+  if(digits.some((s,i)=>i>0&&digits[i-1].bbox.x1-s.bbox.x0>h*.25))return null;
+  const points=components.filter(c=>c.width>=Math.max(2,h*.05)&&c.height>=Math.max(2,h*.05)&&c.width<h*.22&&c.height<h*.22&&c.width/c.height>.5&&c.width/c.height<1.15&&c.area/(c.width*c.height)>.6&&Math.abs(c.y+c.height-bottom)<h*.15&&c.y>bottom-h*.25&&c.x>centers[0]&&c.x<centers.at(-1));
   // Broken strokes can resemble dots inside earlier digits. Only dots that can
   // represent the display's one-to-three decimal places are candidates.
-  const positions=new Set(points.map(p=>centers.filter(x=>x<p.x+p.width/2).length).filter(i=>digits.length-i>=1&&digits.length-i<=3));
+  const positions=new Set(points.map(p=>({x:p.x+p.width/2,i:centers.filter(x=>x<p.x+p.width/2).length})).filter(({x,i})=>digits.length-i>=1&&digits.length-i<=3&&x>=digits[i-1].bbox.x1-h*.12&&x<=digits[i].bbox.x0+h*.12).map(p=>p.i));
   if(positions.size!==1)return null;
   const decimal=[...positions][0],places=digits.length-decimal;if(places<1||places>3)return null;
   const text=digits.map(s=>s.text).join('');return Number(text.slice(0,decimal)+'.'+text.slice(decimal));
+}
+
+// The first LCD digit often falls under the bright edge of a reflection. Check
+// its seven physical strokes in the original grayscale image, before a binary
+// threshold loses them. Neighbouring digit spacing defines the cell, never an
+// opening reading, pump identity, filename or expected result.
+export function refineLeadingLcdDigit(symbols,gray,width,height){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  if(digits.length<5)return symbols;
+  const median=a=>a.sort((a,b)=>a-b)[Math.floor(a.length/2)];
+  const body=digits.slice(1).filter(s=>s.text!=='1');
+  if(body.length<3)return symbols;
+  const w=median(body.map(s=>s.bbox.x1-s.bbox.x0)),h=median(body.map(s=>s.bbox.y1-s.bbox.y0));
+  const pitch=median(digits.slice(2).map((s,i)=>s.bbox.x1-digits[i+1].bbox.x1).filter(d=>d>w*.8&&d<w*1.8));
+  if(!Number.isFinite(pitch)||w<h*.35||w>h*.8)return symbols;
+  const right=median(digits.slice(1).map((s,i)=>s.bbox.x1-(i+1)*pitch));
+  const left=right-w,top=median(body.map(s=>s.bbox.y0)),bottom=top+h;
+  if(left<0||right>=width||top-h*.15<0||bottom+h*.15>=height)return symbols;
+  if(Math.abs((digits[0].bbox.x0+digits[0].bbox.x1)/2-(left+right)/2)>w*.4)return symbols;
+  const positions=[[.5,.06,0],[.85,.25,1],[.85,.75,1],[.5,.94,0],[.15,.75,1],[.15,.25,1],[.5,.5,0]];
+  const contrastAt=shift=>positions.map(([x,y,vertical])=>{
+    const cx=left+x*w,cy=top+(y+shift)*h,span=Math.max(2,Math.round(vertical?h*.07:w*.12)),radius=Math.round(vertical?w*.24:h*.14),samples=[];
+    for(let t=-span;t<=span;t++){
+      let value=0;
+      for(let normal=-2;normal<=2;normal++){
+        const ix=Math.round(cx+(vertical?normal:t)),iy=Math.round(cy+(vertical?t:normal));
+        if(vertical?(ix-radius<0||ix+radius>=width||iy<0||iy>=height):(iy-radius<0||iy+radius>=height||ix<0||ix>=width))return NaN;
+        const offset=vertical?radius:radius*width;
+        value+=(gray[iy*width+ix-offset]+gray[iy*width+ix+offset])/2-gray[iy*width+ix];
+      }
+      samples.push(value/5);
+    }
+    return median(samples);
+  });
+  const patterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
+  // Active strokes need positive local contrast; inactive strokes must really
+  // be absent. A damaged or ambiguous pattern leaves OCR unchanged.
+  const votes=new Map();
+  for(const shift of[-.04,-.02,0,.02,.03,.04]){
+    const contrast=contrastAt(shift);
+    const matches=patterns.map((pattern,digit)=>({pattern,digit})).filter(({pattern})=>[...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3));
+    if(matches.length===1)votes.set(matches[0].digit,(votes.get(matches[0].digit)||0)+1);
+  }
+  if(votes.size!==1||[...votes.values()][0]<2)return symbols;
+  const text=String([...votes.keys()][0]);
+  return symbols.map(s=>s===digits[0]?{...s,text,lcdVerified:true}:s);
 }
 
 // Grow dark segments slightly to reconnect tiny reflection/compression gaps.
