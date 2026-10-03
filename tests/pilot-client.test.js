@@ -33,3 +33,19 @@ test('Interrupted requests reuse their ID and a failed save does not stall later
   await pilotPost('/api/demo/cash-confirm',{report,denominations:{200:1}});assert.equal(calls.length,3);
  }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
 });
+
+test('A cash-only response cannot rebase a queued stale full draft over newer saved fields',async()=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
+ const {pilotPost}=await import('../src/pilot-client.js?cash-only-test');const calls=[];
+ globalThis.fetch=async(url,options)=>{
+  const body=JSON.parse(options.body);calls.push(body);
+  return {ok:true,status:200,json:async()=>({ok:true,report:{...body.input.report,pilotRevision:54,cashCountConfirmed:true,notes:'Newer saved note'}})};
+ };
+ try{
+  const report={branch:'Liloan',date:'2026-10-03',shiftId:'shift-1',pilotRevision:20,notes:'stale'};
+  const cash=pilotPost('/api/demo/cash-confirm',{report,denominations:{100:2}});
+  const draft=pilotPost('/api/reports/save',{report});await Promise.all([cash,draft]);
+  assert.equal(calls[1].input.report.pilotRevision,20);
+ }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});

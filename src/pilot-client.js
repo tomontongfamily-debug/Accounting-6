@@ -30,7 +30,11 @@ async function post(route,input,sessionToken,key) {
   }
   const result=await response.json();
   if(!response.ok||result.ok===false) throw Object.assign(new Error(result.error||'Save could not be verified.'),{...result,status:response.status});
-  if(result.report && route!=='/api/demo/pump-report') {
+  if(route==='/api/demo/cash-confirm') {
+    // Cash confirmation can read a newer shift without accepting this full draft.
+    // A queued old draft must not inherit that revision and overwrite other edits.
+    savedRevisions.delete(key);
+  } else if(result.report && route!=='/api/demo/pump-report') {
     const r=result.report;
     savedRevisions.set(key,Number(r.pilotRevision||0));
   }
