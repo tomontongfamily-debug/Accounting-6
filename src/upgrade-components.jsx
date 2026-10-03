@@ -128,15 +128,17 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
   const done=rows.filter(row=>readingComplete(photoRow(row))).length;
   return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p><div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={next=>onReading(change,next)}/>)}</div></div>;
 }
-export function CashConfirmation({report,onSaved,onCountsChange,review=false}) {
-  const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
+  const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
   let valid=false;try{denominationTotal(denominations);valid=true;}catch{ /* An empty/invalid count cannot be confirmed. */ }
-  async function run(action) {setBusy(true);setError('');try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);}finally{setBusy(false);}}
+  async function run(action) {setBusy(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409);}finally{setBusy(false);}}
+  async function reload(){setBusy(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);}}
   return <div className="cash-confirmation">
     {!review&&<><CashDenominations counts={denominations} onChange={onCountsChange} disabled={report.cashCountConfirmed||busy} label="End-of-shift cash count"/>{report.cashCountConfirmed?<p>✓ Physical cash confirmed: <strong>{php(report.actualCashCounted)}</strong>{!report.cashDenominations&&' · Earlier count has no denomination breakdown.'}</p>:<button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-confirm')}>Confirm physical cash</button>}</>}
     {review&&<><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'?<><p className="warning-box">Please recount your physical cash.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your confirmed count is locked. A requested recount can be confirmed once.</small></>}
     {error&&<p className="error" role="alert">{error}</p>}
+    {stale&&onReload&&<div><p>Reload the saved shift details, then check and confirm again. Your entered cash quantities will be kept; an already confirmed count stays locked.</p><button type="button" className="secondary" disabled={busy} onClick={reload}>{review?'Refresh saved shift':'Refresh shift, keep my cash count'}</button></div>}
   </div>;
 }
 export function AutomaticPay({report,onSaved}) {
