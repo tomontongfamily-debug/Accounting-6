@@ -50,7 +50,7 @@ function candidate(input,session,readingId) {
   if(old.date<database.startDate) reject('Historical reports are read-only.',423);
   const preceding=old.shiftId==='shift-1'?reportKey(old.branch,dateOffset(old.date,-1),'shift-3'):reportKey(old.branch,old.date,old.shiftId==='shift-2'?'shift-1':'shift-2');
   if(!database.reports[preceding]?.confirmed) reject('Submit the preceding shift before recording this shift.');
-  if(!readingId && Number(input.pilotRevision||0)!==Number(old.pilotRevision||0)) reject('This shift changed on another device. Refresh before saving.',409);
+  if(!readingId && !cashierRevisionMatches(input,old)) reject('This shift changed on another device. Refresh before saving.',409);
   const template=carryForwardOpenings(old,database.reports);
   const incomingRows=input.pumpRows;
   if(!Array.isArray(incomingRows) || incomingRows.length!==template.pumpRows.length || new Set(incomingRows.map(midShiftPumpKey)).size!==template.pumpRows.length || template.pumpRows.some(base=>!incomingRows.some(row=>midShiftPumpKey(row)===midShiftPumpKey(base)))) reject('Every configured pump/nozzle is required.');
@@ -93,9 +93,20 @@ function candidate(input,session,readingId) {
   for(const value of Object.values(r.deductions)) { if(value!=='' && value!=null) amount(value); }
   return r;
 }
+function cashierRevisionMatches(input,old) {
+  const incoming=Number(input?.pilotRevision||0),current=Number(old.pilotRevision||0);
+  // Phone saves own their nozzle fields. A desktop can retain its other edits
+  // across those saves, but must never cross another cash/draft/manager edit.
+  const lastEdit=Number(old.pilotLastNonReadingRevision??current);
+  return incoming===current || (incoming>=lastEdit && incoming<current);
+}
 function storeReport(r,session,action) {
   if(r.date<database.startDate) reject('Historical reports are read-only in the pilot.',423);
   r.pilot=true; r.pilotRevision=Number(database.reports[keyOf(r)]?.pilotRevision||0)+1;
+  const previous=database.reports[keyOf(r)];
+  r.pilotLastNonReadingRevision=action==='pump-reading-saved'
+    ? Number(previous?.pilotLastNonReadingRevision??previous?.pilotRevision??0)
+    : r.pilotRevision;
   r.serverMeta={...r.serverMeta,reportId:r.serverMeta?.reportId||(r.confirmed?randomUUID():''),savedAt:stamp()};
   database.reports[keyOf(r)]=r;
   audit(action,session,{reportKey:keyOf(r)}); save();
@@ -148,7 +159,9 @@ function validatePricePhotos(report,change) {
       requireRole(session,'Cashier','Manager','Admin');
       let old=database.reports[keyOf(input.report||{})];
       if(input.report?.date<database.startDate) reject('Historical reports are read-only.',423);
-      if(old && Number(input.report?.pilotRevision||0)!==Number(old.pilotRevision||0)) reject('This shift changed on another device. Refresh before saving.',409);
+      if(old && !(session.role==='Cashier'&&input.operation!=='request-correction'
+        ? cashierRevisionMatches(input.report,old)
+        : Number(input.report?.pilotRevision||0)===Number(old.pilotRevision||0))) reject('This shift changed on another device. Refresh before saving.',409);
       if(input.operation==='request-correction') {
         branchAccess(session,old?.branch); const r={...old,correctionRequest:{...input.report.correctionRequest,status:'pending'}};
         return send(storeReport(r,session,'correction-requested'));

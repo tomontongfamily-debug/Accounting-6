@@ -19,20 +19,31 @@ export async function savePumpReading(report,row) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0});
 }
 let workerPromise;
-async function detect(data) {
+let detectionQueue=Promise.resolve();
+function detect(data) {
+  const request=detectionQueue.catch(()=>{}).then(()=>recognizePhoto(data));
+  detectionQueue=request;return request;
+}
+async function recognizePhoto(data) {
   workerPromise ||= createWorker('eng',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false});
   let worker;
   try {
     worker=await workerPromise;
     await worker.setParameters({tessedit_char_whitelist:'0123456789.,',tessedit_pageseg_mode:'7'});
     const result=await worker.recognize(data);
-    return parseOcrReading(result.data.text);
+    const value=parseOcrReading(result.data.text);
+    if(value!==null)return value;
+    // The photo can contain a label above the display; try sparse text layout
+    // before asking the cashier to transcribe. Ambiguous numbers stay unselected.
+    await worker.setParameters({tessedit_pageseg_mode:'11'});
+    const retry=await worker.recognize(data);
+    return parseOcrReading(retry.data.text);
   } catch(error) {workerPromise=undefined;if(worker) await worker.terminate();throw error;}
 }
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):'');const [editing,setEditing]=useState(false);
-  const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [attempts,setAttempts]=useState(0);
+  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
@@ -50,7 +61,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const warning=readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
   async function processPhoto(data) {
-    setBusy(true);setError('');setDraft('');setDetected(null);setEditing(false);setAttempts(n=>n+1);
+    setBusy(true);setError('');setDraft('');setDetected(null);setEditing(false);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       await onPrepare?.();
@@ -59,9 +70,9 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
       // Invalidate an earlier confirmation as soon as a replacement is captured.
       await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null});
       let value=null;
-      try {value=await detect(data);}catch {setError('OCR is unavailable. Retake, or enter the reading while keeping the photo.');setEditing(true);}
+      try {value=await detect(data);}catch { /* The saved photo can still be transcribed and confirmed. */ }
       if(!active.current)return;setDetected(value);setDraft(value===null?'':String(value));
-      if(value===null)setError("We couldn't read one clear number. Retake a close photo of just the totalizer.");
+      if(value===null)setEditing(true);
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }
   async function openCamera() {
@@ -97,10 +108,9 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy} onClick={openCamera}>{photo?'Retake photo':'Open camera'}</button><label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label></div>
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
-    {photo&&!busy&&<div className="reading-confirm"><label>{editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
+    {photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L sold'} · {warning.level}<br/>{warning.message}</p>}
-      <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" disabled={detected===null&&attempts<2&&!editing} onClick={editReading}>Edit number</button></div>
-      {detected===null&&attempts<2&&!editing&&<small>Retake once more; manual input becomes available if OCR still cannot read it.</small>}
+      <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>
     </div>}</>}
   </article>;
 }
