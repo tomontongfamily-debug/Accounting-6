@@ -55,6 +55,7 @@ export function reconcileSources(state,incoming) {
     const beforeExpectedCash=compute(report).expectedCash;
     report.purchaseRows=report.purchaseRows.filter(row=>!removed.includes(row));
     report.pilotRevision=Number(report.pilotRevision||0)+1;
+    report.pilotLastNonReadingRevision=report.pilotRevision;
     report.serverMeta={...report.serverMeta,savedAt:new Date().toISOString()};
     if(report.confirmed) {
       report.checkDetails=reportIssues(report,compute(report).cashVariance);

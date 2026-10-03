@@ -13,10 +13,38 @@ test('Roles, station scope, stale desktop drafts and nozzle revisions',async()=>
   const saved=await runAction(state,cashier,'/api/demo/pump-reading',payload);state=saved.state;
   assert.equal(saved.result.report.pumpRows[0].readingRevision,1);
   await assert.rejects(runAction(state,cashier,'/api/demo/pump-reading',payload),/another device/);
-  await assert.rejects(runAction(state,cashier,'/api/reports/save',{report}),/another device/);
+  const merged=await runAction(state,cashier,'/api/reports/save',{report});
+  assert.equal(merged.result.report.pumpRows[0].photo_path,photo);
+  assert.equal(merged.result.report.pumpRows[0].closing,Number(row.opening)+10);
+  await assert.rejects(runAction(merged.state,cashier,'/api/reports/save',{report}),/another device/);
   const desktop=await runAction(state,cashier,'/api/demo/pump-report',{reportKey:key});
   assert.equal(desktop.result.report.pumpRows[0].photo_path,photo);
   await assert.rejects(runAction(state,cashier,'/api/reports/save',{report:desktop.result.report,operation:'submit'}),/reconciliation|cash/);
+});
+
+test('Phone readings do not block the desktop cash count or overwrite saved nozzle evidence',async()=>{
+ let {state,report,key,cashier}=fixture();
+ const desktop=structuredClone(report);
+ for(const row of report.pumpRows.slice(0,2)){
+  const photo='/api/pilot/photo?id=cash-test-'+row.id;state.photos[photo]={branch:'Liloan',reportKey:key,rowId:row.id};
+  const out=await runAction(state,cashier,'/api/demo/pump-reading',{reportKey:key,revision:0,row:{...row,photo_path:photo,closing:Number(row.opening)+79.41,closingEntered:true,readingConfirmed:true}});state=out.state;
+ }
+ const before=structuredClone(state.reports[key].pumpRows);
+ const cash=await runAction(state,cashier,'/api/demo/cash-confirm',{report:desktop,denominations:{1000:81,500:12,100:2,5:9}});
+ assert.equal(cash.result.report.actualCashCounted,87245);
+ assert.equal(cash.result.report.cashCountConfirmed,true);
+ assert.deepEqual(cash.result.report.pumpRows,before);
+ await assert.rejects(runAction(cash.state,cashier,'/api/demo/cash-confirm',{report:desktop,denominations:{100:1}}),/another device/);
+});
+
+test('Photo merge never crosses another desktop edit, manager price edit, or unknown legacy revision',async()=>{
+ const {state,report,key,cashier,manager}=fixture();
+ const changed=await runAction(state,cashier,'/api/reports/save',{report:{...report,notes:'Saved on another PC'}});
+ await assert.rejects(runAction(changed.state,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
+ const priced=await runAction(state,manager,'/api/reports/save',{report:{...report,midShiftPriceChanges:[{id:'new',product:'Diesel',effectiveTime:'09:00',newPrice:61}]}});
+ await assert.rejects(runAction(priced.state,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
+ const legacy=structuredClone(state);legacy.reports[key].pilotRevision=10;
+ await assert.rejects(runAction(legacy,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
 });
 test('Cash denominations, mandatory all-nozzle photos, submission lock, deposit reservation',async()=>{
   let {state,report,key,cashier,manager,approver,admin}=fixture();
