@@ -3,6 +3,7 @@ import { pilotPost } from './pilot-client.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
+import { recoverCashDraft } from './cash-recovery.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
 import { StationHealthReview } from "./shift-health.jsx";
 import { AutomaticVouchers } from "./cash-denominations.jsx";
@@ -3392,6 +3393,22 @@ export default function App() {
     setStore(old => ({ ...old, reports: { ...old.reports, [reportKey(next.branch, next.date, next.shiftId)]: normalizeExistingReport(next) } }));
   }
 
+  async function reloadCashShift(denominations) {
+    const current=latestActiveReportForEdit();
+    cacheLocalDraft(current);
+    if(draftSaveTimerRef.current)window.clearTimeout(draftSaveTimerRef.current);
+    if(localDraftCacheTimerRef.current)window.clearTimeout(localDraftCacheTimerRef.current);
+    draftSaveTimerRef.current=null;pendingDraftReportRef.current=null;
+    localDraftCacheTimerRef.current=null;pendingLocalDraftCacheRef.current=null;
+    await pendingSaveRef.current.catch(()=>{});
+    const {report:latest}=await demoApi('pump-report',{reportKey:reportKey(current.branch,current.date,current.shiftId)});
+    const next=recoverCashDraft(latest,denominations);
+    acceptDemoReport(next);
+    if(next!==latest)stageLocalReport(next);
+    else setHasUnsavedOnlineChange(false);
+    setSyncMessage('Latest saved shift loaded. Check your cash quantities before confirming.');
+  }
+
   async function updatePumpReading(nextRow) {
     const current = latestActiveReportForEdit();
     pumpMutationVersionRef.current += 1;
@@ -4208,7 +4225,7 @@ export default function App() {
                   <button type="button" className="secondary" onClick={() => window.location.reload()}>Try Again</button>
                 </Section>
               : cashierReportOpen
-              ? <CashierPage onReading={updatePumpReading} onDemoSaved={acceptDemoReport} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
+              ? <CashierPage onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
               : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={GLOBAL_OPENING_DATE} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
@@ -4394,7 +4411,7 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
   );
 }
 
-function CashierPage({ onReading, onDemoSaved, report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
+function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
   const reviewFlags = reportReviewFlags(report, result);
   const activeRequest = correctionRequest(report);
   const fieldWarnings = pumpFieldWarnings(report);
@@ -4584,7 +4601,7 @@ function CashierPage({ onReading, onDemoSaved, report, result, warnings, critica
       <Section title="End-of-Shift Cash Count">
 
         <p className="neutral">Count the notes and coins at the end of the shift. The total is calculated automatically. Expected cash and the difference are shown only to admin.</p>
-        <CashConfirmation report={report} onSaved={onDemoSaved} onCountsChange={value => patchReport(["root", "cashDenominations"], value)} />
+        <CashConfirmation report={report} onSaved={onDemoSaved} onReload={onReloadCash} onCountsChange={value => patchReport(["root", "cashDenominations"], value)} />
       </Section>
       )}
 
@@ -4678,7 +4695,7 @@ function CashierPage({ onReading, onDemoSaved, report, result, warnings, critica
       {wizardStep === 4 && (
         <Section title="Review and Submit">
           <div className="upgrade-review-summary"><h3>Final review</h3>{FUEL_TYPES.map(p => <p key={p}>{p}: {peso(result.fuelSalesByProduct[p])}</p>)}<p>Total sales: <b>{peso(result.grossSales)}</b></p><p>Online Pay: {peso(fuelTechPayTotal(report.deductions))} · PO: {peso(result.poTotal)} · Cash vouchers: {peso(result.purchaseTotal)}</p>{visibleDeductionEntries(report.deductions).map(([k,v]) => <p key={k}>{deductionLabel(k)}: {peso(v)}</p>)}<p>Physical cash entered: <b>{peso(report.actualCashCounted)}</b></p></div>
-          <CashConfirmation report={report} onSaved={onDemoSaved} review />
+          <CashConfirmation report={report} onSaved={onDemoSaved} onReload={onReloadCash} review />
           <div className="grid four">
             <Card title="Cashier" value={report.cashierName || "Missing"} tone={report.cashierName ? "green" : "yellow"} />
             <Card title="Total Liters Sold" value={liter(result.totalLiters)} />
