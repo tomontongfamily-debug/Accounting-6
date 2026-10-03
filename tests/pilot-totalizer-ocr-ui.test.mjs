@@ -38,10 +38,13 @@ test('Real seven-segment OCR reads the supplied glare photo through the phone up
   await page.waitForFunction(()=>[...document.querySelectorAll('input[inputmode=decimal]')].some(i=>i.value==='439931.31'),{},{timeout:120000});
   assert.equal(await input.inputValue(),'439931.31');assert.notEqual(await input.getAttribute('readonly'),null);
   assert.equal(photoCount,1);assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
+  assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,439931.31);
   page.on('dialog',d=>{errors.push('Unexpected reading warning: '+d.message());return d.dismiss();});
   await card.getByRole('button',{name:'Yes, confirm reading'}).click();await card.getByText('✓ Complete',{exact:true}).waitFor();
   assert.equal(state.reports[key].pumpRows[0].closing,439931.31);assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,439931.31);
   assert.equal(state.reports[key].confirmed,false);assert.equal(photoCount,1);
+  assert.equal(await card.locator('input[inputmode=decimal]').count(),0);
+  assert.equal(await card.getByRole('button',{name:'Yes, confirm reading'}).count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);assert.deepEqual(errors,[]);
   fs.mkdirSync('../../work/liloan-photo-cash-review',{recursive:true});await card.screenshot({path:'../../work/liloan-photo-cash-review/phone-automatic-43993131.png'});
  }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}

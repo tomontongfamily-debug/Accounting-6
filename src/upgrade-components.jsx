@@ -20,7 +20,7 @@ export async function savePumpReading(report,row) {
 }
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
-  const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):'');const [editing,setEditing]=useState(false);
+  const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
@@ -29,7 +29,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   useEffect(()=>{onBusy?.(row.id,busy);return()=>onBusy?.(row.id,false);},[busy,onBusy,row.id]);
   useEffect(()=>{
     if(busy || Number(row.readingRevision||0)===revision.current)return;
-    revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setDraft(row.readingConfirmed?String(row.closing):'');setEditing(false);
+    revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
   },[row,busy]);
   async function saveReading(next) {
     const saved=await onConfirm({...next,readingRevision:revision.current});
@@ -50,6 +50,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
       let value=null;
       try {value=await detect(data);}catch { /* The saved photo can still be transcribed and confirmed. */ }
       if(!active.current)return;setDetected(value);setDraft(value===null?'':String(value));
+      if(value!==null)await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value});
       if(value===null)setEditing(true);
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }
@@ -86,7 +87,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy} onClick={openCamera}>{photo?'Retake photo':'Open camera'}</button><label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label></div>
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
-    {photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
+    {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L sold'} · {warning.level}<br/>{warning.message}</p>}
       <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>
     </div>}</>}

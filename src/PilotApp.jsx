@@ -4,6 +4,7 @@ import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
 import { recoverCashDraft } from './cash-recovery.js';
+import { mergePhoneReadings } from './phone-reading-sync.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
 import { StationHealthReview } from "./shift-health.jsx";
 import { AutomaticVouchers } from "./cash-denominations.jsx";
@@ -902,6 +903,7 @@ function storeWithLocalDrafts(store = emptyStore(), allowedBranch = "") {
       const saved=onlineReport?.pumpRows.find(p=>midShiftPumpKey(p)===midShiftPumpKey(row));
       return saved?.readingRevision>=Number(row.readingRevision||0)&&saved?.readingRevision?saved:saved?{...row,id:saved.id,opening:saved.opening}:row;
     }),cashReviewState:onlineReport?.cashReviewState??draft.cashReviewState,recountRequired:onlineReport?.recountRequired??draft.recountRequired};
+    if(onlineReport?.pilot)reports[key]=mergePhoneReadings(reports[key],onlineReport);
   }
   return { ...store, reports };
 }
@@ -2769,6 +2771,7 @@ export default function App() {
   const localChangeVersionRef = useRef(readDeviceSaveVersion());
   const pendingSaveCountRef = useRef(0);
   const pumpMutationVersionRef = useRef(0);
+  const pumpRefreshInFlightRef = useRef(false);
   const pendingSaveRef = useRef(Promise.resolve());
   const draftSaveTimerRef = useRef(null);
   const pendingDraftReportRef = useRef(null);
@@ -2978,7 +2981,7 @@ export default function App() {
           onChange: () => {
             if (!mounted || document.hidden) return;
             window.clearTimeout(realtimeRefreshTimer);
-            realtimeRefreshTimer = window.setTimeout(() => refreshOnlineStore(true), 750);
+            realtimeRefreshTimer = window.setTimeout(() => { refreshPhoneReadings(); refreshOnlineStore(true); }, 750);
           },
           onStatus: (status) => {
             if (!mounted || !hasLoadedOnlineStoreRef.current) return;
@@ -2996,7 +2999,7 @@ export default function App() {
       });
 
     function refreshWhenVisible() {
-      if (!document.hidden) refreshOnlineStore(true);
+      if (!document.hidden) { refreshPhoneReadings(); refreshOnlineStore(true); }
     }
 
     const demoRefreshInterval = window.setInterval(refreshWhenVisible, 15000);
@@ -3391,6 +3394,26 @@ export default function App() {
     removeLocalDraft(next); removeQueuedReport(next);
     activeReportRef.current = next;
     setStore(old => ({ ...old, reports: { ...old.reports, [reportKey(next.branch, next.date, next.shiftId)]: normalizeExistingReport(next) } }));
+  }
+
+  async function refreshPhoneReadings() {
+    if(role!=='Cashier'||window.matchMedia('(max-width: 767px)').matches||!hasLoadedOnlineStoreRef.current||pumpRefreshInFlightRef.current)return;
+    const current=activeReportRef.current;
+    if(!current||current.confirmed)return;
+    const key=reportKey(current.branch,current.date,current.shiftId);
+    pumpRefreshInFlightRef.current=true;
+    try{
+      const {report:saved}=await demoApi('pump-report',{reportKey:key});
+      const local=activeReportRef.current,next=mergePhoneReadings(local,saved);
+      if(next===local)return;
+      pumpMutationVersionRef.current+=1;
+      activeReportRef.current=next;
+      for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=mergePhoneReadings(ref.current,saved);
+      setStore(old=>({...old,reports:{...old.reports,[key]:mergePhoneReadings(old.reports[key],saved)}}));
+      const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(mergePhoneReadings(cached,saved));
+      const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(mergePhoneReadings(queued,saved));
+    }catch{ /* Keep the latest displayed readings; the next poll retries. */ }
+    finally{pumpRefreshInFlightRef.current=false;}
   }
 
   async function reloadCashShift(denominations) {
