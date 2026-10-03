@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { readingWithVisibleDecimal, totalizerCrop, totalizerRegions } from './totalizer-image.js';
+import { readingWithVisibleDecimal, refineLeadingLcdDigit, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
@@ -21,13 +21,18 @@ async function recognizePhoto(data){
   try{
     worker=await workerPromise;
     const readings=new Set();
+    let sensitiveMask;
     for(const primary of analysis.regions){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
       for(const region of layouts){
         const votes=new Map(),agreed=new Set();
-        for(const {grow,pad}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40}]){
-          const crop=totalizerCrop(analysis.mask,canvas.width,canvas.height,region,pad,grow);
+        for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
+          // Retain the original row boundaries. Re-detecting them on a more
+          // sensitive mask can mistake reflections for extra leading digits.
+          if(sensitive&&(agreed.size||[...votes.values()].some(count=>count>=2)))break;
+          if(sensitive)sensitiveMask ||= totalizerMask(gray,canvas.width,canvas.height,5);
+          const crop=totalizerCrop(sensitive?sensitiveMask:analysis.mask,canvas.width,canvas.height,region,pad,grow);
           const part=document.createElement('canvas');part.width=crop.width;part.height=crop.height;
           part.getContext('2d').putImageData(new ImageData(crop.rgba,crop.width,crop.height),0,0);
           const passes=[];
@@ -35,13 +40,14 @@ async function recognizePhoto(data){
             await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:mode,user_defined_dpi:'150'});
             const {data:result}=await worker.recognize(part,{}, {text:true,blocks:true});
             const symbols=result.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words.flatMap(w=>w.symbols))))||[];
-            const translated=symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}}));
+            const translated=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
-            let value=result.confidence>=70&&digits.every(s=>s.confidence>=90)?readingWithVisibleDecimal(translated,analysis.components):null;
+            const verifiedLeading=digits[0]?.lcdVerified===true;
+            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90)?readingWithVisibleDecimal(translated,analysis.components):null;
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
             passes.push({value,confidence:result.confidence});
-            if(value!==null&&result.confidence>=90)votes.set(value,(votes.get(value)||0)+1);
+            if(value!==null&&(result.confidence>=90||verifiedLeading))votes.set(value,(votes.get(value)||0)+1);
           }
           if(passes[0].value!==null&&passes[0].value===passes[1].value&&Math.max(...passes.map(p=>p.confidence))>=80)agreed.add(passes[0].value);
         }
