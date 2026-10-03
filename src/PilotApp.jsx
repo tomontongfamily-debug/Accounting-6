@@ -1,3 +1,4 @@
+import AdminReportAlerts from './admin-report-alerts.jsx';
 import { pilotPost } from './pilot-client.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -5831,21 +5832,10 @@ function OwnerMobileSummary({ selectedDate, selectedShiftId, lastRefreshedAt, pr
   );
 }
 
-function urlBase64ToUint8Array(value) {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replaceAll("-", "+").replaceAll("_", "/");
-  const raw = window.atob(base64);
-  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
-}
-
 function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBook, allReports, correctionRequests, approveCorrectionRequest, rejectCorrectionRequest, healthRows, healthStartDate, healthEndDate, setHealthStartDate, setHealthEndDate, branch }) {
   const [activeView, setActiveView] = useState(() => (
-    ["corrections", "station-health", "error-analytics", "deposit-settings"].includes(new URLSearchParams(window.location.search).get("view")) ? new URLSearchParams(window.location.search).get("view") : "performance"
+    ["corrections", "alerts", "station-health", "error-analytics", "deposit-settings"].includes(new URLSearchParams(window.location.search).get("view")) ? new URLSearchParams(window.location.search).get("view") : "performance"
   ));
-  const [notificationStatus, setNotificationStatus] = useState(() => (
-    typeof Notification === "undefined" ? "Notifications are not supported on this phone." : ""
-  ));
-  const [enablingNotifications, setEnablingNotifications] = useState(false);
   const [station, setStation] = useState("All Stations");
   const [period, setPeriod] = useState("Daily");
   const [shiftId, setShiftId] = useState("shift-1");
@@ -5902,18 +5892,6 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
   const cashRedemption = reports.reduce((sum, item) => sum + n(item.deductions?.cashRedemption), 0);
   const rangeLabel = range.start === range.end ? range.start : `${range.start} to ${range.end}`;
 
-  useEffect(() => {
-    if (!("serviceWorker" in navigator) || typeof Notification === "undefined") return;
-    if (Notification.permission === "denied") {
-      setNotificationStatus("Notifications are blocked in this phone's browser settings.");
-      return;
-    }
-    navigator.serviceWorker.getRegistration("/").then(async (registration) => {
-      const subscription = await registration?.pushManager?.getSubscription();
-      setNotificationStatus(subscription ? "Correction alerts are enabled on this phone." : "Enable alerts once to receive new correction requests.");
-    }).catch(() => setNotificationStatus("Enable alerts once to receive new correction requests."));
-  }, []);
-
   function selectView(view) {
     setActiveView(view);
     window.scrollTo({ top: 0 });
@@ -5921,44 +5899,6 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
     if (view !== "performance") url.searchParams.set("view", view);
     else url.searchParams.delete("view");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }
-
-  async function enableCorrectionNotifications() {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined") {
-      setNotificationStatus("This phone or browser does not support push notifications.");
-      return;
-    }
-
-    setEnablingNotifications(true);
-    setNotificationStatus("Enabling correction alerts...");
-    try {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        setNotificationStatus("Notification permission was not allowed. Enable it in the phone's browser settings.");
-        return;
-      }
-      const registration = await navigator.serviceWorker.register("/fueltech-sw.js", { scope: "/" });
-      await navigator.serviceWorker.ready;
-      const config = await apiPost("/api/notifications/subscribe", { action: "config" }, sessionToken);
-      let subscription = await registration.pushManager.getSubscription();
-      if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(config.publicKey),
-        });
-      }
-      await apiPost("/api/notifications/subscribe", { action: "subscribe", subscription: subscription.toJSON() }, sessionToken);
-      setNotificationStatus("Correction alerts are enabled on this phone.");
-      await registration.showNotification("FuelTech alerts enabled", {
-        body: "This phone will notify you when a new date correction is requested.",
-        icon: "/fueltech-icon-192-v3.png",
-        tag: "fueltech-alerts-enabled",
-      });
-    } catch (error) {
-      setNotificationStatus(error.message || "Unable to enable notifications on this phone.");
-    } finally {
-      setEnablingNotifications(false);
-    }
   }
 
   return (
@@ -5982,7 +5922,10 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
         <button type="button" className={activeView === "corrections" ? "active" : ""} onClick={() => selectView("corrections")}>
           Corrections{correctionRequests.length ? ` (${correctionRequests.length})` : ""}
         </button>
+      <button type="button" className={activeView === "alerts" ? "active" : ""} onClick={() => selectView("alerts")}>Alerts</button>
       </nav>
+      <AdminReportAlerts sessionToken={sessionToken} compact={activeView!=="alerts"} onShowAll={()=>selectView("alerts")} />
+
 
       {activeView === "error-analytics" && <ErrorAnalytics reports={allReports} />}
       {activeView === "station-health" && <StationHealthReview reports={allReports} rows={healthRows} from={healthStartDate} to={healthEndDate} setFrom={setHealthStartDate} setTo={setHealthEndDate} />}
@@ -6098,16 +6041,6 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
               <p>Review requests sent by cashiers.</p>
             </div>
             <strong>{correctionRequests.length}</strong>
-          </div>
-
-          <div className="admin-mobile-alert-settings">
-            <div>
-              <b>Phone alerts</b>
-              <span>{notificationStatus || "Enable alerts once to receive new correction requests."}</span>
-            </div>
-            <button type="button" disabled={enablingNotifications} onClick={enableCorrectionNotifications}>
-              {enablingNotifications ? "Enabling..." : "Enable Alerts"}
-            </button>
           </div>
 
           <div className="admin-mobile-correction-list">

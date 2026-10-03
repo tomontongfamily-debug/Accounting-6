@@ -1,16 +1,18 @@
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 self.addEventListener("push", (event) => {
   let message = {};
   try {
     message = event.data?.json() || {};
   } catch {
-    message = { body: event.data?.text() || "A new correction request needs review." };
+    message = { body: event.data?.text() || "A station needs your attention." };
   }
 
   event.waitUntil(self.registration.showNotification(message.title || "FuelTech Admin", {
-    body: message.body || "A new correction request needs review.",
+    body: message.body || "A station needs your attention.",
     icon: "/fueltech-icon-192-v3.png",
     badge: "/fueltech-icon-192-v3.png",
-    tag: message.tag || "fueltech-correction-request",
+    tag: message.tag || "fueltech-admin-alert",
     renotify: true,
     vibrate: [200, 100, 200],
     data: { url: message.url || "/admin?view=corrections" },
