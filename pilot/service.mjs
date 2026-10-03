@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, reportKey } from '../src/accounting-engine.js';
-import { amount, automaticCashVouchers, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
+import { CASH_DENOMINATIONS, amount, automaticCashVouchers, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
 import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
@@ -107,6 +107,7 @@ function storeReport(r,session,action) {
   r.pilotLastNonReadingRevision=action==='pump-reading-saved'
     ? Number(previous?.pilotLastNonReadingRevision??previous?.pilotRevision??0)
     : r.pilotRevision;
+  r.pilotCashRevision=Number(previous?.pilotCashRevision||0)+(['cash-confirm','cash-recount','correction-approved'].includes(action)?1:0);
   r.serverMeta={...r.serverMeta,reportId:r.serverMeta?.reportId||(r.confirmed?randomUUID():''),savedAt:stamp()};
   database.reports[keyOf(r)]=r;
   audit(action,session,{reportKey:keyOf(r)}); save();
@@ -223,8 +224,24 @@ function validatePricePhotos(report,change) {
       return send(storeReport(r,session,input.operation==='submit'?'report-submitted':'draft-saved'));
     }
     if(route==='/api/demo/cash-confirm' || route==='/api/demo/cash-check' || route==='/api/demo/cash-recount') {
-      requireRole(session,'Cashier');const r=candidate(input.report,session);
-      if(route.endsWith('cash-confirm')) { if(r.cashCountConfirmed) reject('Cash count is already confirmed.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.initialCashDenominations=input.denominations;r.cashCountConfirmed=true; }
+      requireRole(session,'Cashier');
+      let r;
+      if(route.endsWith('cash-confirm')) {
+        // This action owns only the physical count, not the incoming desktop draft.
+        // Keep current pump photos, prices, source records and other saved fields.
+        const old=database.reports[keyOf(input.report||{})];
+        if(!old)reject('Refresh the shift dashboard first.');
+        branchAccess(session,input.report?.branch);
+        const total=denominationTotal(input.denominations);
+        if(old.cashCountConfirmed) {
+          const same=old.cashDenominations&&CASH_DENOMINATIONS.every(d=>Number(old.cashDenominations[d]||0)===Number(input.denominations[d]||0));
+          if(same&&Number(old.actualCashCounted)===total)return send({ok:true,alreadyConfirmed:true,report:exposeReport(old,session)});
+          reject('Physical cash was already confirmed on another device. Refresh to view the saved count; it cannot be replaced.',409);
+        }
+        if(input.report?.cashCountConfirmed||Number(input.report?.pilotCashRevision||0)!==Number(old.pilotCashRevision||0))reject('The cash confirmation changed. Refresh the saved shift before confirming.',409);
+        r=candidate(old,session);
+        r.actualCashCounted=total;r.cashDenominations=input.denominations;r.initialCashDenominations=input.denominations;r.cashCountConfirmed=true;
+      } else r=candidate(input.report,session);
       if(route.endsWith('cash-check')) {
         if(!r.cashCountConfirmed || r.pumpRows.some(row=>!readingComplete(row))) reject('Confirm cash and complete all readings first.');
         if(r.cashReviewState && r.reviewedExpectedCash===compute(r).expectedCash) return send({ok:true,needsRecount:!!r.recountRequired,report:exposeReport(r,session)});

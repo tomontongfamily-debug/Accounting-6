@@ -34,17 +34,37 @@ test('Phone readings do not block the desktop cash count or overwrite saved nozz
  assert.equal(cash.result.report.actualCashCounted,87245);
  assert.equal(cash.result.report.cashCountConfirmed,true);
  assert.deepEqual(cash.result.report.pumpRows,before);
- await assert.rejects(runAction(cash.state,cashier,'/api/demo/cash-confirm',{report:desktop,denominations:{100:1}}),/another device/);
+ await assert.rejects(runAction(cash.state,cashier,'/api/demo/cash-confirm',{report:desktop,denominations:{100:1}}),/already confirmed/);
 });
 
-test('Photo merge never crosses another desktop edit, manager price edit, or unknown legacy revision',async()=>{
+test('Full desktop drafts never cross another desktop edit, manager price edit, or unknown legacy revision',async()=>{
  const {state,report,key,cashier,manager}=fixture();
  const changed=await runAction(state,cashier,'/api/reports/save',{report:{...report,notes:'Saved on another PC'}});
- await assert.rejects(runAction(changed.state,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
+ await assert.rejects(runAction(changed.state,cashier,'/api/reports/save',{report}),/another device/);
  const priced=await runAction(state,manager,'/api/reports/save',{report:{...report,midShiftPriceChanges:[{id:'new',product:'Diesel',effectiveTime:'09:00',newPrice:61}]}});
- await assert.rejects(runAction(priced.state,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
+ await assert.rejects(runAction(priced.state,cashier,'/api/reports/save',{report}),/another device/);
  const legacy=structuredClone(state);legacy.reports[key].pilotRevision=10;
- await assert.rejects(runAction(legacy,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another device/);
+ await assert.rejects(runAction(legacy,cashier,'/api/reports/save',{report}),/another device/);
+});
+
+test('Physical cash uses the saved shift despite unrelated changes, without replacing its fields',async()=>{
+ const {state,report,key,cashier,manager}=fixture();
+ const changed=await runAction(state,cashier,'/api/reports/save',{report:{...report,notes:'Saved on another PC',oilSales:123}});
+ const priced=await runAction(changed.state,manager,'/api/reports/save',{report:{...changed.result.report,midShiftPriceChanges:[{id:'new',product:'Diesel',effectiveTime:'09:00',newPrice:61}]}});
+ const cash=await runAction(priced.state,cashier,'/api/demo/cash-confirm',{report:{...report,notes:'stale',oilSales:999},denominations:{1000:81,500:12,100:2,5:9}});
+ assert.equal(cash.result.report.actualCashCounted,87245);
+ assert.equal(cash.result.report.notes,'Saved on another PC');assert.equal(cash.result.report.oilSales,123);
+ assert.deepEqual(cash.result.report.midShiftPriceChanges,priced.state.reports[key].midShiftPriceChanges);
+ assert.deepEqual(cash.result.report.pumpRows,priced.state.reports[key].pumpRows);
+ assert.equal(cash.result.report.pilotCashRevision,1);
+ const retry=await runAction(cash.state,cashier,'/api/demo/cash-confirm',{report,denominations:{1000:'81',500:'12',100:'2',5:'9',200:''}});
+ assert.equal(retry.changed,false);assert.equal(retry.result.alreadyConfirmed,true);assert.deepEqual(retry.state,cash.state);
+ // The same total with a different denomination breakdown cannot replace locked cash.
+ await assert.rejects(runAction(cash.state,cashier,'/api/demo/cash-confirm',{report,denominations:{1000:87,100:2,5:9}}),/already confirmed/);
+ // Corrections reopen cash with a new cash revision, invalidating old count screens.
+ const reopened=structuredClone(cash.state);reopened.reports[key].cashCountConfirmed=false;reopened.reports[key].pilotCashRevision=2;
+ await assert.rejects(runAction(reopened,cashier,'/api/demo/cash-confirm',{report,denominations:{100:2}}),/cash confirmation changed/);
+ await assert.rejects(runAction(state,{role:'Cashier',branch:'Mabolo'},'/api/demo/cash-confirm',{report,denominations:{100:2}}),/another station/);
 });
 test('Cash denominations, mandatory all-nozzle photos, submission lock, deposit reservation',async()=>{
   let {state,report,key,cashier,manager,approver,admin}=fixture();
