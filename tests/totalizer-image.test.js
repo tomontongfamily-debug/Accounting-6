@@ -16,6 +16,9 @@ test('Missing, ambiguous or reflection-shaped decimal marks cannot produce a gue
   assert.equal(readingWithVisibleDecimal(s,[{...dot(6),area:10}]),null);
   assert.equal(readingWithVisibleDecimal(s,[{...dot(6),y:40}]),null);
 });
+test('A broken stroke in an earlier integer digit cannot hide the real decimal',()=>{
+  assert.equal(readingWithVisibleDecimal(symbols('12345678'),[dot(1),dot(6)]),123456.78);
+});
 test('Uncertain digits and separate label rows are rejected',()=>{
   const s=symbols('12345678');s[2].confidence=50;
   assert.equal(readingWithVisibleDecimal(s,[dot(6)]),null);
