@@ -1,6 +1,7 @@
 import { StationHealthCell } from "./shift-health.jsx";
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import AdminStoreGate from './admin-store-gate.jsx';
+import { redirectLiloanLogin } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
 import { createStoreRefreshQueue, refreshStore } from './store-refresh.js';
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -3988,6 +3989,7 @@ export default function App() {
         return;
       }
 
+      if (await redirectLiloanLogin(role, branch)) return;
       setSessionToken(result.token || "");
 
       if (role === "Admin") {
