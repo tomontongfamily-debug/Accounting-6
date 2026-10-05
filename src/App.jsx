@@ -1,6 +1,8 @@
 import { StationHealthCell } from "./shift-health.jsx";
 import AdminReportAlerts from './admin-report-alerts.jsx';
+import AdminStoreGate from './admin-store-gate.jsx';
 import { loadStorePages } from './store-pages.js';
+import { createStoreRefreshQueue, refreshStore } from './store-refresh.js';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cashierReportDateDisplay } from "./cashier-date.js";
 import { OWNER_PERIOD_OPTIONS, ownerCashTrendRows, ownerPeriodRange, ownerReportsForPeriod } from "./owner-period.js";
@@ -388,11 +390,12 @@ async function endLoginSession() {
   if (!response.ok) throw new Error("Unable to log out safely.");
 }
 
-async function apiPost(path, body, sessionToken = "") {
+async function apiPost(path, body, sessionToken = "", signal) {
   const response = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json", ...(sessionToken && sessionToken !== "cookie" ? { "x-fueltech-session": sessionToken } : {}) },
     body: JSON.stringify(body),
+    signal,
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result.ok === false) {
@@ -2252,8 +2255,8 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
   return next;
 }
 
-async function loadOnlineStore(sessionToken) {
-  const { priceRows = [], reportRows = [] } = await loadStorePages(input=>apiPost("/api/store/load", input, sessionToken));
+async function loadOnlineStore(sessionToken, onProgress) {
+  const { priceRows = [], reportRows = [] } = await loadStorePages((input, signal)=>apiPost("/api/store/load", input, sessionToken, signal), onProgress);
 
   const nextStore = emptyStore();
 
@@ -2351,6 +2354,7 @@ function removeQueuedReportByKey(key) {
 }
 
 async function flushOfflineReports(sessionToken, allowedBranch = "") {
+  let uploaded = false;
   for (const [key, report] of Object.entries(readOfflineQueue()).filter(([, item]) => !allowedBranch || item?.branch === allowedBranch)) {
     if (shouldDiscardOfflineReport(report, GLOBAL_OPENING_DATE)) {
       removeQueuedReportByKey(key);
@@ -2364,6 +2368,7 @@ async function flushOfflineReports(sessionToken, allowedBranch = "") {
     queueOfflineReport(rebasedReport);
     try {
       const result = await saveOnlineReport(rebasedReport, sessionToken);
+      uploaded = true;
       removeQueuedReport(rebasedReport);
       if (reportCompleted(result.report)) removeLocalDraft(result.report);
     } catch (error) {
@@ -2377,6 +2382,7 @@ async function flushOfflineReports(sessionToken, allowedBranch = "") {
       removeLocalDraft(rebasedReport);
     }
   }
+  return uploaded;
 }
 
 async function requestReportLease({ branch, date, shiftId, clientId, actor, action = "acquire", sessionToken }) {
@@ -2754,6 +2760,7 @@ export default function App() {
   const [lastRefreshedAt, setLastRefreshedAt] = useState("");
   const [initialLoadFinished, setInitialLoadFinished] = useState(false);
   const [initialLoadError, setInitialLoadError] = useState("");
+  const [loadedReportCount, setLoadedReportCount] = useState(0);
   const [lastOnlineSave, setLastOnlineSave] = useState({ reportKey: "", at: "" });
   const [systemHealth, setSystemHealth] = useState({ loading: false, error: "", backupReady: false, healthReady: false, latestBackup: null, latestHealth: null });
   const [clientId] = useState(() => deviceClientId());
@@ -2878,6 +2885,8 @@ export default function App() {
     };
   }, []);
 
+  const storeBranch = role === "Admin" || role === "Approver" ? "" : branch;
+
   useEffect(() => {
     try {
       window.localStorage.removeItem(STORE_KEY);
@@ -2900,20 +2909,20 @@ export default function App() {
     hasLoadedOnlineStoreRef.current = false;
     setInitialLoadFinished(false);
     setInitialLoadError("");
+    setLoadedReportCount(0);
 
     async function refreshOnlineStore(silent = false) {
       if (silent && (pendingSaveCountRef.current > 0 || isSavingOnlineRef.current || hasUnsavedOnlineChangeRef.current)) return;
       const refreshStartedAtVersion = localChangeVersionRef.current;
       if (!silent) setSyncMessage("Connecting online accounting database...");
       try {
-        let onlineStore = await loadOnlineStore(sessionToken);
-        if (navigator.onLine && role !== "Approver") {
-          await flushOfflineReports(sessionToken, role === "Admin" ? "" : branch);
-          onlineStore = await loadOnlineStore(sessionToken);
-        }
+        const onlineStore = await refreshStore(
+          () => loadOnlineStore(sessionToken, count => { if (mounted) setLoadedReportCount(count); }),
+          navigator.onLine && role !== "Approver" ? () => flushOfflineReports(sessionToken, storeBranch) : null,
+        );
         if (!mounted) return;
         if (refreshStartedAtVersion !== localChangeVersionRef.current || pendingSaveCountRef.current > 0) return;
-        setStore(role === "Approver" ? onlineStore : storeWithLocalDrafts(onlineStore, role === "Admin" ? "" : branch));
+        setStore(role === "Approver" ? onlineStore : storeWithLocalDrafts(onlineStore, storeBranch));
         hasLoadedOnlineStoreRef.current = true;
         if (role === "Admin") {
           loadSystemHealth(sessionToken)
@@ -2960,7 +2969,8 @@ export default function App() {
       }
     }
 
-    refreshOnlineStore();
+    const storeRefreshQueue = createStoreRefreshQueue(refreshOnlineStore);
+    storeRefreshQueue.refresh();
 
     loadRealtimeConfig(sessionToken)
       .then((config) => {
@@ -2971,7 +2981,7 @@ export default function App() {
           onChange: () => {
             if (!mounted || document.hidden) return;
             window.clearTimeout(realtimeRefreshTimer);
-            realtimeRefreshTimer = window.setTimeout(() => refreshOnlineStore(true), 750);
+            realtimeRefreshTimer = window.setTimeout(() => storeRefreshQueue.refresh(true), 750);
           },
           onStatus: (status) => {
             if (!mounted || !hasLoadedOnlineStoreRef.current) return;
@@ -2989,7 +2999,7 @@ export default function App() {
       });
 
     function refreshWhenVisible() {
-      if (!document.hidden) refreshOnlineStore(true);
+      if (!document.hidden) storeRefreshQueue.refresh(true);
     }
 
     window.addEventListener("focus", refreshWhenVisible);
@@ -2998,13 +3008,14 @@ export default function App() {
 
     return () => {
       mounted = false;
+      storeRefreshQueue.stop();
       window.clearTimeout(realtimeRefreshTimer);
       stopRealtime();
       window.removeEventListener("focus", refreshWhenVisible);
       window.removeEventListener("online", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [accessAllowed, sessionToken, role, branch]);
+  }, [accessAllowed, sessionToken, role, storeBranch]);
 
   useEffect(() => {
     if (!accessAllowed || !sessionToken || role !== "Cashier" || !cashierReportOpen) {
@@ -4164,7 +4175,7 @@ export default function App() {
                   <button type="button" className="secondary" onClick={() => window.location.reload()}>Try Again</button>
                 </Section>
               : <ApproverPage allReports={store.reports} consolidatedDeposits={consolidatedDeposits} startDate={summaryStartDate} setStartDate={setSummaryStartDate} endDate={summaryEndDate} setEndDate={setSummaryEndDate} approveDepositVerification={approveDepositVerification} reviewDepositRemovalRequest={reviewDepositRemovalRequest} lastRefreshedAt={lastRefreshedAt} logout={logout} />)}
-            {role === "Admin" && <AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} />}
+            {role === "Admin" && <AdminStoreGate finished={initialLoadFinished} error={initialLoadError} loadedReportCount={loadedReportCount} retry={() => window.location.reload()} logout={logout}><AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} /></AdminStoreGate>}
             {showReportConfirm && (
               <ConfirmReportDialog
                 report={activeReport}
