@@ -18,6 +18,23 @@ test('A later page failure rejects the entire store before any missing status ca
 test('Older servers returning a single complete store remain compatible',async()=>{
  const rows={reportRows:[{report_key:'one'}],priceRows:[]};assert.deepEqual(await loadStorePages(async()=>rows),rows);
 });
+
+test('Loading progress reports complete page counts without exposing a partial store',async()=>{
+ const progress=[];
+ const pages=[{reportRows:[{report_key:'one'}],priceRows:[],nextCursor:'one'},{reportRows:[{report_key:'two'}],priceRows:[]}];
+ const result=await loadStorePages(async()=>pages.shift(),count=>progress.push(count));
+ assert.deepEqual(progress,[1,2]);
+ assert.deepEqual(result.reportRows.map(row=>row.report_key),['one','two']);
+});
+
+test('A stalled page aborts and reports a recoverable timeout instead of waiting forever',async()=>{
+ let signal;
+ await assert.rejects(loadStorePages((_, requestSignal)=>{
+  signal=requestSignal;
+  return new Promise(()=>{});
+ },()=>{}, {timeoutMs:5}), /Loading reports took too long/);
+ assert.equal(signal.aborted,true);
+});
 test('Already-open clients can receive complete histories above the uncompressed response limit',()=>{
  const payload={ok:true,reportRows:Array.from({length:1221},(_,i)=>({report_key:String(i),data:{notes:'a'.repeat(6000)}})),priceRows:[]};
  assert.ok(Buffer.byteLength(JSON.stringify(payload))>4.5*1024*1024);
