@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { accountingTiming, loadSources } from './integrations.mjs';
 import { initialState, ensureCurrentReports, reconcileSources } from './state.mjs';
@@ -18,6 +18,18 @@ export async function configuration(db=pilotDatabase()) {
   const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').single();
   if(error) throw fail('Pilot preparation is not installed. The existing app remains available.');
   return data;
+}
+// The existing Admin screen must refresh approved vouchers and delayed payment
+// notifications too; importing cannot depend on a cashier opening the pilot.
+export async function refreshLivePilotSources(db,session) {
+  if(!['Admin','Approver'].includes(session.role)&&session.branch!=='Liloan')return;
+  const config=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').maybeSingle();
+  if(config.error)throw fail('Unable to verify Liloan source configuration.');
+  if(config.data?.mode!=='live')return;
+  const saved=await db.from('fueltech_pilot_state').select('revision').eq('mode','live').maybeSingle();
+  if(saved.error)throw fail('Unable to verify Liloan source records.');
+  if(!saved.data)return;
+  await execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/realtime/config',mutationId:randomUUID()},{db});
 }
 async function allRows(query) {
   const rows=[];

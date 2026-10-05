@@ -16,10 +16,11 @@ test('Real station photos are read in the browser without guessing ambiguous dig
   const results=[];
   for(const [i,sample]of samples.entries()){
    const data='data:image/jpeg;base64,'+fs.readFileSync(sample.file).toString('base64');
-   const reading=await page.evaluate(async data=>{const{detectTotalizer}=await import('/src/totalizer-ocr.js');return detectTotalizer(data);},data);
-   results.push({sample:i+1,expected:sample.expected,reading});
+   const {reading,milliseconds}=await page.evaluate(async data=>{const{detectTotalizer}=await import('/src/totalizer-ocr.js');const start=performance.now();const reading=await detectTotalizer(data);return {reading,milliseconds:Math.round(performance.now()-start)};},data);
+   results.push({sample:i+1,expected:sample.expected,reading,milliseconds});
   }
   console.log('Station OCR validation:',JSON.stringify(results));
+  if(process.env.TOTALIZER_BENCHMARK_RESULTS)fs.writeFileSync(process.env.TOTALIZER_BENCHMARK_RESULTS,JSON.stringify(results,null,2));
   for(const r of results)assert.equal(r.reading,r.expected,`Station photo ${r.sample}`);
  }finally{await browser.close();await server.close();}
 });

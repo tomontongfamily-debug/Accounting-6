@@ -296,6 +296,8 @@ function validatePricePhotos(report,change) {
       if(!photoRow) reject('Unknown nozzle.');
       const change=input.changeId?r.midShiftPriceChanges?.find(c=>c.id===input.changeId):null;
       if(input.changeId&&(!change||!change.effectiveTime||photoRow.product!==change.product)) reject('Save the product and price-change time before taking photos.');
+      const previous=change?change.readingPhotos?.[midShiftPumpKey(photoRow)]:photoRow;
+      if(input.replaceReading&&Number(input.revision)!==Number(previous?.readingRevision||0))reject('This reading changed on another device. Refresh before replacing its photo.',409);
       if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(input.data||'')) reject('Use a JPEG photo.');
       const image=Buffer.from(input.data.split(',')[1],'base64');
       if(image.length>2*1024*1024 || image[0]!==255 || image[1]!==216) reject('Invalid or oversized photo.');
@@ -303,7 +305,18 @@ function validatePricePhotos(report,change) {
       const objectPath=database.mode+'/Liloan/'+id+'.jpg';
       await uploadPhoto(objectPath,image);
       database.photos[photoPath]={reportKey:input.reportKey,rowId:photoRow.id,branch:r.branch,file:objectPath,...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})};
-      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id});save();return send({ok:true,photo_path:photoPath});
+      let readingRevision;
+      if(input.replaceReading){
+        readingRevision=Number(previous?.readingRevision||0)+1;
+        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_was_edited:false,readingRevision};
+        if(change){
+          const pumpKey=midShiftPumpKey(photoRow);
+          change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;
+        }else Object.assign(photoRow,cleared,{calculated_liters:null});
+        r.cashReviewState='';r.recountRequired=false;
+        storeReport(r,session,change?'price-change-photo-saved':'pump-reading-saved');
+      }
+      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision}: {})});
     }
     if(route==='/api/demo/issue') {
       requireRole(session,'Cashier');const r=candidate(input.report,session);

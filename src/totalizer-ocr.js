@@ -3,12 +3,21 @@ import { readingWithVisibleDecimal, refineLeadingLcdDigit, totalizerCrop, totali
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
+export function prepareTotalizer(){
+  workerPromise ||= createWorker('ssd_int',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false})
+    .then(async worker=>{await worker.setParameters({tessedit_char_whitelist:'0123456789.',user_defined_dpi:'150'});return worker;})
+    .catch(error=>{workerPromise=undefined;throw error;});
+  return workerPromise;
+}
 export function detectTotalizer(data){
   const request=detectionQueue.catch(()=>{}).then(()=>recognizePhoto(data));
   detectionQueue=request;return request;
 }
 
 async function recognizePhoto(data){
+  const ready=prepareTotalizer();
+  // Attach a rejection handler while image preparation runs.
+  ready.catch(()=>{});
   const image=new Image();image.src=data;await image.decode();
   const scale=Math.min(1,1280/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
@@ -16,10 +25,9 @@ async function recognizePhoto(data){
   const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data,gray=new Uint8Array(canvas.width*canvas.height);
   for(let i=0;i<gray.length;i++)gray[i]=Math.round(.2126*pixels[i*4]+.7152*pixels[i*4+1]+.0722*pixels[i*4+2]);
   const analysis=totalizerRegions(gray,canvas.width,canvas.height);
-  workerPromise ||= createWorker('ssd_int',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false});
   let worker;
   try{
-    worker=await workerPromise;
+    worker=await ready;
     const readings=new Set();
     let sensitiveMask;
     for(const primary of analysis.regions){
@@ -30,14 +38,17 @@ async function recognizePhoto(data){
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
           // Retain the original row boundaries. Re-detecting them on a more
           // sensitive mask can mistake reflections for extra leading digits.
-          if(sensitive&&(agreed.size||[...votes.values()].some(count=>count>=2)))break;
+          // Once both segmentation modes agree on validated digits and a
+          // visible decimal, repeated stroke variants add only latency.
+          if(agreed.size===1)break;
+          if(sensitive&&[...votes.values()].some(count=>count>=2))break;
           if(sensitive)sensitiveMask ||= totalizerMask(gray,canvas.width,canvas.height,5);
           const crop=totalizerCrop(sensitive?sensitiveMask:analysis.mask,canvas.width,canvas.height,region,pad,grow);
           const part=document.createElement('canvas');part.width=crop.width;part.height=crop.height;
           part.getContext('2d').putImageData(new ImageData(crop.rgba,crop.width,crop.height),0,0);
           const passes=[];
           for(const mode of ['7','13']){
-            await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:mode,user_defined_dpi:'150'});
+            await worker.setParameters({tessedit_pageseg_mode:mode});
             const {data:result}=await worker.recognize(part,{}, {text:true,blocks:true});
             const symbols=result.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words.flatMap(w=>w.symbols))))||[];
             const translated=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);

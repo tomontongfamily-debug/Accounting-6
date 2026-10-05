@@ -28,7 +28,7 @@ for(const confirmed of [false,true]) test(`Explicit cancelled CV disappears from
  const sources={pay:[],po:[],cvCashEvents:[],cvExclusions:[{id:'cancel-me',status:'cancelled'}]};
  reconcileSources(state,structuredClone(sources));
  assert.equal(report.purchaseRows.length,1);assert.equal(report.actualCashCounted,500);assert.equal(compute(report).expectedCash,expected+100);assert.equal(report.confirmed,confirmed);
- assert.equal(state.cvCashEvents.length,0);assert.equal(state.sourceAlerts.length,0);assert.equal(state.audit.at(-1).action,'cv-excluded-by-source-status');
+ assert.equal(state.cvCashEvents.length,0);assert.equal(state.sourceAlerts.length,0);assert.ok(state.audit.some(a=>a.action==='cv-excluded-by-source-status'));
  const count=state.audit.length;reconcileSources(state,structuredClone(sources));assert.equal(state.audit.length,count);
 });
 

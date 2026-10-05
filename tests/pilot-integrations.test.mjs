@@ -10,7 +10,7 @@ test('Manila boundaries and Pay/PO overnight ending-date conversion',()=>{
   assert.throws(()=>sourceTiming('2026-02-30','shift-1'));
 });
 test('CV approved/liquidated/cleared have identical single release; declined and online excluded',()=>{
-  const base={id:'cv1',ref:'CV1',station:'liloan',payment_method:'cash',amount:1000,decided_at:'2026-09-23T05:00:00+08:00',category:{name:'OPEX'},purpose:'Supplies'};
+  const base={id:'cv1',ref:'CV1',station:'liloan',payment_method:'cash',amount:1000,created_at:'2026-09-23T05:00:00+08:00',decided_at:'2026-09-24T15:00:00+08:00',category:{name:'OPEX'},purpose:'Supplies'};
   const normalize=status=>normalizeSources({cv:[{...base,status,change_amount:100}]},'2026-09-23');
   for(const status of ['approved','liquidated','cleared','released']) {
     assert.equal(normalize(status).cvCashEvents[0].amount,1000);
@@ -19,7 +19,7 @@ test('CV approved/liquidated/cleared have identical single release; declined and
   assert.equal(normalize('declined').cvCashEvents.length,0);
   assert.equal(normalize('pending').cvCashEvents.length,0);
   assert.equal(normalizeSources({cv:[{...base,status:'approved',payment_method:'online'}]},'2026-09-23').cvCashEvents.length,0);
-  assert.throws(()=>normalizeSources({cv:[{...base,status:'approved',decided_at:null}]},'2026-09-23'),/timezone|valid time/);
+  assert.throws(()=>normalizeSources({cv:[{...base,status:'approved',created_at:null}]},'2026-09-23'),/timezone|valid time/);
 });
 test('Paid base amount excludes fee, PO stable IDs deduplicate, other station excluded',()=>{
   const row={id:'pay1',station_id:LILOAN_STATION_ID,business_date:'2026-09-24',shift:'Shift 3',paid_at:'2026-09-23T22:15:00+08:00',status:'PAID',base_amount:500,customer_paid:550};
@@ -45,7 +45,7 @@ test('All three imports obey Accounting boundaries; checkout and status labels c
     const result=normalizeSources({
       pay:[{id:'pay',station_id:LILOAN_STATION_ID,status:'PAID',base_amount:10,paid_at:timestamp,business_date:'2000-01-01',shift:'Shift 1'}],
       po:[{id:'po',station_id:LILOAN_STATION_ID,status:'POSTED',amount:10,liters:1,transaction_at:timestamp,business_date:'2000-01-01',shift_id:'shift-1'}],
-      cv:[{id:'cv',station:'liloan',status:'cleared',payment_method:'cash',amount:10,decided_at:timestamp,cleared_at:'2026-09-30T15:00:00+08:00',category:{name:'OPEX'},purpose:'Test'}],
+      cv:[{id:'cv',station:'liloan',status:'cleared',payment_method:'cash',amount:10,created_at:timestamp,decided_at:'2026-09-30T15:00:00+08:00',cleared_at:'2026-09-30T15:00:00+08:00',category:{name:'OPEX'},purpose:'Test'}],
     },'2026-09-22');
     for(const rows of [result.pay,result.po,result.cvCashEvents]) assert.deepEqual({date:rows[0].date,shiftId:rows[0].shiftId},{date,shiftId},time);
   }
