@@ -5,6 +5,7 @@ import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-ch
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
+import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
 const stamp=()=>new Date().toISOString();
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
 const reject=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
@@ -65,7 +66,9 @@ function candidate(input,session,readingId) {
     if(row.photo_path && (!photo || photo.reportKey!==keyOf(old) || photo.rowId!==base.id || photo.changeId)) reject('The photo does not belong to this reading.');
     return {...base,closing:row.closing,closingEntered:row.closingEntered,closingEntrySource:row.closingEntrySource,photo_path:row.photo_path,ocr_detected_reading:row.ocr_detected_reading??null,ocr_was_edited:row.ocr_detected_reading!=null && Number(row.closing)!==Number(row.ocr_detected_reading),readingConfirmed:row.readingConfirmed,calculated_liters:row.closing===''?null:money(Number(row.closing)-Number(base.opening))};
   });
-  const allowed=Object.fromEntries(['cashierName','tankRows','deliveries','oilSales','actualCashCounted','cashDenominations','notes','coke','pointsIssued','pointsWithdrawn','clientSave'].filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
+  const allowed=Object.fromEntries(['cashierName','tankRows','fuelLeakLosses','deliveries','oilSales','actualCashCounted','cashDenominations','notes','coke','pointsIssued','pointsWithdrawn','clientSave'].filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
+  const incomingLeakLossError=validateFuelLeakLosses({...old,...allowed,pumpRows:rows});
+  if(incomingLeakLossError) reject(incomingLeakLossError);
   const r=authoritative({...old,...allowed,purchaseRows:old.purchaseRows,pumpRows:rows,confirmed:false,confirmedAt:'',deposits:old.deposits,prices:old.prices,midShiftPriceChanges:old.midShiftPriceChanges,baselineConfirmed:old.baselineConfirmed,baselineMissing:old.baselineMissing,checkDetails:old.checkDetails,cashCountConfirmed:old.cashCountConfirmed,cashReviewState:old.cashReviewState,recountRequired:old.recountRequired,integrationIssues:old.integrationIssues});
   if(old.cashCountConfirmed) {r.actualCashCounted=old.actualCashCounted;r.cashDenominations=old.cashDenominations;}
   else if(r.cashDenominations&&Object.values(r.cashDenominations).some(v=>v!==''&&v!=null)) r.actualCashCounted=denominationTotal(r.cashDenominations);
@@ -88,6 +91,8 @@ function candidate(input,session,readingId) {
     for(const value of [row.actualDip,row.pullOut,row.calibration]) if(value!==''&&value!=null) amount(value);
     return {...row,opening:base.opening,product:base.product,tank:base.tank,delivery:(r.deliveries||[]).filter(d=>d.product===base.product).reduce((sum,d)=>sum+Number(d.liters),0)};
   });
+  const leakLossError=validateFuelLeakLosses(r);
+  if(leakLossError) reject(leakLossError);
   for(const row of r.purchaseRows||[]) {
     if(!['OPEX','Personal','Personnel','Construction'].includes(row.category) || !String(row.item||'').trim()) continue; // drafts can be incomplete
     amount(row.amount);
@@ -231,6 +236,8 @@ function validatePricePhotos(report,change) {
       }
       const r=candidate(input.report,session);
       if(input.operation==='submit') {
+        const leakLossError=validateFuelLeakLosses(r,{requireNotes:true});
+        if(leakLossError) reject(leakLossError);
         if(r.reviewedExpectedCash!==compute(r).expectedCash) reject('Cash or source totals changed. Check cash reconciliation again.');
         if((database.sourceAlerts||[]).some(a=>a.reportKey===keyOf(r))) reject('A source voucher changed or was cancelled. Admin must review before submission.');
         if(!database.sourcesVerifiedAt || Date.now()-Date.parse(database.sourcesVerifiedAt)>120000) reject('Verify online payment, PO and CV records before submission.');
@@ -250,6 +257,7 @@ function validatePricePhotos(report,change) {
       const previousRows=old?.pumpRows||[];
       for(const row of r.pumpRows) if(row.readingConfirmed && !previousRows.find(p=>p.id===row.id&&p.readingConfirmed&&p.closing===row.closing&&p.photo_path===row.photo_path)) audit(row.ocr_was_edited?'ocr-reading-edited':'pump-reading-confirmed',session,{reportKey:keyOf(r),rowId:row.id,ocr:row.ocr_detected_reading,final:row.closing});
       if(JSON.stringify(old?.deliveries||[])!==JSON.stringify(r.deliveries||[])) audit('tank-delivery-changed',session,{reportKey:keyOf(r),before:old?.deliveries||[],after:r.deliveries||[]});
+      if(JSON.stringify(old?.fuelLeakLosses||[])!==JSON.stringify(r.fuelLeakLosses||[])) audit('fuel-leak-loss-changed',session,{reportKey:keyOf(r),before:old?.fuelLeakLosses||[],after:r.fuelLeakLosses||[]});
       if(JSON.stringify(old?.purchaseRows||[])!==JSON.stringify(r.purchaseRows||[])) audit('manual-deduction-changed',session,{reportKey:keyOf(r),before:old?.purchaseRows||[],after:r.purchaseRows||[]});
       return send(storeReport(r,session,input.operation==='submit'?'report-submitted':'draft-saved'));
     }
