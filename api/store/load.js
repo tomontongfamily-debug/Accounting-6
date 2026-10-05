@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "../_shared/supabase.js";
 import { getRequestSession } from "../_shared/session.js";
 import { attachAuthoritativePoRows } from "../_shared/po.js";
+import { allPages } from "../_shared/pages.js";
+import { refreshLivePilotSources } from "../../pilot/repository.mjs";
 
 const PUBLIC_PRICE_FIELDS = new Set(["Premium", "Regular", "Diesel", "confirmed", "confirmedAt"]);
 
@@ -58,32 +60,16 @@ export default async function handler(req, res) {
     }
 
     const supabase = supabaseAdmin();
-    const reportQuery = supabase
-      .from("fueltech_reports")
-      .select("report_key,branch,report_date,shift_id,data,updated_at");
-    const priceQuery = supabase
-      .from("fueltech_price_book")
-      .select("branch,effective_date,coverage,shift_id,prices,updated_at");
-
-    if (auth.session.role !== "Admin" && auth.session.role !== "Approver") {
-      reportQuery.eq("branch", auth.session.branch);
-      priceQuery.eq("branch", auth.session.branch);
-    }
-
-    const [{ data: priceRows, error: priceError }, { data: reportRows, error: reportError }] = await Promise.all([
-      auth.session.role === "Approver" ? Promise.resolve({ data: [], error: null }) : priceQuery,
-      reportQuery,
+    await refreshLivePilotSources(supabase,auth.session);
+    const scoped = query => auth.session.role === "Admin" || auth.session.role === "Approver"
+      ? query : query.eq("branch", auth.session.branch);
+    const [priceRows,reportRows] = await Promise.all([
+      auth.session.role === "Approver" ? Promise.resolve([]) : allPages(()=>scoped(supabase
+        .from("fueltech_price_book").select("branch,effective_date,coverage,shift_id,prices,updated_at")
+        .order("branch").order("effective_date").order("coverage").order("shift_id"))),
+      allPages(()=>scoped(supabase.from("fueltech_reports")
+        .select("report_key,branch,report_date,shift_id,data,updated_at").order("report_key"))),
     ]);
-
-    if (priceError) {
-      res.status(500).json({ ok: false, error: priceError.message });
-      return;
-    }
-
-    if (reportError) {
-      res.status(500).json({ ok: false, error: reportError.message });
-      return;
-    }
 
     const authoritativeReportRows = auth.session.role === "Approver"
       ? reportRows || []

@@ -1,6 +1,6 @@
 import { pilotPost } from './pilot-client.js';
 import { useEffect, useRef, useState } from 'react';
-import { detectTotalizer as detect } from './totalizer-ocr.js';
+import { detectTotalizer as detect, prepareTotalizer } from './totalizer-ocr.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
@@ -24,6 +24,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
+  useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
   const revision=useRef(row.readingRevision||0);
   useEffect(()=>{onBusy?.(row.id,busy);return()=>onBusy?.(row.id,false);},[busy,onBusy,row.id]);
@@ -42,15 +43,18 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     setBusy(true);setError('');setDraft('');setDetected(null);setEditing(false);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
+      // Recognize locally while the photo uploads, instead of waiting through
+      // several server round trips before starting the OCR worker.
+      const recognition=detect(data).catch(()=>null);
       await onPrepare?.();
-      const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
+      const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,replaceReading:true,revision:revision.current,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
       if(!active.current)return;setPhoto(saved.photo_path);
-      // Invalidate an earlier confirmation as soon as a replacement is captured.
-      await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null});
-      let value=null;
-      try {value=await detect(data);}catch { /* The saved photo can still be transcribed and confirmed. */ }
+      // Photo upload atomically invalidates the old confirmation. Persist the
+      // suggestion in one reading save, using the revision returned by upload.
+      revision.current=Number(saved.readingRevision);
+      const value=await recognition;
       if(!active.current)return;setDetected(value);setDraft(value===null?'':String(value));
-      if(value!==null)await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value});
+      await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value});
       if(value===null)setEditing(true);
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }

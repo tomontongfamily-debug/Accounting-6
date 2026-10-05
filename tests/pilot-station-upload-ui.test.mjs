@@ -17,7 +17,7 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
    const context=await browser.newContext({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
    try{
     const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-    let {state,key,report,cashier}=fixture();const uploads=new Map();
+    let {state,key,report,cashier}=fixture();const uploads=new Map(),writes=[];
     await page.route('**/api/**',async route=>{
      const url=new URL(route.request().url());let result,status=200;
      if(url.pathname==='/api/pilot/photo')return route.fulfill({contentType:'image/jpeg',body:uploads.get(url.searchParams.get('id'))});
@@ -25,6 +25,7 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
      else if(url.pathname.startsWith('/api/auth/'))result={ok:true,role:'Cashier',token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
      else if(url.pathname==='/api/pilot/action'){
       const body=route.request().postDataJSON();
+      if(['/api/demo/photo','/api/demo/pump-reading'].includes(body.route))writes.push(body.route);
       try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(path,image)=>uploads.set(body.mutationId,image)});state=out.state;result=out.result;}
       catch(e){status=e.status||400;result={ok:false,error:e.message};}
      }else{status=404;result={ok:false};}
@@ -46,6 +47,7 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
      assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,reading);
     }
     assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
+    assert.deepEqual(writes,['/api/demo/photo','/api/demo/pump-reading'],'Photo and OCR suggestion need only two server saves');
     assert.equal(state.reports[key].confirmed,false);assert.deepEqual(errors,[]);
    }finally{await context.close();}
   }
