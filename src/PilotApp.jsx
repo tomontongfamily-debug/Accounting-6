@@ -5,6 +5,7 @@ import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
 import { readStationSession } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
 import { pilotPost } from './pilot-client.js';
+import { openingReady, pilotOpeningSlot } from './pilot-opening.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
@@ -70,10 +71,11 @@ const CRITICAL_LITERS_THRESHOLD = 50000;
 const REPORT_HISTORY_RESET_AT = "2026-07-30T06:20:49.061Z";
 const PRICE_HISTORY_RESET_AT = "2026-07-30T06:20:49.061Z";
 const MISSING_SHIFT_WARNING_START_DATE = "2026-07-29";
-const GLOBAL_OPENING_DATE = "2026-07-29";
-const GLOBAL_OPENING_SHIFT_ID = "shift-3";
+const PILOT_OPENING = pilotOpeningSlot(window.__fueltechPilotConfig);
+const GLOBAL_OPENING_DATE = PILOT_OPENING.date;
+const GLOBAL_OPENING_SHIFT_ID = PILOT_OPENING.shiftId;
 const PO_INTEGRATION_START_DATE = "2026-08-19";
-const GLOBAL_REPORTING_START_DATE = "2026-07-30";
+const GLOBAL_REPORTING_START_DATE = window.__fueltechPilotConfig.start_date;
 const REPORT_SAVE_DEBOUNCE_MS = 650;
 const LOCAL_DRAFT_CACHE_DEBOUNCE_MS = 180;
 const TODAY = localDateKey();
@@ -232,7 +234,7 @@ function nextShiftFor(date, shiftId) {
 }
 
 function branchReportingDate(reports = {}, branch) {
-  const demoDates = Object.values(reports).filter(r => r.branch === branch && r.pilot && !r.baselineReport).map(r => r.date).sort();
+  const demoDates = Object.values(reports).filter(r => r.branch === branch && r.pilot && !r.baselineReport && r.date >= GLOBAL_REPORTING_START_DATE).map(r => r.date).sort();
   let date = demoDates[0] || GLOBAL_REPORTING_START_DATE;
   for (let checked = 0; checked < 3650; checked += 1) {
     const complete = SHIFT_OPTIONS.every((shift) => reportCompleted(reports[reportKey(branch, date, shift.id)]));
@@ -4434,7 +4436,8 @@ function ReportSubmitErrorDialog({ message, onClose }) {
 
 function CashierShiftDashboard({ branch, date, reports, openingDate, openingShiftId, onOpenOpening, onSelect, correctionDraft, setCorrectionDraft, requestDateCorrection, correctionReport, onOpenCorrection }) {
   const shifts = SHIFT_OPTIONS.map((shift) => ({ shift, report: reports[reportKey(branch, date, shift.id)] }));
-  const openingComplete = Object.values(reports).some((report) => report?.branch === branch && openingSetupCompleted(report));
+  const openingReport = reports[reportKey(branch, openingDate, openingShiftId)];
+  const openingComplete = openingReady(openingReport, window.__fueltechPilotConfig);
   const nextShiftId = openingComplete ? shifts.find(({ report }) => !reportCompleted(report))?.shift.id : "";
   const submittedCount = shifts.filter(({ report }) => reportCompleted(report)).length;
   const correction = correctionRequest(correctionReport);
