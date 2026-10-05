@@ -8,9 +8,14 @@ export function isLiloanOpeningSlot(branch, date, shiftId) {
   return branch === "Liloan" && date === LILOAN_OPENING_DATE && shiftId === "shift-3";
 }
 
+export function isLiloanArchivedSlot(branch, date, shiftId) {
+  return branch === "Liloan" && (date < LILOAN_OPENING_DATE
+    || (date === LILOAN_OPENING_DATE && ["shift-1", "shift-2"].includes(shiftId)));
+}
+
 export function isStationPreOpeningSlot(branch, date, shiftId) {
   return isMaboloPreOpeningSlot(branch, date, shiftId)
-    || (branch === "Liloan" && date === LILOAN_OPENING_DATE && ["shift-1", "shift-2"].includes(shiftId));
+    || isLiloanArchivedSlot(branch, date, shiftId);
 }
 
 export function openingSlotHealth(report, branch, date, shiftId) {

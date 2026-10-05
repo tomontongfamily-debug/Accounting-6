@@ -1,5 +1,6 @@
 import { BRANCHES, SHIFT_IDS, readBody, supabaseAdmin } from "../_shared/supabase.js";
 import { canWriteBranch, getRequestSession } from "../_shared/session.js";
+import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 
 const PRODUCTS = ["Premium", "Regular", "Diesel"];
 const CLEAN_START_DATE = "2026-07-30";
@@ -29,6 +30,10 @@ export default async function handler(req, res) {
     }
     if (date < CLEAN_START_DATE) {
       res.status(409).json({ ok: false, error: "This price is from before the clean restart and cannot be uploaded." });
+      return;
+    }
+    if (isLiloanArchivedSlot(branch, date, normalizedShift)) {
+      res.status(409).json({ ok: false, error: "This price is from before the clean restart in Liloan and has been archived." });
       return;
     }
 

@@ -33,7 +33,7 @@ for(const confirmed of [false,true]) test(`Explicit cancelled CV disappears from
 });
 
 test('Official owner totals and health use pilot deposit coverage without changing other station rules',()=>{
- const {report}=fixture();report.confirmed=true;report.actualCashCounted=500;report.pilot=true;report.pilotCashAwaitingDeposit=0;report.depositCoverage={id:'batch',status:'verified'};
+ const {report}=fixture();report.date='2026-10-03';report.confirmed=true;report.actualCashCounted=500;report.pilot=true;report.pilotCashAwaitingDeposit=0;report.depositCoverage={id:'batch',status:'verified'};
  assert.equal(computeReportCash(report).pendingCashOnHand,0);
  assert.equal(compute(report).pendingCashOnHand,0);
  const health=buildDailyHealth({date:report.date,reportRows:[{report_key:`Liloan__${report.date}__shift-1`,data:report}]});
