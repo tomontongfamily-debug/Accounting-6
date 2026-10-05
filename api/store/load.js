@@ -1,8 +1,9 @@
-import { supabaseAdmin } from "../_shared/supabase.js";
+import { supabaseAdmin, readBody } from "../_shared/supabase.js";
 import { getRequestSession } from "../_shared/session.js";
 import { attachAuthoritativePoRows } from "../_shared/po.js";
 import { allPages } from "../_shared/pages.js";
 import { refreshLivePilotSources } from "../../pilot/repository.mjs";
+import { storePage, STORE_PAGE_ROWS, sendStoreJson } from "../_shared/store-page.js";
 
 const PUBLIC_PRICE_FIELDS = new Set(["Premium", "Regular", "Diesel", "confirmed", "confirmedAt"]);
 
@@ -53,6 +54,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    res.setHeader('Cache-Control','private, no-store');
     const auth = getRequestSession(req);
     if (!auth.ok) {
       res.status(401).json({ ok: false, error: "Please log in again before loading reports." });
@@ -60,26 +62,32 @@ export default async function handler(req, res) {
     }
 
     const supabase = supabaseAdmin();
-    await refreshLivePilotSources(supabase,auth.session);
+    const input=readBody(req),paged=input.paged===true,after=input.after||'';
+    if(typeof after!=='string'||after.length>200||/[\x00-\x1f]/.test(after))return res.status(400).json({ok:false,error:'Invalid report page.'});
+    if(!(paged&&after))await refreshLivePilotSources(supabase,auth.session);
     const scoped = query => auth.session.role === "Admin" || auth.session.role === "Approver"
       ? query : query.eq("branch", auth.session.branch);
     const [priceRows,reportRows] = await Promise.all([
-      auth.session.role === "Approver" ? Promise.resolve([]) : allPages(()=>scoped(supabase
+      auth.session.role === "Approver" || (paged&&after) ? Promise.resolve([]) : allPages(()=>scoped(supabase
         .from("fueltech_price_book").select("branch,effective_date,coverage,shift_id,prices,updated_at")
         .order("branch").order("effective_date").order("coverage").order("shift_id"))),
-      allPages(()=>scoped(supabase.from("fueltech_reports")
-        .select("report_key,branch,report_date,shift_id,data,updated_at").order("report_key"))),
+      paged ? scoped(supabase.from("fueltech_reports")
+        .select("report_key,branch,report_date,shift_id,data,updated_at").order("report_key"))
+        .gt('report_key',after).limit(STORE_PAGE_ROWS+1).then(({data,error})=>{if(error)throw error;return data||[];})
+        : allPages(()=>scoped(supabase.from("fueltech_reports")
+          .select("report_key,branch,report_date,shift_id,data,updated_at").order("report_key"))),
     ]);
 
     const authoritativeReportRows = auth.session.role === "Approver"
       ? reportRows || []
       : await attachAuthoritativePoRows(supabase, reportRows || [], auth.session.role === "Admin" ? "" : auth.session.branch);
 
-    res.status(200).json({
+    const payload={
       ok: true,
       priceRows: (priceRows || []).map((row) => ({ ...row, prices: pricesForRole(row.prices, auth.session.role) })),
       reportRows: authoritativeReportRows.map((row) => ({ ...row, data: reportForRole(row.data, auth.session.role) })),
-    });
+    };
+    sendStoreJson(req,res,paged?storePage(payload.reportRows,payload.priceRows):payload);
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "Unable to load online data." });
   }

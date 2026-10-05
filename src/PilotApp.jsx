@@ -1,4 +1,5 @@
 import AdminReportAlerts from './admin-report-alerts.jsx';
+import { loadStorePages } from './store-pages.js';
 import { pilotPost } from './pilot-client.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2260,7 +2261,7 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
 }
 
 async function loadOnlineStore(sessionToken) {
-  const { priceRows = [], reportRows = [] } = await apiPost("/api/store/load", {}, sessionToken);
+  const { priceRows = [], reportRows = [] } = await loadStorePages(input=>apiPost("/api/store/load", input, sessionToken));
 
   const nextStore = emptyStore();
 
