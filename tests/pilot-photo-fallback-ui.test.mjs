@@ -16,7 +16,8 @@ test('First unreadable photo can be transcribed and confirmed on phone; no force
    const path=new URL(request.request().url()).pathname;let result,status=200;
    if(path==='/api/pilot/photo'){const photo=uploads.get(new URL(request.request().url()).searchParams.get('id'));return request.fulfill({contentType:'image/jpeg',body:photo});}
    if(path==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:'2026-09-23'};
-   else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
+   else if(path==='/api/auth/station-session'){status=401;result={ok:false};}
+    else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
    else if(path==='/api/pilot/action'){
     const body=request.request().postDataJSON();
     try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(path,image)=>{uploads.set(body.mutationId,image);photoCount++;}});state=out.state;result=out.result;}

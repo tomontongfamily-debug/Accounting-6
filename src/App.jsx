@@ -1,3 +1,5 @@
+import {FuelLeakLoss} from './fuel-leak-loss.jsx';
+import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
 import { StationHealthCell } from "./shift-health.jsx";
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import AdminStoreGate from './admin-store-gate.jsx';
@@ -596,6 +598,7 @@ function createReport(branch, date, prices, shiftId = "shift-1", pricingMeta = {
     prices: { ...prices },
     pumpConfigVersion: PUMP_CONFIG_VERSION,
     pumpRows: buildPumpRows(branch),
+    fuelLeakLosses: [],
     tankRows: [
       { id: uid(), tank: "Premium Tank", product: "Premium", opening: 0, delivery: 0, pullOut: 0, calibration: 0, actualDip: 0 },
       { id: uid(), tank: "Regular Tank", product: "Regular", opening: 0, delivery: 0, pullOut: 0, calibration: 0, actualDip: 0 },
@@ -986,14 +989,15 @@ function compute(report) {
     fuelSalesByProduct[row.product] += pumpRowSales(report, row);
   });
 
+  const leakLoss = fuelLeakLossSummary(report, row => pumpRowSales(report, row));
   const calibrationLiters = tankTotalsByProduct(report, "calibration");
   FUEL_TYPES.forEach((product) => {
     const grossLiters = n(fuelLiters[product]);
     const grossSales = n(fuelSalesByProduct[product]);
     const returnedCalibration = Math.min(grossLiters, n(calibrationLiters[product]));
     const averagePrice = grossLiters > 0 ? grossSales / grossLiters : Math.max(0, n(report.prices?.[product]));
-    fuelLiters[product] = Math.max(0, grossLiters - returnedCalibration);
-    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibration * averagePrice);
+    fuelLiters[product] = Math.max(0, grossLiters - returnedCalibration - leakLoss.meteredLiters[product]);
+    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product]);
   });
 
   const totalLiters = FUEL_TYPES.reduce((sum, product) => sum + fuelLiters[product], 0);
@@ -1022,14 +1026,23 @@ function compute(report) {
     return sum + pumpVarianceAmount(report, row);
   }, 0);
 
+  const tankOutflowLiters = Object.fromEntries(FUEL_TYPES.map(product => [product, fuelLiters[product] + leakLoss.meteredLiters[product]]));
   const tankRows = report.tankRows.map((row) => {
-    const expectedDip = n(row.opening) + n(row.delivery) - fuelLiters[row.product] - n(row.pullOut);
-    return { ...row, expectedDip, variance: tankVarianceAmount(report, row, expectedDip) };
+    const unadjustedExpectedDip = n(row.opening) + n(row.delivery) - tankOutflowLiters[row.product] - n(row.pullOut);
+    const expectedDip = unadjustedExpectedDip - leakLoss.tankLiters[row.product];
+    return { ...row, expectedDip, unadjustedExpectedDip,
+      leakLossLiters: leakLoss.meteredLiters[row.product] + leakLoss.tankLiters[row.product],
+      unmeteredLeakLossLiters: leakLoss.tankLiters[row.product],
+      unadjustedVariance: tankVarianceAmount(report, row, unadjustedExpectedDip),
+      variance: tankVarianceAmount(report, row, expectedDip) };
   });
 
   return {
     fuelLiters,
     fuelSalesByProduct,
+    tankOutflowLiters,
+    fuelLeakLossLiters: leakLoss.liters,
+    fuelLeakLossSales: leakLoss.sales,
     totalLiters,
     fuelSales,
     poTotal,
@@ -1201,6 +1214,8 @@ function summarizeReports(reports) {
       sum.fuelLiters[product] += result.fuelLiters[product];
     });
     sum.totalLiters += result.totalLiters;
+    sum.fuelLeakLossLiters += result.fuelLeakLossLiters;
+    sum.fuelLeakLossSales += result.fuelLeakLossSales;
     sum.fuelSales += result.fuelSales;
     sum.oilSales += n(report.oilSales);
     sum.grossSales += result.grossSales;
@@ -1234,6 +1249,8 @@ function summarizeReports(reports) {
   }, {
     fuelLiters: { Premium: 0, Regular: 0, Diesel: 0 },
     totalLiters: 0,
+    fuelLeakLossLiters: 0,
+    fuelLeakLossSales: 0,
     fuelSales: 0,
     oilSales: 0,
     grossSales: 0,
@@ -1290,6 +1307,7 @@ function confirmedReportsBetween(reports, startDate, endDate) {
 
 function hasMeaningfulDraftEntries(report) {
   if (!report) return false;
+  if ((report.fuelLeakLosses || []).some(loss => n(loss.liters) > 0)) return true;
   if (String(report.cashierName || "").trim()) return true;
   if ((report.pumpRows || []).some((row) => row.closingEntered || row.closingEntrySource === "cashier")) return true;
   if ((report.tankRows || []).some((row) => [row.delivery, row.pullOut, row.calibration, row.actualDip].some((value) => n(value) !== 0))) return true;
@@ -1557,7 +1575,7 @@ function sortedExportReports(reports) {
 function pumpProductLiters(report) {
   return (report.pumpRows || []).reduce((totals, row) => {
     totals[row.pump] = totals[row.pump] || defaultPrices();
-    totals[row.pump][row.product] = n(totals[row.pump][row.product]) + pumpLitersSold(row);
+    totals[row.pump][row.product] = n(totals[row.pump][row.product]) + pumpSaleLiters(report, row);
     return totals;
   }, {});
 }
@@ -2025,10 +2043,11 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
   ];
 
   const pumpLedgerRows = [
-    sheetTitle("PUMP NOZZLE DETAIL", 14),
-    excelRow(["BRANCH", "DATE", "SHIFT", "PUMP", "NOZZLE", "PRODUCT", "OPENING", "CLOSING", "LITERS SOLD", "NEGATIVE VARIANCE", "PUMP PRICE", "ESTIMATED SALES", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
+    sheetTitle("PUMP NOZZLE DETAIL", 16),
+    excelRow(["BRANCH", "DATE", "SHIFT", "PUMP", "NOZZLE", "PRODUCT", "OPENING", "CLOSING", "METERED LITERS", "LEAK LOSS (L)", "LITERS SOLD", "NEGATIVE VARIANCE", "PUMP PRICE", "ESTIMATED SALES", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
     ...exportReports.flatMap((report) => (report.pumpRows || []).map((row) => {
-      const litersSold = Math.max(0, n(row.closing) - n(row.opening));
+      const meteredLiters = pumpLitersSold(row);
+      const litersSold = pumpSaleLiters(report, row);
       const negativeVariance = Math.min(0, n(row.closing) - n(row.opening));
       const pumpPrice = Math.max(0, n(report.prices?.[row.product]));
       return excelRow([
@@ -2040,10 +2059,12 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
         excelCell(row.product, "Text"),
         excelCell(n(row.opening)),
         excelCell(n(row.closing)),
+        excelCell(meteredLiters),
+        excelCell(pumpLeakLiters(report, row)),
         excelCell(litersSold),
         excelCell(negativeVariance, negativeVariance < 0 ? "RedValue" : "Cell"),
         excelCell(pumpPrice),
-        excelCell(litersSold * pumpPrice),
+        excelCell(Math.max(0, pumpRowSales(report, row) - pumpLeakSales(report, row, pump => pumpRowSales(report, pump)))),
         excelCell(report.cashierName || "", "Text"),
         excelCell(reportStatusText(report), "Text"),
       ]);
@@ -2051,8 +2072,8 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
   ];
 
   const tankLedgerRows = [
-    sheetTitle("TANK INVENTORY DETAIL", 15),
-    excelRow(["BRANCH", "DATE", "SHIFT", "TANK", "PRODUCT", "PREVIOUS DIP", "DELIVERY", "PULL OUT", "CALIBRATION", "OFFICIAL PUMP LITERS SOLD", "EXPECTED DIP", "ACTUAL DIP", "REFERENCE DIFFERENCE", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
+    sheetTitle("TANK INVENTORY DETAIL", 18),
+    excelRow(["BRANCH", "DATE", "SHIFT", "TANK", "PRODUCT", "PREVIOUS DIP", "DELIVERY", "PULL OUT", "CALIBRATION", "NET PUMP OUTFLOW", "FUEL LEAK LOSS (L)", "OUTSIDE METER LOSS (L)", "EXPECTED DIP", "ACTUAL DIP", "ORIGINAL DIFFERENCE", "REFERENCE DIFFERENCE", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
     ...exportReports.flatMap((report) => {
       const result = compute(report);
       return result.tankRows.map((row) => excelRow([
@@ -2065,14 +2086,31 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
         excelCell(n(row.delivery)),
         excelCell(n(row.pullOut)),
         excelCell(n(row.calibration)),
-        excelCell(n(result.fuelLiters[row.product])),
+        excelCell(n(result.tankOutflowLiters[row.product])),
+        excelCell(n(row.leakLossLiters)),
+        excelCell(n(row.unmeteredLeakLossLiters)),
         excelCell(n(row.expectedDip)),
         excelCell(n(row.actualDip)),
+        excelCell(n(row.unadjustedVariance)),
         excelCell(n(row.variance), n(row.variance) < 0 ? "RedValue" : "Cell"),
         excelCell(report.cashierName || "", "Text"),
         excelCell(reportStatusText(report), "Text"),
       ]));
     }),
+  ];
+
+  const leakLedgerRows = [
+    sheetTitle("FUEL LEAK LOSS", 10),
+    excelRow(["BRANCH", "DATE", "SHIFT", "PRODUCT", "LOSS SOURCE", "LEAK LOSS (L)", "METERED SALES EXCLUDED (PHP)", "EXPLANATION", "RECORDED BY", "RECORDED AT"].map(label => excelCell(label, "Header"))),
+    ...exportReports.flatMap(report => (report.fuelLeakLosses || []).map(loss => {
+      const pump = report.pumpRows.find(row => row.id === loss.pumpRowId);
+      return excelRow([
+        excelCell(report.branch, "Text"), excelCell(report.date, "Text"), excelCell(shortShiftLabel(report.shiftId), "Text"),
+        excelCell(loss.product, "Text"), excelCell(pump ? pump.pump + " / " + pump.nozzle + " (metered)" : "Tank / piping (outside meter)", "Text"),
+        excelCell(n(loss.liters)), excelCell(fuelLeakSalesForLoss(report, loss, row => pumpRowSales(report, row))),
+        excelCell(loss.notes || "", "Text"), excelCell(loss.recordedBy || "", "Text"), excelCell(loss.recordedAt || "", "Text"),
+      ]);
+    })),
   ];
 
   const bankAuditRows = [
@@ -2141,8 +2179,9 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
     excelWorksheet("DIP REFERENCE", [92, 74, 96, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82, 82], ugtRows),
     excelWorksheet("SYSTEM REPORT", [92, 74, 96, 120, 110, 110, 110, 130, 130, 130, 120, 110, 110, 110], systemRows),
     excelWorksheet("PRICE AUDIT", [92, 78, 96, 90, 102, 90, 90, 112, 108, 108, 90, 98, 120], priceAuditRows),
-    excelWorksheet("PUMP NOZZLE DETAIL", [92, 78, 96, 86, 90, 86, 94, 94, 94, 108, 90, 104, 120, 120], pumpLedgerRows),
-    excelWorksheet("DIP REFERENCE DETAIL", [92, 78, 96, 120, 86, 96, 96, 86, 92, 92, 100, 94, 94, 120, 120], tankLedgerRows),
+    excelWorksheet("PUMP NOZZLE DETAIL", [92, 78, 96, 86, 90, 86, 94, 94, 94, 94, 94, 108, 90, 104, 120, 120], pumpLedgerRows),
+    excelWorksheet("DIP REFERENCE DETAIL", [92, 78, 96, 120, 86, 96, 96, 86, 92, 92, 92, 92, 100, 94, 94, 94, 120, 120], tankLedgerRows),
+    excelWorksheet("FUEL LEAK LOSS", [92, 78, 96, 86, 180, 100, 160, 260, 160, 170], leakLedgerRows),
     excelWorksheet("BANK DEPOSIT AUDIT", [92, 78, 96, 130, 130, 96, 130, 84, 116, 84, 116, 120, 120], bankAuditRows),
     excelWorksheet("DEDUCTION AUDIT", [92, 78, 96, 130, 96, 120, 120, 180, 86, 86, 86, 86], deductionAuditRows),
     excelWorksheet("PO CASH VOUCHER", [92, 78, 96, 120, 110, 180, 96, 120, 120, 180, 120], poPrAuditRows),
@@ -4576,8 +4615,9 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
 
       {wizardStep === 2 && (
       <Section title="Underground Tank">
+        <FuelLeakLoss report={report} onChange={rows => patchReport(["root", "fuelLeakLosses"], rows)} />
         <p className="neutral">Underground tank check. Official fuel sales are based on pump readings; cash variance is the main accounting check.</p>
-        <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Calibration", "Current Actual Dip", "Underground Tank Difference"]} minWidth="980px">
+        <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Calibration", "Fuel Leak Loss (L)", "Current Actual Dip", "Before Tank Loss", "Underground Tank Difference"]} minWidth="980px">
           {result.tankRows.map((row, index) => (
             <tr key={row.id}>
               <td><b>{row.tank}</b></td>
@@ -4585,7 +4625,9 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
               <td><NumberInput ghostZero value={row.delivery} onChange={(value) => patchReport(["tankRows", index, "delivery"], value)} /></td>
               <td><NumberInput ghostZero value={row.pullOut} onChange={(value) => patchReport(["tankRows", index, "pullOut"], value)} /></td>
               <td><NumberInput ghostZero value={row.calibration} onChange={(value) => patchReport(["tankRows", index, "calibration"], value)} /></td>
+              <td><b>{liter(row.leakLossLiters)}</b></td>
               <td><NumberInput ghostZero value={row.actualDip} onChange={(value) => patchReport(["tankRows", index, "actualDip"], value)} /></td>
+              <td>{liter(row.unadjustedVariance)}</td>
               <td><b className={varianceClass(row.variance, true)}>{liter(row.variance)}</b></td>
             </tr>
           ))}
@@ -4661,6 +4703,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
           <div className="grid four">
             <Card title="Cashier" value={report.cashierName || "Missing"} tone={report.cashierName ? "green" : "yellow"} />
             <Card title="Total Liters Sold" value={liter(result.totalLiters)} />
+            <Card title="Fuel Leak Loss" value={liter(result.fuelLeakLossLiters)} />
             <Card title="Pump Warnings" value={`${fieldWarnings.length}`} tone={fieldWarnings.length ? "yellow" : "green"} />
             <Card title="Report Status" value={reportStatusLabel(report, reviewFlags)} tone={reportStatusTone(report, reviewFlags)} />
           </div>
@@ -4681,7 +4724,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
                     <td>{row.nozzle}</td>
                     <td>{row.opening}</td>
                     <td>{row.closingEntered ? row.closing : "Missing"}</td>
-                    <td><b>{liter(n(row.closing) - n(row.opening))}</b></td>
+                    <td><b>{liter(pumpSaleLiters(report, row))}</b></td>
                   </tr>
                 );
               })}
@@ -6901,7 +6944,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
 
             <details className="details-panel admin-report-details-panel" open>
               <summary>Pump Register</summary>
-              <Table headers={["Pump", "Nozzle", "Product", "Previous Closing", "Current Closing", "Liters Sold"]} minWidth="820px">
+              <Table headers={["Pump", "Nozzle", "Product", "Previous Closing", "Current Closing", "Metered Liters", "Leak Loss (L)", "Liters Sold"]} minWidth="820px">
                 {(selectedAdminReport.pumpRows || []).map((row) => (
                   <tr key={row.id}>
                     <td><b>{row.pump}</b></td>
@@ -6909,7 +6952,9 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                     <td>{row.product}</td>
                     <td>{n(row.opening).toFixed(2)}</td>
                     <td>{n(row.closing).toFixed(2)}</td>
-                    <td><b>{liter(pumpLitersSold(row))}</b></td>
+                    <td>{liter(pumpLitersSold(row))}</td>
+                    <td>{liter(pumpLeakLiters(selectedAdminReport, row))}</td>
+                    <td><b>{liter(pumpSaleLiters(selectedAdminReport, row))}</b></td>
                   </tr>
                 ))}
               </Table>
@@ -6934,7 +6979,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                 </Table>
                 <p className="neutral">Sales are pump liters for each time period multiplied by the price active during that period.</p>
                 {selectedAdminMidShiftSales.length ? (
-                  <Table headers={["Pump", "Nozzle", "Product", "Sales Period", "Reading From", "Reading To", "Liters Sold", "Price / L", "Sales"]} minWidth="1180px">
+                  <Table headers={["Pump", "Nozzle", "Product", "Sales Period", "Reading From", "Reading To", "Metered Liters", "Price / L", "Metered Sales Before Loss"]} minWidth="1180px">
                     {selectedAdminMidShiftSales.map((row) => (
                       <tr key={row.id}>
                         <td><b>{row.pump}</b></td>
@@ -6949,7 +6994,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                       </tr>
                     ))}
                     <tr className="total-row">
-                      <td colSpan="6">Mid-Shift Period Total</td>
+                      <td colSpan="6">Metered Period Total Before Loss</td>
                       <td>{liter(selectedAdminMidShiftSales.reduce((sum, row) => sum + row.liters, 0))}</td>
                       <td></td>
                       <td>{peso(selectedAdminMidShiftSales.reduce((sum, row) => sum + row.sales, 0))}</td>
@@ -6961,7 +7006,8 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
 
             <details className="details-panel admin-report-details-panel">
               <summary>Underground Tanks</summary>
-              <Table headers={["Product", "Opening", "Delivery", "Pullout", "Calibration", "Actual Dip", "Difference"]} minWidth="820px">
+              <FuelLeakLoss report={selectedAdminReport} />
+              <Table headers={["Product", "Opening", "Delivery", "Pullout", "Calibration", "Fuel Leak Loss (L)", "Actual Dip", "Before Tank Loss", "Difference"]} minWidth="820px">
                 {selectedAdminReportResult.tankRows.map((row) => (
                   <tr key={row.id}>
                     <td><b>{row.product}</b></td>
@@ -6969,7 +7015,9 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                     <td>{liter(row.delivery)}</td>
                     <td>{liter(row.pullOut)}</td>
                     <td>{liter(row.calibration)}</td>
+                    <td>{liter(row.leakLossLiters)}</td>
                     <td>{liter(row.actualDip)}</td>
+                    <td>{liter(row.unadjustedVariance)}</td>
                     <td className={varianceClass(row.variance, true)}><b>{liter(row.variance)}</b></td>
                   </tr>
                 ))}
