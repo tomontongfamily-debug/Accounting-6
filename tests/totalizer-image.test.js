@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readingWithVisibleDecimal,refineLeadingLcdDigit,totalizerRegions,totalizerMask,totalizerCrop} from '../src/totalizer-image.js';
+import {readingWithVisibleDecimal,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop} from '../src/totalizer-image.js';
 
 const symbols=text=>[...text].map((text,i)=>({text,confidence:95,bbox:{x0:20+i*60,x1:60+i*60,y0:20,y1:120}}));
 const dot=index=>({x:20+index*60-15,y:110,width:8,height:9,area:65});
@@ -82,4 +82,17 @@ test('The sensitive mask retains faint strokes without changing image coordinate
   const normal=totalizerMask(gray,width,height),sensitive=totalizerMask(gray,width,height,5);
   assert.equal(sensitive.length,normal.length);
   assert.ok(sensitive.reduce((n,v)=>n+v,0)>normal.reduce((n,v)=>n+v,0));
+});
+
+test('A visible top stroke distinguishes a trailing seven from an OCR one without changing genuine ones',()=>{
+  for(const digit of [1,7]){
+    const {s,gray,width,height}=faintDigit(patterns[digit]);
+    // Shift the complete physical digit into the third digit cell.
+    const shifted=new Uint8Array(gray.length).fill(180);
+    for(let y=30;y<150;y++)for(let x=90;x<150;x++)shifted[y*width+x+120]=gray[y*width+x];
+    s[2]={...s[2],text:'1',bbox:{...s[2].bbox,x0:252}};
+    const refined=refineNarrowLcdDigits(s,shifted,width,height);
+    assert.equal(refined[2].text,String(digit));
+    assert.equal(s[2].text,'1','The original OCR symbols remain unchanged');
+  }
 });

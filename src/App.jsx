@@ -1,3 +1,4 @@
+import { StationHealthCell } from "./shift-health.jsx";
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import { loadStorePages } from './store-pages.js';
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +9,7 @@ import { committedManagerPrice, insertManagerPriceDecimal, normalizeManagerPrice
 import { depositAllocationDifference, physicalCashVariance } from "./cash-variance.js";
 import { buildReviewMessage } from "./review-message.js";
 import { formatCashCountInput, normalizeCashCountInput } from "./cash-count-input.js";
-import { isMaboloPreOpeningSlot } from "./opening-health.js";
+import { isStationPreOpeningSlot, isLiloanOpeningSlot, openingSlotHealth } from "./opening-health.js";
 import { normalizeBranchPinDraft } from "./pin-input.js";
 import { shiftIdForEffectiveTime } from "./shift-time.js";
 import { isCleanRestartRejection, shouldDiscardOfflineReport } from "./offline-report.js";
@@ -1294,12 +1295,15 @@ function hasMeaningfulDraftEntries(report) {
 }
 
 function stationShiftHealth(report, branch, date, shiftId) {
-  if (isMaboloPreOpeningSlot(branch, date, shiftId)) return { label: "Not Required", tone: "green" };
+  const openingStatus = openingSlotHealth(report, branch, date, shiftId);
+  if (openingStatus) return openingStatus;
+  if (isStationPreOpeningSlot(branch, date, shiftId)) return { label: "Not Required", tone: "green" };
   if (!report) return { label: "Missing", tone: "red" };
   if (openingSetupCompleted(report)) return { label: "Submitted", tone: "green", detail: "Opening Setup" };
   if (!report.confirmed && !hasMeaningfulDraftEntries(report)) return { label: "Missing", tone: "red" };
   if (!report.confirmed) return { label: "Draft", tone: "yellow" };
   const result = compute(report);
+  if (report.pilot) return { label: "Submitted", tone: "green", needsReview: Boolean(report.checkRequired || report.checkDetails?.length || report.checkCategories?.length) };
   if (isReportNeedsReview(report, result)) return { label: "Check Required", tone: "yellow" };
   return { label: "Submitted", tone: "green" };
 }
@@ -1331,13 +1335,15 @@ function stationHealthCounts(rows) {
   return rows.reduce((counts, row) => {
     row.shifts.forEach(({ status }) => {
       counts[status.label] = n(counts[status.label]) + 1;
+      if (status.needsReview) counts["Check Required"] = n(counts["Check Required"]) + 1;
     });
     return counts;
   }, {});
 }
 
 function depositHealthStatus(report, branch, date, shiftId) {
-  if (isMaboloPreOpeningSlot(branch, date, shiftId)) return { label: "Not Required", tone: "green" };
+  if (isLiloanOpeningSlot(branch, date, shiftId) && openingSlotHealth(report, branch, date, shiftId)?.label === "Submitted") return { label: "Not Required", tone: "green" };
+  if (isStationPreOpeningSlot(branch, date, shiftId)) return { label: "Not Required", tone: "green" };
   if (!report) return { label: "No Report", tone: "red" };
   if (openingSetupCompleted(report)) return { label: "Not Required", tone: "green" };
   if (!report.confirmed) return { label: "Draft", tone: "yellow" };
@@ -7277,7 +7283,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
               <td>{row.date}</td>
               <td><b>{row.branch}</b></td>
               {row.shifts.map(({ shift, status }) => (
-                <td key={shift.id}><Status tone={status.tone}>{status.label}</Status></td>
+                <td key={shift.id}><StationHealthCell status={status} report={allReports[reportKey(row.branch, row.date, shift.id)]} /></td>
               ))}
             </tr>
           ))}
