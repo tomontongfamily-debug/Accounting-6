@@ -22,6 +22,7 @@ test('Phone confirmation reaches a dirty desktop without re-entering readings or
     const path=new URL(r.request().url()).pathname;let result,status=200;
     if(path==='/api/pilot/photo')return r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><text x="20" y="40">10012.00</text></svg>'});
     if(path==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:'2026-09-23'};
+    else if(path==='/api/auth/station-session'){status=401;result={ok:false};}
     else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
     else if(path==='/api/pilot/action'){
      const b=r.request().postDataJSON();

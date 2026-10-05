@@ -63,5 +63,5 @@ test("admin selected reports show the mid-shift sales breakdown", () => {
   assert.match(source, /All saved price-change readings/);
   assert.match(source, /Reading From/);
   assert.match(source, /Reading To/);
-  assert.match(source, /Mid-Shift Period Total/);
+  assert.match(source, /Metered Period Total Before Loss/);
 });

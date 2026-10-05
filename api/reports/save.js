@@ -6,6 +6,7 @@ import { sendCorrectionRequestNotification } from "../_shared/push.js";
 import { authoritativePoRowsForReport } from "../_shared/po.js";
 import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.js";
 import { isLiloanArchivedSlot } from "../../src/opening-health.js";
+import { validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -42,6 +43,7 @@ export function mergeReportForRole(session, incomingReport, existingReport = {})
       ...incomingReport,
       pumpRows: Array.isArray(incomingReport.pumpRows) && incomingReport.pumpRows.length > 0 ? incomingReport.pumpRows : existingReport.pumpRows || [],
       tankRows: Array.isArray(incomingReport.tankRows) && incomingReport.tankRows.length > 0 ? incomingReport.tankRows : existingReport.tankRows || [],
+      fuelLeakLosses: incomingReport.fuelLeakLosses ?? existingReport.fuelLeakLosses ?? [],
       deposits: existingReport.deposits || [],
       midShiftPriceChanges: existingReport.midShiftPriceChanges || [],
       midShiftBasePrices: existingReport.midShiftBasePrices || incomingReport.midShiftBasePrices || incomingReport.prices || {},
@@ -372,6 +374,8 @@ export default async function handler(req, res) {
     }
 
     const safeReport = mergeReportForRole(auth.session, report, existingReport);
+    const leakLossError = validateFuelLeakLosses(safeReport, {requireNotes: operation === "submit"});
+    if (leakLossError) return res.status(422).json({ok: false, error: leakLossError});
     safeReport.poRows = await authoritativePoRowsForReport(supabase, safeReport);
     if (safeReport.date >= "2026-08-19") safeReport.poSource = "FuelTech Pay";
     if (safeReport.actualCashCounted !== "" && safeReport.actualCashCounted !== null && safeReport.actualCashCounted !== undefined) {

@@ -10,6 +10,7 @@ import { ShiftReasons, reasonLabel } from './shift-health.jsx';
 import { ManagerDepositCards } from './deposit-cards.jsx';
 import { depositCoverage, depositDayLabel } from './deposit-coverage.js';
 import { DepositCoverageLines } from './deposit-coverage.jsx';
+import { pumpLeakLiters, pumpSaleLiters } from './fuel-leak-loss.js';
 const php=n=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(n||0));
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 export async function demoApi(path,body={}) {
@@ -94,9 +95,10 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
-      {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L sold'} · {warning.level}<br/>{warning.message}</p>}
+      {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/>{warning.message}</p>}
       <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>
     </div>}</>}
+    {!change && pumpLeakLiters(report,row)>0 && <p>Fuel leak loss: <b>{pumpLeakLiters(report,row).toFixed(2)} L</b> · Paid sales: <b>{pumpSaleLiters(report,row).toFixed(2)} L</b></p>}
   </article>;
 }
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {
