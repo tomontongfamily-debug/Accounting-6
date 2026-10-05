@@ -48,6 +48,7 @@ function candidate(input,session,readingId) {
   const old=database.reports[keyOf(input)];
   if(!old) reject('Refresh the shift dashboard first.');
   if(old.confirmed) reject('This report is locked. Use the existing Admin correction process.',423);
+  assertCorrectionWindow(old);
   if(old.date<database.startDate) reject('Historical reports are read-only.',423);
   const preceding=old.shiftId==='shift-1'?reportKey(old.branch,dateOffset(old.date,-1),'shift-3'):reportKey(old.branch,old.date,old.shiftId==='shift-2'?'shift-1':'shift-2');
   if(!database.reports[preceding]?.confirmed) reject('Submit the preceding shift before recording this shift.');
@@ -100,6 +101,13 @@ function cashierRevisionMatches(input,old) {
   // across those saves, but must never cross another cash/draft/manager edit.
   const lastEdit=Number(old.pilotLastNonReadingRevision??current);
   return incoming===current || (incoming>=lastEdit && incoming<current);
+}
+function hasDepositCoverage(report) {
+  return database.deposits.some(d=>d.status!=='rejected'&&d.coveredReportKeys.includes(keyOf(report)));
+}
+function assertCorrectionWindow(report) {
+  if(report.correctionRequest?.status==='approved'&&!(Date.parse(report.correctionRequest.expiresAt||'')>Date.now())) reject('This correction approval expired. Ask admin to approve it again.',423);
+  if(report.correctionRequest?.status==='rejected'&&!report.confirmed) reject('This correction was rejected. Request a new admin approval before editing.',423);
 }
 function storeReport(r,session,action) {
   if(r.date<database.startDate) reject('Historical reports are read-only in the pilot.',423);
@@ -166,20 +174,35 @@ function validatePricePhotos(report,change) {
       requireRole(session,'Cashier','Manager','Admin');
       let old=database.reports[keyOf(input.report||{})];
       if(input.report?.date<database.startDate) reject('Historical reports are read-only.',423);
-      if(old && !(session.role==='Cashier'&&input.operation!=='request-correction'
+      if(session.role==='Admin'&&input.report.correctionRequest?.status==='approved'
+        &&old?.correctionRequest?.id===input.report.correctionRequest.id
+        &&old.correctionRequest.status==='approved'&&Date.parse(old.correctionRequest.expiresAt||'')>Date.now()) return send({ok:true,alreadyApproved:true,report:exposeReport(old,session)});
+      const decision=session.role==='Admin'&&['approved','rejected'].includes(input.report?.correctionRequest?.status);
+      // A decision changes only approval metadata. Source imports or phone saves
+      // can advance the report revision without changing the request being reviewed.
+      if(decision&&(!old?.correctionRequest?.id||old.correctionRequest.id!==input.report.correctionRequest.id||old.correctionRequest.requestedAt!==input.report.correctionRequest.requestedAt)) reject('This correction request changed. Refresh before deciding.',409);
+      if(old && !decision && !(session.role==='Cashier'&&input.operation!=='request-correction'
         ? cashierRevisionMatches(input.report,old)
         : Number(input.report?.pilotRevision||0)===Number(old.pilotRevision||0))) reject('This shift changed on another device. Refresh before saving.',409);
       if(input.operation==='request-correction') {
+        if(old?.correctionRequest?.status==='approved'&&Date.parse(old.correctionRequest.expiresAt||'')>Date.now()) return send({ok:true,alreadyApproved:true,report:exposeReport(old,session)});
         branchAccess(session,old?.branch); const r={...old,correctionRequest:{...input.report.correctionRequest,status:'pending'}};
         return send(storeReport(r,session,'correction-requested'));
       }
       if(session.role==='Admin') {
         if(!old) reject('Report not found.');
         if(input.report.correctionRequest?.status==='approved') {
-          if(database.deposits.some(d=>d.status!=='rejected'&&d.coveredReportKeys.includes(keyOf(old)))) reject('Resolve the existing deposit coverage before reopening this report.',409);
-          return send(storeReport({...old,confirmed:false,correctionRequest:input.report.correctionRequest,cashCountConfirmed:false,cashReviewState:'',recountRequired:false},session,'correction-approved'));
+          const request=old.correctionRequest;
+          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) reject('This correction request changed. Refresh before approving.',409);
+          const covered=hasDepositCoverage(old);
+          const approved={...request,status:'approved',approvedAt:stamp(),expiresAt:new Date(Date.now()+24*60*60*1000).toISOString(),rejectedAt:'',completedAt:'',previousConfirmedAt:old.confirmedAt||request.previousConfirmedAt||''};
+          return send(storeReport({...old,confirmed:false,confirmedAt:'',correctionRequest:approved,correctionCashLocked:covered,cashCountConfirmed:covered?old.cashCountConfirmed:false,cashReviewState:'',recountRequired:false},session,'correction-approved'));
         }
-        if(input.report.correctionRequest?.status==='rejected') return send(storeReport({...old,correctionRequest:input.report.correctionRequest},session,'correction-rejected'));
+        if(input.report.correctionRequest?.status==='rejected') {
+          const request=old.correctionRequest;
+          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) reject('This correction request changed. Refresh before rejecting.',409);
+          return send(storeReport({...old,correctionRequest:{...request,status:'rejected',rejectedAt:stamp(),expiresAt:''}},session,'correction-rejected'));
+        }
         reject('Use the dedicated pilot actions for this change.');
       }
       if(session.role==='Manager') {
@@ -222,6 +245,7 @@ function validatePricePhotos(report,change) {
           if(r.pumpRows.filter(row=>row.product===change.product).some(row=>midShiftReadingValue(change,row)===''||Number(midShiftReadingValue(change,row))<Number(row.opening)||Number(midShiftReadingValue(change,row))>Number(row.closing))) reject('Review all readings for the mid-shift price change.');
         }
         r.confirmed=true;r.confirmedAt=stamp();r.checkDetails=reportIssues(r,compute(r).cashVariance);r.checkCategories=[...new Set(r.checkDetails.map(i=>i.category))];r.checkRequired=!!r.checkDetails.length;
+        if(r.correctionRequest?.status==='approved') r.correctionRequest={...r.correctionRequest,status:'completed',completedAt:stamp()};
       }
       const previousRows=old?.pumpRows||[];
       for(const row of r.pumpRows) if(row.readingConfirmed && !previousRows.find(p=>p.id===row.id&&p.readingConfirmed&&p.closing===row.closing&&p.photo_path===row.photo_path)) audit(row.ocr_was_edited?'ocr-reading-edited':'pump-reading-confirmed',session,{reportKey:keyOf(r),rowId:row.id,ocr:row.ocr_detected_reading,final:row.closing});
@@ -252,9 +276,9 @@ function validatePricePhotos(report,change) {
         if(!r.cashCountConfirmed || r.pumpRows.some(row=>!readingComplete(row))) reject('Confirm cash and complete all readings first.');
         if(r.cashReviewState && r.reviewedExpectedCash===compute(r).expectedCash) return send({ok:true,needsRecount:!!r.recountRequired,report:exposeReport(r,session)});
         r.reviewedExpectedCash=compute(r).expectedCash;
-        r.recountRequired=cashNeedsRecount(Number(r.actualCashCounted),compute(r).expectedCash);r.cashReviewState=r.recountRequired?'recount':'checked';
+        r.recountRequired=!hasDepositCoverage(r)&&cashNeedsRecount(Number(r.actualCashCounted),compute(r).expectedCash);r.cashReviewState=r.recountRequired?'recount':'checked';
       }
-      if(route.endsWith('cash-recount')) { if(r.cashReviewState!=='recount') reject('Recount is not available.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.cashReviewState='final'; }
+      if(route.endsWith('cash-recount')) { if(hasDepositCoverage(r)) reject('This cash count is already covered by a deposit. Correct the deposit coverage before changing cash.',409);if(r.cashReviewState!=='recount') reject('Recount is not available.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.cashReviewState='final'; }
       storeReport(r,session,route.split('/').at(-1));return send({ok:true,needsRecount:!!r.recountRequired,report:exposeReport(r,session)});
     }
     if(route==='/api/demo/pump-report' || route==='/api/demo/pump-reading') {
@@ -298,6 +322,7 @@ function validatePricePhotos(report,change) {
     if(route==='/api/demo/photo') {
       requireRole(session,input.changeId?'Manager':'Cashier');const r=database.reports[input.reportKey];branchAccess(session,r?.branch);
       if(r.confirmed) reject('Submitted report is locked.',423);
+      assertCorrectionWindow(r);
       const photoRow=r.pumpRows.find(row=>input.changeId?midShiftPumpKey(row)===input.pumpKey:row.id===input.rowId);
       if(!photoRow) reject('Unknown nozzle.');
       const change=input.changeId?r.midShiftPriceChanges?.find(c=>c.id===input.changeId):null;

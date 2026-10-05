@@ -17,6 +17,7 @@ test('Built pilot loads cashier/manager/admin and phone capture views without ru
         const path=new URL(request.request().url()).pathname;
         let result,status=200;
         if(path==='/api/pilot/config') result={ok:true,mode:'shadow',start_date:'2026-09-23'};
+        else if(path==='/api/auth/station-session') {status=401;result={ok:false};} // Exercise PIN login without a restored station cookie.
         else if(path.startsWith('/api/auth/')) result={ok:true,role,token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
         else if(path==='/api/pilot/action') {
           const body=request.request().postDataJSON();

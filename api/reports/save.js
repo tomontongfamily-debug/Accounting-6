@@ -6,6 +6,7 @@ import { sendCorrectionRequestNotification } from "../_shared/push.js";
 import { authoritativePoRowsForReport } from "../_shared/po.js";
 import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.js";
 import { isLiloanArchivedSlot } from "../../src/opening-health.js";
+import { saveLivePilotCorrection } from "../../pilot/repository.mjs";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -285,14 +286,20 @@ export default async function handler(req, res) {
     if (report.date < CLEAN_START_DATE) return res.status(409).json({ ok: false, error: "This report is from before the clean restart and cannot be uploaded." });
     if (isLiloanArchivedSlot(report.branch, report.date, report.shiftId)) return res.status(409).json({ ok: false, error: "This report is from before the clean restart in Liloan and has been archived." });
     if (!canWriteBranch(auth.session, report.branch)) return res.status(403).json({ ok: false, error: "This login cannot save this station." });
-    if (!["save", "submit", "request-correction"].includes(operation)) {
+    if (!["save", "submit", "request-correction", "correction-decision"].includes(operation)) {
       return res.status(400).json({ ok: false, error: "Invalid report operation." });
     }
     if (operation === "submit" && auth.session.role !== "Cashier" && auth.session.role !== "Admin") {
       return res.status(403).json({ ok: false, error: "Only cashier or admin can submit reports." });
     }
+    if (operation === "correction-decision" && (auth.session.role !== "Admin" || !["approved", "rejected"].includes(report.correctionRequest?.status))) {
+      return res.status(403).json({ ok: false, error: "Only admin can approve or reject a correction request." });
+    }
 
-    const reportKey = reportKeyFor(report), supabase = supabaseAdmin(), existingRow = await loadExistingReport(supabase, reportKey);
+    const reportKey = reportKeyFor(report), supabase = supabaseAdmin();
+    const pilotDecision = await saveLivePilotCorrection(supabase, auth.session, report, operation);
+    if (pilotDecision) return res.status(200).json(pilotDecision);
+    const existingRow = await loadExistingReport(supabase, reportKey);
     const existingReport = existingRow?.data || {}, existingMeta = existingReport.serverMeta || {}, incomingSave = report.clientSave || {};
     const requiredBranchDataVersion = BRANCH_DATA_VERSIONS[report.branch] || "";
     if (requiredBranchDataVersion && incomingSave.branchDataVersion !== requiredBranchDataVersion) {
@@ -416,6 +423,6 @@ export default async function handler(req, res) {
     if (!written) return res.status(409).json({ ok: false, conflict: true, error: "Another device saved this report first. Reload before continuing." });
     return res.status(200).json({ ok: true, report: written.data, reportId: serverMeta.reportId, version: nextVersion, locked: Boolean(serverMeta.lockedAt) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: error.message || "Unable to save report." });
+    return res.status(error.status || 500).json({ ok: false, error: error.message || "Unable to save report." });
   }
 }

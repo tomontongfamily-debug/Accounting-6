@@ -16,8 +16,9 @@ export function usePhoneView() {
 
 export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   const choices=Object.values(reports).filter(r=>r.branch===branch&&r.date>=window.__fueltechPilotConfig.start_date&&!r.baselineReport&&!r.baselineMissing).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));
+  const approvedCorrections=choices.filter(r=>!r.confirmed&&r.correctionRequest?.status==='approved'&&Date.parse(r.correctionRequest.expiresAt||'')>Date.now());
   const [selected,setSelected]=useState(()=>{
-    const preferred=choices.filter(r=>r.date===initialDate&&!r.confirmed).sort((a,b)=>a.shiftId.localeCompare(b.shiftId))[0]||choices.find(r=>!r.confirmed)||choices[0];
+    const preferred=approvedCorrections[0]||choices.filter(r=>r.date===initialDate&&!r.confirmed).sort((a,b)=>a.shiftId.localeCompare(b.shiftId))[0]||choices.find(r=>!r.confirmed)||choices[0];
     return preferred?keyOf(preferred):'';
   });
   const [report,setReport]=useState(null);
@@ -60,7 +61,8 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   const done=report?.pumpRows.filter(readingComplete).length||0;
   return <main className="app mobile-pump-app"><div className="container">
     <header className="phone-pump-header"><div><small>FUELTECH · CASHIER</small><h1>Pump photos</h1><strong>{branch}</strong></div><button type="button" className="secondary" disabled={busy} onClick={logout}>Log out</button></header>
-    <label className="phone-shift-picker">Shift to photograph<select aria-label="Shift to photograph" value={selected} disabled={busy} onChange={e=>setSelected(e.target.value)}>{choices.map(r=><option key={keyOf(r)} value={keyOf(r)}>{r.date} · {r.shiftId.replace('shift-','Shift ')}{r.confirmed?' · Submitted':''}</option>)}</select></label>
+    {approvedCorrections.map(r=><div className="warning-box" key={keyOf(r)}><strong>Approved correction · {r.date} · {r.shiftId.replace('shift-','Shift ')}</strong><p>Replace the incorrect pump photo and confirm its reading. Finish the report on the desktop.</p><button type="button" className="secondary" disabled={busy} onClick={()=>setSelected(keyOf(r))}>Open approved correction</button></div>)}
+    <label className="phone-shift-picker">Shift to photograph<select aria-label="Shift to photograph" value={selected} disabled={busy} onChange={e=>setSelected(e.target.value)}>{choices.map(r=><option key={keyOf(r)} value={keyOf(r)}>{r.date} · {r.shiftId.replace('shift-','Shift ')}{r.confirmed?' · Submitted':approvedCorrections.includes(r)?' · Approved correction':''}</option>)}</select></label>
     <p>Take the pump photos here. Finish cash count and the rest of the report on the desktop.</p>
     {error?<p className="error" role="alert">{error} Reconnect or refresh before continuing.</p>:<p role="status">{message}</p>}
     {!choices.length&&<p>No shifts are available. Complete station opening setup on the desktop first.</p>}
