@@ -1,5 +1,5 @@
 import { BRANCHES, SHIFT_IDS } from "./supabase.js";
-import { isMaboloPreOpeningSlot } from "../../src/opening-health.js";
+import { isStationPreOpeningSlot, openingSlotHealth } from "../../src/opening-health.js";
 
 export function manilaDateOffset(days = 0) {
   const now = new Date();
@@ -105,7 +105,9 @@ export function buildDailyHealth({ reportRows = [], date }) {
   const stationRows = BRANCHES.map((branch) => {
     const shifts = SHIFT_IDS.map((shiftId) => {
       const report = reportsByKey[`${branch}__${date}__${shiftId}`];
-      if (isMaboloPreOpeningSlot(branch, date, shiftId)) return { shiftId, status: "Not Required", depositStatus: "Not Required", cashVariance: 0 };
+      if (isStationPreOpeningSlot(branch, date, shiftId)) return { shiftId, status: "Not Required", depositStatus: "Not Required", cashVariance: 0 };
+      const openingStatus = openingSlotHealth(report, branch, date, shiftId);
+      if (openingStatus?.label === "Submitted") return { shiftId, status: "Submitted", detail: openingStatus.detail, depositStatus: "Not Required", cashVariance: 0 };
       if (!report) return { shiftId, status: "Missing", depositStatus: "No Report", cashVariance: 0 };
       if (isOpeningSetup(report)) return { shiftId, status: "Submitted", depositStatus: "Not Required", cashVariance: 0 };
       if (!report.confirmed) return { shiftId, status: "Draft", depositStatus: "Draft", cashVariance: 0 };

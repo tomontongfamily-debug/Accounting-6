@@ -178,6 +178,42 @@ export function refineLeadingLcdDigit(symbols,gray,width,height){
   return symbols.map(s=>s===digits[0]?{...s,text,lcdVerified:true}:s);
 }
 
+// A seven can be recognized as a narrow one even at high OCR confidence.
+// Verify the missing top bar and the other six strokes in the original image.
+export function refineNarrowLcdDigits(symbols,gray,width,height){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  const body=digits.filter(s=>s.text!=='1');
+  if(body.length<3)return symbols;
+  const median=a=>a.sort((a,b)=>a-b)[Math.floor(a.length/2)];
+  const w=median(body.map(s=>s.bbox.x1-s.bbox.x0)),h=median(body.map(s=>s.bbox.y1-s.bbox.y0));
+  if(w<h*.35||w>h*.8)return symbols;
+  const positions=[[.5,.06,0],[.85,.25,1],[.85,.75,1],[.5,.94,0],[.15,.75,1],[.15,.25,1],[.5,.5,0]];
+  return symbols.map(symbol=>{
+    if(symbol.text!=='1')return symbol;
+    const right=symbol.bbox.x1,left=right-w,top=symbol.bbox.y1-h;
+    if(left<0||right>=width||top-h*.15<0||top+h*1.15>=height)return symbol;
+    let votes=0;
+    for(const shift of[-.04,-.02,0,.02,.04]){
+      const contrast=positions.map(([x,y,vertical])=>{
+        const cx=left+x*w,cy=top+(y+shift)*h,span=Math.max(2,Math.round(vertical?h*.07:w*.12)),radius=Math.round(vertical?w*.24:h*.14),samples=[];
+        for(let t=-span;t<=span;t++){
+          let value=0;
+          for(let normal=-2;normal<=2;normal++){
+            const ix=Math.round(cx+(vertical?normal:t)),iy=Math.round(cy+(vertical?t:normal));
+            if(vertical?(ix-radius<0||ix+radius>=width||iy<0||iy>=height):(iy-radius<0||iy+radius>=height||ix<0||ix>=width))return NaN;
+            const offset=vertical?radius:radius*width;
+            value+=(gray[iy*width+ix-offset]+gray[iy*width+ix+offset])/2-gray[iy*width+ix];
+          }
+          samples.push(value/5);
+        }
+        return median(samples);
+      });
+      if([..."1110000"].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3))votes++;
+    }
+    return votes>=2?{...symbol,text:'7',lcdVerified:true}:symbol;
+  });
+}
+
 // Grow dark segments slightly to reconnect tiny reflection/compression gaps.
 export function totalizerCrop(mask,width,height,region,pad=20,grow=1){
   const w=region.width+pad*2,h=region.height+pad*2,rgba=new Uint8ClampedArray(w*h*4);rgba.fill(255);

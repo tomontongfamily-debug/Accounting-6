@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { readingWithVisibleDecimal, refineLeadingLcdDigit, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
+import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
@@ -51,7 +51,8 @@ async function recognizePhoto(data){
             await worker.setParameters({tessedit_pageseg_mode:mode});
             const {data:result}=await worker.recognize(part,{}, {text:true,blocks:true});
             const symbols=result.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words.flatMap(w=>w.symbols))))||[];
-            const translated=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
+            const leading=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
+            const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
             const verifiedLeading=digits[0]?.lcdVerified===true;
             let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90)?readingWithVisibleDecimal(translated,analysis.components):null;
