@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4318 --strictPort",
     "test": "node --test tests/*.test.js",
-    "lint": "eslint src/totalizer-ocr.js src/totalizer-image.js src/phone-reading-sync.js src/upgrade-components.jsx src/deposit-cards.jsx src/shift-health.jsx src/cash-denominations.jsx src/mobile-pump-capture.jsx src/admin-deposits.jsx src/error-reduction.ts pilot/*.mjs api/pilot/*.js",
+    "lint": "eslint src/totalizer-ocr.js src/totalizer-image.js src/phone-reading-sync.js src/upgrade-components.jsx src/deposit-cards.jsx src/shift-health.jsx src/cash-denominations.jsx src/mobile-pump-capture.jsx src/admin-deposits.jsx src/error-reduction.ts pilot/*.mjs api/pilot/*.js src/store-pages.js api/_shared/store-page.js api/_shared/pages.js api/store/load.js api/admin/system-health.js",
     "typecheck": "tsc --noEmit --strict --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck src/error-reduction.ts",
     "test:demo": "node --test tests/demo-*.test.mjs",
     "dev:phone": "vite --host 0.0.0.0 --port 4317 --strictPort",

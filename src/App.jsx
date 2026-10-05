@@ -1,4 +1,5 @@
 import AdminReportAlerts from './admin-report-alerts.jsx';
+import { loadStorePages } from './store-pages.js';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cashierReportDateDisplay } from "./cashier-date.js";
 import { OWNER_PERIOD_OPTIONS, ownerCashTrendRows, ownerPeriodRange, ownerReportsForPeriod } from "./owner-period.js";
@@ -2246,7 +2247,7 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
 }
 
 async function loadOnlineStore(sessionToken) {
-  const { priceRows = [], reportRows = [] } = await apiPost("/api/store/load", {}, sessionToken);
+  const { priceRows = [], reportRows = [] } = await loadStorePages(input=>apiPost("/api/store/load", input, sessionToken));
 
   const nextStore = emptyStore();
 

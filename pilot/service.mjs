@@ -4,6 +4,7 @@ import { CASH_DENOMINATIONS, amount, automaticCashVouchers, automaticTransaction
 import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
+import { storePage } from '../api/_shared/store-page.js';
 const stamp=()=>new Date().toISOString();
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
 const reject=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
@@ -154,6 +155,11 @@ function validatePricePhotos(report,change) {
       const allowed=branch=>['Admin','Approver'].includes(session.role)||branch===session.branch;
       const priceRows=Object.entries(database.priceBook).filter(([b])=>allowed(b)).flatMap(([branch,book])=>Object.entries(book).map(([date,prices])=>({branch,effective_date:date.split('__')[0],coverage:date.includes('__')?'Shift':'Daily',shift_id:date.split('__')[1]||'daily',prices,updated_at:stamp()})));
       const reportRows=Object.values(database.reports).filter(r=>allowed(r.branch)).map(r=>({report_key:keyOf(r),branch:r.branch,report_date:r.date,shift_id:r.shiftId,data:exposeReport(r,session),updated_at:stamp()}));
+      if(input.paged){
+        if(typeof (input.after||'')!=='string')reject('Invalid report page.');
+        const sorted=reportRows.filter(row=>row.report_key>(input.after||'')).sort((a,b)=>a.report_key<b.report_key?-1:a.report_key>b.report_key?1:0);
+        return send(storePage(sorted,input.after?[]:priceRows));
+      }
       return send({ok:true,priceRows,reportRows});
     }
     if(route==='/api/reports/save') {
