@@ -2,6 +2,7 @@ import {FuelLeakLoss} from './fuel-leak-loss.jsx';
 import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
 import { StationHealthCell } from "./shift-health.jsx";
 import AdminReportAlerts from './admin-report-alerts.jsx';
+import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
 import AdminStoreGate from './admin-store-gate.jsx';
 import { redirectLiloanLogin } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
@@ -3307,7 +3308,7 @@ export default function App() {
 
     const performSave = async () => {
       if (!navigator.onLine) {
-        if (operation === "submit") throw new Error("Connect to the internet before submitting this report.");
+        if (operation !== "save") throw new Error(operation === "submit" ? "Connect to the internet before submitting this report." : "Connect to the internet before approving or rejecting a correction.");
         return { ok: true, queued: true };
       }
       const result = await saveOnlineReport(reportWithSaveMeta, sessionToken, operation);
@@ -3346,7 +3347,8 @@ export default function App() {
         }
         if (error.conflict) setActiveEditors([error.editor || { actor: "Another cashier" }]);
         setSyncMessage(error.message || "Unable to save online.");
-        if (operation === "submit") throw error;
+        if (operation === "correction-decision") setHasUnsavedOnlineChange(Object.keys(readOfflineQueue()).length > 0);
+        if (operation !== "save") throw error;
         return { ok: false, error: error.message };
       })
       .finally(() => {
@@ -3658,7 +3660,7 @@ export default function App() {
 
     const targetReport = reportForTarget(branch, correctionDraft.date, correctionDraft.shiftId);
     const baseRequest = {
-      id: correctionRequest(targetReport).id || uid(),
+      id: correctionRequest(targetReport).status === "pending" && correctionRequest(targetReport).reason === correctionDraft.reason.trim() ? correctionRequest(targetReport).id || uid() : uid(),
       status: "pending",
       branch,
       reportDate: correctionDraft.date,
@@ -3820,22 +3822,24 @@ export default function App() {
       .finally(() => setIsSubmittingReport(false));
   }
 
-  function approveCorrectionRequest(sourceReport) {
+  async function approveCorrectionRequest(sourceReport) {
     const request = correctionRequest(sourceReport);
-    persistReport(normalizeExistingReport({
+    const result = await persistReport(normalizeExistingReport({
       ...sourceReport,
       confirmed: false,
       confirmedAt: "",
       undoReason: "Admin approved date correction request.",
       undoReasonAt: new Date().toLocaleString(),
       correctionRequest: approvedCorrectionPayload(request),
-    }));
+    }), "correction-decision");
+    if (result.report?.correctionRequest?.status !== "approved" || result.report.confirmed) throw new Error("Approval could not be verified online. Refresh and retry.");
     setSyncMessage(`Approved correction for ${sourceReport.branch}, ${sourceReport.date}, ${shiftById(sourceReport.shiftId).label}.`);
+    return result;
   }
 
-  function rejectCorrectionRequest(sourceReport) {
+  async function rejectCorrectionRequest(sourceReport) {
     const request = correctionRequest(sourceReport);
-    persistReport(normalizeExistingReport({
+    const result = await persistReport(normalizeExistingReport({
       ...sourceReport,
       correctionRequest: {
         ...request,
@@ -3843,8 +3847,10 @@ export default function App() {
         rejectedAt: new Date().toLocaleString(),
         expiresAt: "",
       },
-    }));
+    }), "correction-decision");
+    if (result.report?.correctionRequest?.status !== "rejected") throw new Error("Rejection could not be verified online. Refresh and retry.");
     setSyncMessage(`Rejected correction for ${sourceReport.branch}, ${sourceReport.date}, ${shiftById(sourceReport.shiftId).label}.`);
+    return result;
   }
 
   function verifyDeposit(id, sourceReport = activeReport) {
@@ -6137,12 +6143,7 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
                     <div><dt>Reason</dt><dd>{request.reason || "No reason entered"}</dd></div>
                     <div><dt>Requested</dt><dd>{request.requestedAt ? new Date(request.requestedAt).toLocaleString("en-PH") : "Not recorded"}</dd></div>
                   </dl>
-                  <div className="admin-mobile-correction-actions">
-                    <button type="button" className="reject" onClick={() => rejectCorrectionRequest(requestReport)}>Reject</button>
-                    <button type="button" className="approve" disabled={request.status === "approved" && !expired} onClick={() => approveCorrectionRequest(requestReport)}>
-                      {request.status === "approved" && !expired ? "Approved" : "Approve"}
-                    </button>
-                  </div>
+                  <CorrectionDecisionActions mobile approved={request.status === "approved" && !expired} onApprove={() => approveCorrectionRequest(requestReport)} onReject={() => rejectCorrectionRequest(requestReport)} />
                 </article>
               );
             })}
@@ -7294,10 +7295,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                 <td><Status tone={request.status === "approved" && !expired ? "green" : "yellow"}>{expired ? "Expired" : request.status}</Status></td>
                 <td>{request.expiresAt ? new Date(request.expiresAt).toLocaleString("en-PH") : "Not approved yet"}</td>
                 <td>
-                  <div className="action-row">
-                    <button type="button" className="small-success" disabled={request.status === "approved" && !expired} onClick={() => approveCorrectionRequest(requestReport)}>Approve</button>
-                    <button type="button" className="small-danger" onClick={() => rejectCorrectionRequest(requestReport)}>Reject</button>
-                  </div>
+                  <CorrectionDecisionActions approved={request.status === "approved" && !expired} onApprove={() => approveCorrectionRequest(requestReport)} onReject={() => rejectCorrectionRequest(requestReport)} />
                 </td>
               </tr>
             );

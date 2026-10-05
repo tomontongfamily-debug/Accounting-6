@@ -19,6 +19,16 @@ export async function configuration(db=pilotDatabase()) {
   if(error) throw fail('Pilot preparation is not installed. The existing app remains available.');
   return data;
 }
+// The all-stations Admin page uses the regular report endpoint. Liloan decisions
+// must update the live state and its canonical report together, or the next
+// station refresh overwrites the approval with the old pending request.
+export async function saveLivePilotCorrection(db,session,report,operation) {
+  if(session.role!=='Admin'||report.branch!=='Liloan'||!['save','correction-decision'].includes(operation)||!['approved','rejected'].includes(report.correctionRequest?.status))return null;
+  const config=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').maybeSingle();
+  if(config.error)throw fail('Unable to verify the Liloan correction workflow.');
+  if(config.data?.mode!=='live'||report.date<config.data.start_date)return null;
+  return execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/reports/save',input:{report,operation:'correction-decision'},mutationId:randomUUID()},{db});
+}
 // The existing Admin screen must refresh approved vouchers and delayed payment
 // notifications too; importing cannot depend on a cashier opening the pilot.
 export async function refreshLivePilotSources(db,session) {
