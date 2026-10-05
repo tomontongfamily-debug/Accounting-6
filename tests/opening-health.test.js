@@ -57,5 +57,16 @@ test("All six Liloan shifts after the opening baseline remain required and confi
     assert.equal(openingSlotHealth(reportRows[0].data,'Liloan',date,'shift-1'),null);
   }
   assert.equal(isStationPreOpeningSlot('Arpili','2026-10-02','shift-1'),false);
-  assert.equal(isStationPreOpeningSlot('Liloan','2026-10-01','shift-1'),false);
+  assert.equal(isStationPreOpeningSlot('Liloan','2026-10-01','shift-1'),true);
+});
+
+test('Archived Liloan dates are not treated as missing reports or deposits', () => {
+  for (const date of ['2026-07-30', '2026-09-30', '2026-10-01']) {
+    const station = buildDailyHealth({date}).stations.find(s => s.branch === 'Liloan');
+    assert.deepEqual(station.shifts.map(s => s.status), ['Not Required', 'Not Required', 'Not Required']);
+    assert.equal(station.missing, 0);
+    assert.equal(station.depositMissing, 0);
+  }
+  assert.equal(buildDailyHealth({date:'2026-10-03'}).stations.find(s => s.branch === 'Liloan').missing, 3);
+  assert.equal(buildDailyHealth({date:'2026-10-01'}).stations.find(s => s.branch === 'Arpili').missing, 3);
 });

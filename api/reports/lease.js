@@ -1,5 +1,6 @@
 import { BRANCHES, SHIFT_IDS, readBody, supabaseAdmin } from "../_shared/supabase.js";
 import { canWriteBranch, getRequestSession } from "../_shared/session.js";
+import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -13,6 +14,7 @@ export default async function handler(req, res) {
     if (auth.session.role !== "Cashier" || !canWriteBranch(auth.session, branch)) return res.status(403).json({ ok: false, error: "Cashier station access required." });
     if (!BRANCHES.includes(branch) || !SHIFT_IDS.includes(shiftId) || !/^\d{4}-\d{2}-\d{2}$/.test(date || "") || !clientId) return res.status(400).json({ ok: false, error: "Invalid edit session." });
     if (date < CLEAN_START_DATE) return res.status(409).json({ ok: false, error: "This editing session is from before the clean restart." });
+    if (isLiloanArchivedSlot(branch, date, shiftId)) return res.status(409).json({ ok: false, error: "This editing session is from before the clean restart in Liloan and has been archived." });
 
     const reportKey = `${branch}__${date}__${shiftId}`, supabase = supabaseAdmin();
     for (let attempt = 0; attempt < 2; attempt += 1) {

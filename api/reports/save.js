@@ -5,6 +5,7 @@ import { normalizeCashCountInput } from "../../src/cash-count-input.js";
 import { sendCorrectionRequestNotification } from "../_shared/push.js";
 import { authoritativePoRowsForReport } from "../_shared/po.js";
 import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.js";
+import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -282,6 +283,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: "Invalid report." });
     }
     if (report.date < CLEAN_START_DATE) return res.status(409).json({ ok: false, error: "This report is from before the clean restart and cannot be uploaded." });
+    if (isLiloanArchivedSlot(report.branch, report.date, report.shiftId)) return res.status(409).json({ ok: false, error: "This report is from before the clean restart in Liloan and has been archived." });
     if (!canWriteBranch(auth.session, report.branch)) return res.status(403).json({ ok: false, error: "This login cannot save this station." });
     if (!["save", "submit", "request-correction"].includes(operation)) {
       return res.status(400).json({ ok: false, error: "Invalid report operation." });
