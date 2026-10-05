@@ -9,6 +9,7 @@ import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
 const stamp=()=>new Date().toISOString();
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
 const reject=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
+const rejectStaleCorrection=message=>{throw Object.assign(new Error(message),{status:409,staleDraft:true});};
 export async function runAction(state,session,route,input={},options={}) {
  const database=structuredClone(state);
  let changed=false;
@@ -185,7 +186,7 @@ function validatePricePhotos(report,change) {
       const decision=session.role==='Admin'&&['approved','rejected'].includes(input.report?.correctionRequest?.status);
       // A decision changes only approval metadata. Source imports or phone saves
       // can advance the report revision without changing the request being reviewed.
-      if(decision&&(!old?.correctionRequest?.id||old.correctionRequest.id!==input.report.correctionRequest.id||old.correctionRequest.requestedAt!==input.report.correctionRequest.requestedAt)) reject('This correction request changed. Refresh before deciding.',409);
+      if(decision&&(!old?.correctionRequest?.id||old.correctionRequest.id!==input.report.correctionRequest.id||old.correctionRequest.requestedAt!==input.report.correctionRequest.requestedAt)) rejectStaleCorrection('This correction request changed. Refresh before deciding.');
       if(old && !decision && !(session.role==='Cashier'&&input.operation!=='request-correction'
         ? cashierRevisionMatches(input.report,old)
         : Number(input.report?.pilotRevision||0)===Number(old.pilotRevision||0))) reject('This shift changed on another device. Refresh before saving.',409);
@@ -198,14 +199,14 @@ function validatePricePhotos(report,change) {
         if(!old) reject('Report not found.');
         if(input.report.correctionRequest?.status==='approved') {
           const request=old.correctionRequest;
-          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) reject('This correction request changed. Refresh before approving.',409);
+          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) rejectStaleCorrection('This correction request changed. Refresh before approving.');
           const covered=hasDepositCoverage(old);
           const approved={...request,status:'approved',approvedAt:stamp(),expiresAt:new Date(Date.now()+24*60*60*1000).toISOString(),rejectedAt:'',completedAt:'',previousConfirmedAt:old.confirmedAt||request.previousConfirmedAt||''};
           return send(storeReport({...old,confirmed:false,confirmedAt:'',correctionRequest:approved,correctionCashLocked:covered,cashCountConfirmed:covered?old.cashCountConfirmed:false,cashReviewState:'',recountRequired:false},session,'correction-approved'));
         }
         if(input.report.correctionRequest?.status==='rejected') {
           const request=old.correctionRequest;
-          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) reject('This correction request changed. Refresh before rejecting.',409);
+          if(!request?.id||request.id!==input.report.correctionRequest.id||!['pending','approved'].includes(request.status)) rejectStaleCorrection('This correction request changed. Refresh before rejecting.');
           return send(storeReport({...old,correctionRequest:{...request,status:'rejected',rejectedAt:stamp(),expiresAt:''}},session,'correction-rejected'));
         }
         reject('Use the dedicated pilot actions for this change.');

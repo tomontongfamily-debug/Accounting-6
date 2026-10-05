@@ -427,6 +427,6 @@ export default async function handler(req, res) {
     if (!written) return res.status(409).json({ ok: false, conflict: true, error: "Another device saved this report first. Reload before continuing." });
     return res.status(200).json({ ok: true, report: written.data, reportId: serverMeta.reportId, version: nextVersion, locked: Boolean(serverMeta.lockedAt) });
   } catch (error) {
-    return res.status(error.status || 500).json({ ok: false, error: error.message || "Unable to save report." });
+    return res.status(error.status || 500).json({ ok: false, error: error.message || "Unable to save report.", ...(error.staleDraft ? {staleDraft:true} : {}) });
   }
 }

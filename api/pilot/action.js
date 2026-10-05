@@ -16,5 +16,5 @@ export default async function handler(req,res) {
     const body=readBody(req);
     if(JSON.stringify(body).length>3*1024*1024) return res.status(413).json({ok:false,error:'Photo is too large. Take a closer photo.'});
     return res.status(200).json(await execute(auth.session,body));
-  }catch(error){return res.status(error.status||400).json({ok:false,error:error.message});}
+  }catch(error){return res.status(error.status||400).json({ok:false,error:error.message,...(error.staleDraft?{staleDraft:true}:{})});}
 }

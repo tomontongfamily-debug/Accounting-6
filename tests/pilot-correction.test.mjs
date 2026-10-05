@@ -55,7 +55,7 @@ test('Other stations, pre-cutover reports and disabled/shadow modes keep their e
 
 test('Changed requests and expired correction approvals cannot change saved readings',async()=>{
   const {state,report,key,admin,cashier}=correctionFixture();
-  await assert.rejects(runAction(state,admin,'/api/reports/save',{report:{...report,correctionRequest:{id:'stale-request',status:'approved'}}}),/request changed/);
+  await assert.rejects(runAction(state,admin,'/api/reports/save',{report:{...report,correctionRequest:{id:'stale-request',status:'approved'}}}),error=>error.status===409&&error.staleDraft===true&&/request changed/.test(error.message));
   state.reports[key].confirmed=false;state.reports[key].correctionRequest.status='approved';state.reports[key].correctionRequest.expiresAt='2026-01-01T00:00:00Z';
   await assert.rejects(runAction(state,cashier,'/api/demo/pump-reading',{reportKey:key,revision:3,row:state.reports[key].pumpRows[0]}),/approval expired/);
   await assert.rejects(runAction(state,cashier,'/api/demo/photo',{reportKey:key,rowId:state.reports[key].pumpRows[0].id,revision:3,replaceReading:true,data:'data:image/jpeg;base64,/9j/2Q=='}),/approval expired/);
