@@ -1,4 +1,5 @@
 import AdminReportAlerts from './admin-report-alerts.jsx';
+import { readStationSession } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
 import { pilotPost } from './pilot-client.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
@@ -919,9 +920,9 @@ function readCachedCashierSession() {
   }
 }
 
-function cacheCashierSession(branch) {
+function cacheCashierSession(branch, expiresAt = Date.now() + (12 * 60 * 60_000)) {
   try {
-    window.sessionStorage.setItem(CASHIER_SESSION_CACHE_KEY, JSON.stringify({ branch, expiresAt: Date.now() + (12 * 60 * 60_000) }));
+    window.sessionStorage.setItem(CASHIER_SESSION_CACHE_KEY, JSON.stringify({ branch, expiresAt }));
   } catch {
     // A normal online login still works when session storage is unavailable.
   }
@@ -2753,7 +2754,7 @@ export default function App() {
   const [approverAccess, setApproverAccess] = useState(false);
   const [sessionToken, setSessionToken] = useState(() => cachedCashierSession ? "cookie" : "");
   const [authMessage, setAuthMessage] = useState("");
-  const [authLoading, setAuthLoading] = useState(() => roleFromPath(window.location.pathname) === "Admin");
+  const [authLoading, setAuthLoading] = useState(() => ["Admin", "Cashier", "Manager"].includes(roleFromPath(window.location.pathname)));
   const [adminSessionExpiresAt, setAdminSessionExpiresAt] = useState(0);
   const [syncMessage, setSyncMessage] = useState("Connecting online accounting database...");
   const [showReportConfirm, setShowReportConfirm] = useState(false);
@@ -2811,6 +2812,24 @@ export default function App() {
       .finally(() => mounted && setAuthLoading(false));
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (!["Cashier", "Manager"].includes(role)) return undefined;
+    let mounted = true;
+    readStationSession(role).then(session => {
+      if (!mounted || session?.branch !== "Liloan") return;
+      setBranch(session.branch);
+      setSessionToken("cookie");
+      if (role === "Cashier") {
+        setCashierAccess(old => ({...old, [session.branch]: true}));
+        cacheCashierSession(session.branch, session.expiresAt);
+      } else {
+        setManagerAccess(old => ({...old, [session.branch]: true}));
+      }
+    }).catch(error => { if (mounted) setAuthMessage(error.message); })
+      .finally(() => { if (mounted) setAuthLoading(false); });
+    return () => { mounted = false; };
+  }, [role]);
 
   useEffect(() => {
     if (role !== "Admin" || !adminAccess || !adminSessionExpiresAt) return undefined;
