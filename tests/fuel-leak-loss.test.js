@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compute, createReport, normalizeReport} from '../src/accounting-engine.js';
-import {pumpLeakLiters, pumpSaleLiters, validateFuelLeakLosses} from '../src/fuel-leak-loss.js';
+import {pumpLeakLiters, pumpSaleLiters, pumpSalesBreakdown, validateFuelLeakLosses} from '../src/fuel-leak-loss.js';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 
@@ -53,6 +53,26 @@ test('Partial loss leaves actual paid sales and other products intact', () => {
   close(after.fuelSalesByProduct.Regular, 1.38 * 88.8);
   close(after.fuelLiters.Premium, 0);
   close(after.fuelLeakLossLiters, 1);
+});
+
+test('Displayed pump sales preserve meter readings and distinguish partial, full and excess loss',()=>{
+  for(const loss of [0,1,2.38,230.88]) {
+    const {report,pump}=reportWithLoss(loss),original=structuredClone(pump);
+    const shown=pumpSalesBreakdown(report,pump);
+    close(shown.meteredLiters,2.38);close(shown.grossSales,2.38*88.8);
+    close(shown.lossLiters,loss);
+    assert.equal(shown.excessLoss,loss>2.38);
+    if(!shown.excessLoss) {close(shown.paidLiters,2.38-loss);close(shown.paidSales,compute(report).fuelSales);}
+    assert.deepEqual(pump,original);
+  }
+});
+
+test('Displayed paid pump sales agree with the report across an overnight price change',()=>{
+  const {report,pump}=reportWithLoss(1);report.shiftId='shift-3';
+  report.midShiftBasePrices={...report.prices};
+  report.midShiftPriceChanges=[{id:'after-midnight',product:'Regular',effectiveTime:'01:00',newPrice:90,readings:{[pump.id]:pump.opening+1}}];
+  report.fuelLeakLosses[0].pricePerLiter=90;
+  close(pumpSalesBreakdown(report,pump).paidSales,compute(report).fuelSales);
 });
 
 test('A metered leak during a price-changing shift uses the selected actual selling price', () => {

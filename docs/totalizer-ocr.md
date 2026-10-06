@@ -1,5 +1,7 @@
 # Pump totalizer OCR
 
+One-versus-seven verification now refuses a digit when a possible top bar is visible at only one alignment. Repeated physical-stroke evidence can recover a seven; recognized sevens stay unchanged. October 4 Shift 2 photo #2 was checked as 392555.72 in its original form and four JPEG upload variants. Run this private-photo regression with `TOTALIZER_STATION_MANIFEST` and `TOTALIZER_UPLOAD_VARIANTS=1`; expected readings are assertions used only by the test, never inputs to recognition. Historical confirmed entries require an explicit audited correction and are not replaced by an OCR recheck.
+
 Pump and manager price-change photos use the locally hosted `ssd_int` seven-segment model. Model provenance, original SHA-256, and Apache-2.0 license are beside the compressed model in `public/ocr/lang`. No external image-recognition service is called.
 
 The browser normalizes local contrast, locates the LCD row using aligned digit strokes, and reconnects small segment gaps. Recognition must agree across layouts or repeated high-confidence passes with different stroke widths or padding. A tighter crop cannot discard digits identified in the wider crop. The decimal position must be supported by a visible dot near the digit baseline. Different plausible readings or missing decimal evidence leave the field for manual review. The recognizer receives only the photograph, never the opening reading or an expected answer. Cashier confirmation and all existing report validation remain required.

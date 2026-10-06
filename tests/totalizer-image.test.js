@@ -84,15 +84,33 @@ test('The sensitive mask retains faint strokes without changing image coordinate
   assert.ok(sensitive.reduce((n,v)=>n+v,0)>normal.reduce((n,v)=>n+v,0));
 });
 
-test('A visible top stroke distinguishes a trailing seven from an OCR one without changing genuine ones',()=>{
+test('A visible top stroke recovers a seven while preserving genuine ones and recognized sevens',()=>{
   for(const digit of [1,7]){
     const {s,gray,width,height}=faintDigit(patterns[digit]);
     // Shift the complete physical digit into the third digit cell.
-    const shifted=new Uint8Array(gray.length).fill(180);
+    const shifted=new Uint8Array(gray.length);
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++)shifted[y*width+x]=150+Math.round((x-120)*.05);
     for(let y=30;y<150;y++)for(let x=90;x<150;x++)shifted[y*width+x+120]=gray[y*width+x];
     s[2]={...s[2],text:'1',bbox:{...s[2].bbox,x0:252}};
     const refined=refineNarrowLcdDigits(s,shifted,width,height);
     assert.equal(refined[2].text,String(digit));
     assert.equal(s[2].text,'1','The original OCR symbols remain unchanged');
+    s[2].text='7';assert.equal(refineNarrowLcdDigits(s,shifted,width,height)[2].text,'7');
   }
+});
+
+test('Missing or uncertain top-bar evidence cannot turn an OCR one into a seven',()=>{
+  for(const [pattern,contrast]of [['0000000',18],['1110000',5],['1111000',18]]) {
+    const {s,gray,width,height}=faintDigit(pattern,contrast);
+    s[0].text='1';
+    assert.equal(refineNarrowLcdDigits(s,gray,width,height)[0].text,'1');
+  }
+});
+
+test('A top-bar speck seen at only one alignment flags the digit for review instead of accepting a one',()=>{
+  const {s,gray,width,height}=faintDigit(patterns[1]);s[0].text='1';
+  for(let x=108;x<132;x++)gray[40*width+x]-=60;
+  const refined=refineNarrowLcdDigits(s,gray,width,height);
+  assert.equal(refined[0].text,'1');assert.equal(refined[0].lcdAmbiguous,true);
+  assert.equal(s[0].lcdAmbiguous,undefined);
 });

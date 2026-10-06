@@ -55,7 +55,7 @@ async function recognizePhoto(data){
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
             const verifiedLeading=digits[0]?.lcdVerified===true;
-            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90)?readingWithVisibleDecimal(translated,analysis.components):null;
+            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components):null;
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
             passes.push({value,confidence:result.confidence});

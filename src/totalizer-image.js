@@ -179,7 +179,8 @@ export function refineLeadingLcdDigit(symbols,gray,width,height){
 }
 
 // A seven can be recognized as a narrow one even at high OCR confidence.
-// Verify the missing top bar and the other six strokes in the original image.
+// Verify the top bar and other six strokes in the original image. A top bar
+// seen at only one alignment requires review; a seven is never changed to a one.
 export function refineNarrowLcdDigits(symbols,gray,width,height){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   const body=digits.filter(s=>s.text!=='1');
@@ -192,7 +193,7 @@ export function refineNarrowLcdDigits(symbols,gray,width,height){
     if(symbol.text!=='1')return symbol;
     const right=symbol.bbox.x1,left=right-w,top=symbol.bbox.y1-h;
     if(left<0||right>=width||top-h*.15<0||top+h*1.15>=height)return symbol;
-    let votes=0;
+    const votes=new Map();
     for(const shift of[-.04,-.02,0,.02,.04]){
       const contrast=positions.map(([x,y,vertical])=>{
         const cx=left+x*w,cy=top+(y+shift)*h,span=Math.max(2,Math.round(vertical?h*.07:w*.12)),radius=Math.round(vertical?w*.24:h*.14),samples=[];
@@ -208,9 +209,12 @@ export function refineNarrowLcdDigits(symbols,gray,width,height){
         }
         return median(samples);
       });
-      if([..."1110000"].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3))votes++;
+      for(const [text,pattern]of [['1','0110000'],['7','1110000']]) {
+        if([...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3))votes.set(text,(votes.get(text)||0)+1);
+      }
     }
-    return votes>=2?{...symbol,text:'7',lcdVerified:true}:symbol;
+    if((votes.get('7')||0)>=2)return {...symbol,text:'7',lcdVerified:true};
+    return votes.has('7')?{...symbol,lcdAmbiguous:true}:symbol;
   });
 }
 

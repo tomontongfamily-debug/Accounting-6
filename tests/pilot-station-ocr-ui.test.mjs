@@ -16,8 +16,22 @@ test('Real station photos are read in the browser without guessing ambiguous dig
   const results=[];
   for(const [i,sample]of samples.entries()){
    const data='data:image/jpeg;base64,'+fs.readFileSync(sample.file).toString('base64');
-   const {reading,milliseconds}=await page.evaluate(async data=>{const{detectTotalizer}=await import('/src/totalizer-ocr.js');const start=performance.now();const reading=await detectTotalizer(data);return {reading,milliseconds:Math.round(performance.now()-start)};},data);
-   results.push({sample:i+1,expected:sample.expected,reading,milliseconds});
+   const values=await page.evaluate(async({data,variants})=>{
+    const{detectTotalizer}=await import('/src/totalizer-ocr.js');
+    const read=async(image,label)=>{const start=performance.now();const reading=await detectTotalizer(image);return {label,reading,milliseconds:Math.round(performance.now()-start)};};
+    const out=[await read(data,'original')];
+    if(variants) {
+      const image=new Image();image.src=data;await image.decode();
+      for(const [size,quality]of [[1800,.92],[1800,.9],[1280,.92],[1000,.85]]) {
+        const scale=Math.min(1,size/Math.max(image.width,image.height)),canvas=document.createElement('canvas');
+        canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
+        canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);
+        out.push(await read(canvas.toDataURL('image/jpeg',quality),`${size}px JPEG ${quality}`));
+      }
+    }
+    return out;
+   },{data,variants:process.env.TOTALIZER_UPLOAD_VARIANTS==='1'});
+   results.push(...values.map(value=>({sample:i+1,expected:sample.expected,...value})));
   }
   console.log('Station OCR validation:',JSON.stringify(results));
   if(process.env.TOTALIZER_BENCHMARK_RESULTS)fs.writeFileSync(process.env.TOTALIZER_BENCHMARK_RESULTS,JSON.stringify(results,null,2));
