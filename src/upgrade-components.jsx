@@ -10,9 +10,16 @@ import { ShiftReasons, reasonLabel } from './shift-health.jsx';
 import { ManagerDepositCards } from './deposit-cards.jsx';
 import { depositCoverage, depositDayLabel } from './deposit-coverage.js';
 import { DepositCoverageLines } from './deposit-coverage.jsx';
-import { pumpLeakLiters, pumpSaleLiters } from './fuel-leak-loss.js';
+import { pumpSalesBreakdown } from './fuel-leak-loss.js';
 const php=n=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(n||0));
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
+function PumpSales({report,row}) {
+  const sales=pumpSalesBreakdown(report,row);
+  return <div className="pump-sales" aria-label={`${row.pump} ${row.nozzle} sales`}>
+    <p>Metered: <b>{sales.meteredLiters.toFixed(2)} L</b> · Leak loss: <b>{sales.lossLiters.toFixed(2)} L</b></p>
+    {sales.excessLoss?<p className="error" role="alert">Leak loss exceeds the metered liters. Check the loss entry; the pump reading is still saved.</p>:<p>Paid sales: <b>{sales.paidLiters.toFixed(2)} L</b> · <b>{php(sales.paidSales)}</b>{sales.lossLiters>0&&sales.paidLiters<0.000001?' — all metered liters are recorded as loss.':''}</p>}
+  </div>;
+}
 export async function demoApi(path,body={}) {
   const value=await pilotPost(`/api/demo/${path}`,body);
   if (['deposit-submit','deposit-verify','settings'].includes(path)) window.dispatchEvent(new Event('fueltech-pilot-change'));
@@ -90,6 +97,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   return <article className={`reading-card ${readingComplete(row)?'complete':''}`} data-pump-row-id={row.id}>
     <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</small></div><b>{readingComplete(row)?'✓ Complete':'Photo required'}</b></header>
     {photo&&<img src={photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
+    {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><video ref={video} autoPlay playsInline muted/><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy} onClick={openCamera}>{photo?'Retake photo':'Open camera'}</button><label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label></div>
     {busy&&<p role="status">Saving photo or reading…</p>}
@@ -98,13 +106,17 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/>{warning.message}</p>}
       <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>
     </div>}</>}
-    {!change && pumpLeakLiters(report,row)>0 && <p>Fuel leak loss: <b>{pumpLeakLiters(report,row).toFixed(2)} L</b> · Paid sales: <b>{pumpSaleLiters(report,row).toFixed(2)} L</b></p>}
+    {!change&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
   </article>;
 }
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {
   const groups=[...new Set(report.pumpRows.map(r=>r.pump))];const [pump,setPump]=useState(groups[0]);
   const done=report.pumpRows.filter(readingComplete).length;
-  return <section className="section"><div className="section-heading"><h2>Closing pump readings</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each totalizer, check the detected number, then confirm. All readings and photos are required to continue.</p><div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} locked={report.confirmed} onConfirm={onReading} onBusy={onBusy}/>)}</div></section>;
+  const sales=report.pumpRows.filter(readingComplete).map(row=>pumpSalesBreakdown(report,row));
+  const total=key=>sales.reduce((sum,row)=>sum+row[key],0);
+  return <section className="section"><div className="section-heading"><h2>Closing pump readings</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each totalizer, check the detected number, then confirm. All readings and photos are required to continue.</p>
+    {done>0&&<div className="pump-sales-summary" aria-label="Confirmed pump sales totals"><p>Metered liters: <b>{total('meteredLiters').toFixed(2)} L</b> · Leak loss: <b>{total('lossLiters').toFixed(2)} L</b></p><p>Total metered sales: <b>{php(total('grossSales'))}</b> · Paid pump sales: <b>{sales.some(row=>row.excessLoss)?'Check leak loss entries':php(total('paidSales'))}</b></p><small>Totals use confirmed pump readings. Tank calibration and other report adjustments are shown in the final report.</small></div>}
+    <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} locked={report.confirmed} onConfirm={onReading} onBusy={onBusy}/>)}</div></section>;
 }
 export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}) {
   const rows=report.pumpRows.filter(row=>row.product===change.product);

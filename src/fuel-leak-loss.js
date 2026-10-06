@@ -1,4 +1,5 @@
-import {reportStartingPrice} from './mid-shift-price-change.js';
+import {midShiftReadingValue, reportStartingPrice} from './mid-shift-price-change.js';
+import {midShiftChangeOrder} from './mid-shift-sales-breakdown.js';
 
 const products = ['Premium', 'Regular', 'Diesel'];
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -15,6 +16,26 @@ export function pumpLeakLiters(report, row) {
 
 export function pumpSaleLiters(report, row) {
   return Math.max(0, pumpMeterLiters(row) - pumpLeakLiters(report, row));
+}
+
+export function pumpMeterSales(report, row) {
+  if(pumpMeterLiters(row)<=0)return 0;
+  let reading=number(row.opening),price=Math.max(0,number(reportStartingPrice(report,row.product))),sales=0;
+  const changes=(report.midShiftPriceChanges||[]).filter(change=>change.product===row.product)
+    .slice().sort((a,b)=>midShiftChangeOrder(a,report.shiftId)-midShiftChangeOrder(b,report.shiftId));
+  for(const change of changes) {
+    const next=number(midShiftReadingValue(change,row));
+    if(number(change.newPrice)<=0||next<=number(row.opening)||next>=number(row.closing))continue;
+    sales+=(next-reading)*price;reading=next;price=Math.max(0,number(change.newPrice));
+  }
+  return sales+(number(row.closing)-reading)*price;
+}
+
+export function pumpSalesBreakdown(report,row) {
+  const meteredLiters=pumpMeterLiters(row),lossLiters=pumpLeakLiters(report,row),grossSales=pumpMeterSales(report,row);
+  const lossSales=pumpLeakSales(report,row,pump=>pumpMeterSales(report,pump));
+  return {meteredLiters,lossLiters,paidLiters:pumpSaleLiters(report,row),grossSales,lossSales,
+    paidSales:Math.max(0,grossSales-lossSales),excessLoss:lossLiters>meteredLiters+0.000001};
 }
 
 export function fuelLeakPriceOptions(report, product) {
