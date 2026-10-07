@@ -963,7 +963,7 @@ function sortedMidShiftChanges(report, product) {
 
 function validMidShiftChangeForRow(change, row) {
   const reading = n(midShiftReadingValue(change, row));
-  return n(change.newPrice) > 0 && reading > n(row.opening) && reading < n(row.closing);
+  return n(change.newPrice) > 0 && reading >= n(row.opening) && reading <= n(row.closing);
 }
 
 function pumpRowSales(report, row) {
@@ -2440,8 +2440,8 @@ async function requestReportLease({ branch, date, shiftId, clientId, actor, acti
   return apiPost("/api/reports/lease", { branch, date, shiftId, clientId, actor, action }, sessionToken);
 }
 
-async function saveOnlinePrices(branch, date, coverage, shiftId, prices, sessionToken) {
-  await apiPost("/api/prices/save", { branch, date, coverage, shiftId, prices: { ...defaultPrices(), ...defaultFuelCosts(), ...prices } }, sessionToken);
+async function saveOnlinePrices(branch, date, coverage, shiftId, prices, sessionToken, pricePatch) {
+  return apiPost("/api/prices/save", { branch, date, coverage, shiftId, ...(pricePatch ? {pricePatch} : {prices: { ...defaultPrices(), ...defaultFuelCosts(), ...prices }}) }, sessionToken);
 }
 
 function Field({ label, children }) {
@@ -3637,7 +3637,8 @@ export default function App() {
     saveReport(removeMidShiftChange(latestActiveReportForEdit(), id));
   }
 
-  function confirmMidShiftPriceChange(id) {
+  async function confirmMidShiftPriceChange(id) {
+    await prepareMidShiftPhotos();
     const latestReport = latestActiveReportForEdit();
     const change = (latestReport.midShiftPriceChanges || []).find((item) => item.id === id);
     if (!change?.effectiveTime || n(change.newPrice) <= 0) {
@@ -3649,44 +3650,17 @@ export default function App() {
       setSyncMessage(`Photograph and confirm every ${change.product} nozzle before confirming the price change.`);
       return;
     }
-    const confirmedReport = {
-      ...latestReport,
-      midShiftPriceChanges: latestReport.midShiftPriceChanges.map((item) =>
-        item.id === id ? { ...item, confirmedAt: new Date().toISOString() } : item
-      ),
-    };
-    const dailyPricing = getEffectiveDailyPricing(store.priceBook, branch, latestReport.date);
-    const nextDailyPrices = { ...dailyPricing.prices, [change.product]: committedManagerPrice(change.newPrice) };
-    const savePromise = saveReport(confirmedReport, "immediate");
-    if (!savePromise) return;
+    setIsSavingOnline(true);
     setSyncMessage(`Confirming ${change.product} mid-shift price...`);
-    savePromise.then(async (result) => {
-      if (result?.ok === false) return;
-      setIsSavingOnline(true);
-      setSyncMessage(`Applying ${change.product} as the new daily price...`);
-      try {
-        await saveOnlinePrices(branch, latestReport.date, "Daily", "daily", nextDailyPrices, sessionToken);
-        setStore((old) => ({
-          ...old,
-          priceBook: {
-            ...old.priceBook,
-            [branch]: {
-              ...(old.priceBook[branch] || {}),
-              [dailyPriceKey(latestReport.date)]: nextDailyPrices,
-            },
-          },
-        }));
-        setSelectedDate(latestReport.date);
-        setPricingCoverage("Daily");
-        setHasUnsavedOnlineChange(false);
-        setSyncMessage(`${change.product} mid-shift price confirmed and applied as the new daily price.`);
-      } catch (error) {
-        setHasUnsavedOnlineChange(true);
-        setSyncMessage(error.message || `Mid-shift entry saved, but ${change.product} could not be applied to the daily price.`);
-      } finally {
-        setIsSavingOnline(false);
-      }
-    });
+    try {
+      const result=await demoApi('midshift-confirm',{reportKey:reportKey(latestReport.branch,latestReport.date,latestReport.shiftId),changeId:id});
+      acceptDemoReport(result.report);
+      setStore(old=>({...old,priceBook:{...old.priceBook,[branch]:{...(old.priceBook[branch]||{}),[result.priceDate]:{...getEffectiveDailyPricing(old.priceBook,branch,result.priceDate).prices,...result.dailyPricePatch}}}}));
+      setHasUnsavedOnlineChange(false);
+      setSyncMessage(`${change.product} mid-shift price confirmed. It carries into the next shift and day until changed again.`);
+    } catch(error) {
+      setSyncMessage(error.message||'Unable to confirm the price change. Retry after refreshing.');
+    } finally {setIsSavingOnline(false);}
   }
 
   function addDeposit() {
@@ -4050,7 +4024,7 @@ export default function App() {
         ...old.priceBook,
         [branch]: {
           ...(old.priceBook[branch] || {}),
-          [priceKey]: nextPrices,
+          [priceKey]: { ...(pricingCoverage === "Shift" ? getEffectivePricing(old.priceBook, branch, selectedDate, pricingShiftId).prices : getEffectiveDailyPricing(old.priceBook, branch, selectedDate).prices), [product]: value },
         },
       };
       return { ...old, priceBook, reports: syncReportsWithPriceBook(old.reports, priceBook) };
@@ -4058,7 +4032,7 @@ export default function App() {
     setHasUnsavedOnlineChange(true);
     setIsSavingOnline(true);
     setSyncMessage(`Saving ${pricingCoverage.toLowerCase()} prices online...`);
-    return saveOnlinePrices(branch, selectedDate, pricingCoverage, pricingShiftId, nextPrices, sessionToken)
+    return saveOnlinePrices(branch, selectedDate, pricingCoverage, pricingShiftId, nextPrices, sessionToken, {[product]:value})
       .then(() => {
         setHasUnsavedOnlineChange(false);
         setSyncMessage(`${pricingCoverage} prices saved online.`);
@@ -4102,14 +4076,14 @@ export default function App() {
         ...old.priceBook,
         [deliveryBranch]: {
           ...(old.priceBook[deliveryBranch] || {}),
-          [priceKey]: nextPrices,
+          [priceKey]: { ...getEffectiveDailyPricing(old.priceBook, deliveryBranch, deliveryDate).prices, ...costs, fuelDeliveryCostMeta: nextPrices.fuelDeliveryCostMeta },
         },
       },
     }));
     setHasUnsavedOnlineChange(true);
     setIsSavingOnline(true);
     setSyncMessage("Saving fuel delivery costs online...");
-    return saveOnlinePrices(deliveryBranch, deliveryDate, "Daily", "daily", nextPrices, sessionToken)
+    return saveOnlinePrices(deliveryBranch, deliveryDate, "Daily", "daily", nextPrices, sessionToken, {...costs,fuelDeliveryCostMeta:nextPrices.fuelDeliveryCostMeta})
       .then(() => {
         setHasUnsavedOnlineChange(false);
         setSyncMessage(`Fuel delivery costs saved online for ${deliveryBranch}, ${deliveryDate}, ${shiftById(deliveryShiftId).label}.`);

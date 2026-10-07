@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createReport, compute, carryForwardOpenings, getEffectivePricing, reportKey } from '../src/accounting-engine.js';
+import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
 import { CASH_DENOMINATIONS, amount, automaticCashVouchers, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
 import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
 
@@ -7,6 +7,7 @@ import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
 import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
 import { refreshPosReport } from './pos-redemptions.mjs';
+import { SELLING_PRODUCTS, carryMidShiftPrices, confirmedDailyPricePatch, syncUnsubmittedPrices } from './prices.mjs';
 const stamp=()=>new Date().toISOString();
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
 const reject=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
@@ -226,17 +227,28 @@ function validatePricePhotos(report,change) {
         old=carryForwardOpenings(old,database.reports);
         const incoming=input.report.midShiftPriceChanges||[];
         if(!Array.isArray(incoming)||incoming.some(c=>!c.id)||new Set(incoming.map(c=>c.id)).size!==incoming.length) reject('Invalid price changes.');
+        const newlyConfirmed=[];
         const changes=incoming.map(c=>{
           if(!['Premium','Regular','Diesel'].includes(c.product)) reject('Unknown fuel product.');
           const previous=old.midShiftPriceChanges?.find(p=>p.id===c.id);
           const sameContext=previous?.product===c.product&&previous?.effectiveTime===c.effectiveTime;
           const next={id:c.id,product:c.product,effectiveTime:c.effectiveTime,newPrice:c.newPrice,photoRequired:previous?!!previous.photoRequired:true,readings:sameContext?(previous.readings||{}):{},readingPhotos:sameContext?(previous.readingPhotos||{}):{},confirmedAt:''};
           if(sameContext&&previous.newPrice===c.newPrice) next.confirmedAt=previous.confirmedAt||'';
-          if(c.confirmedAt) {if(next.photoRequired)validatePricePhotos({...old,midShiftPriceChanges:[next]},next);next.confirmedAt=stamp();}
+          if(c.confirmedAt) {
+            if(next.photoRequired)validatePricePhotos({...old,midShiftPriceChanges:[next]},next);
+            if(!next.confirmedAt){next.confirmedAt=stamp();newlyConfirmed.push(next.product);}
+          }
           return next;
         });
         const changed=JSON.stringify(changes)!==JSON.stringify(old.midShiftPriceChanges||[]);
-        return send(storeReport({...old,midShiftPriceChanges:changes,midShiftBasePrices:old.midShiftBasePrices||old.prices,...(changed?{cashReviewState:'',recountRequired:false}:{})},session,'mid-shift-price-change'));
+        const result=storeReport({...old,midShiftPriceChanges:changes,midShiftBasePrices:old.midShiftBasePrices||old.prices,...(changed?{cashReviewState:'',recountRequired:false}:{})},session,'mid-shift-price-change');
+        if(newlyConfirmed.length){
+          const carried=carryMidShiftPrices(database,result.report,newlyConfirmed);
+          syncUnsubmittedPrices(database,result.report.branch,result.report.date,result.report.shiftId);
+          result.dailyPricePatch=carried.patch;result.priceDate=result.report.date;
+          audit('mid-shift-price-carried-forward',session,{reportKey:keyOf(result.report),prices:carried.prices,products:newlyConfirmed});
+        }
+        return send(result);
       }
       const r=candidate(input.report,session);
       if(input.operation==='submit') {
@@ -368,12 +380,45 @@ function validatePricePhotos(report,change) {
       if(!['ONLINE_PAY','PO','REDEMPTION','OTHER'].includes(input.category)||!String(input.detail||'').trim()) reject('Describe the issue.');
       r.integrationIssues=[...(r.integrationIssues||[]),{category:input.category,detail:String(input.detail).slice(0,500)}];return send(storeReport(r,session,'integration-issue-reported'));
     }
+    if(route==='/api/demo/midshift-confirm') {
+      requireRole(session,'Manager');
+      const old=database.reports[input.reportKey];
+      if(!old)reject('Refresh the shift first.');
+      branchAccess(session,old.branch);
+      if(old.confirmed||old.date<database.startDate)reject('Submitted or historical reports cannot be changed here.',423);
+      const change=old.midShiftPriceChanges?.find(c=>c.id===input.changeId);
+      if(!change)reject('This price change no longer exists. Refresh first.',409);
+      if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||amount(change.newPrice)<=0)reject('Enter the price-change time and new price.');
+      if(change.photoRequired)validatePricePhotos(old,change);
+      if(change.confirmedAt)return send({ok:true,report:old,alreadyConfirmed:true,priceDate:old.date,dailyPricePatch:confirmedDailyPricePatch(database,old.branch,old.date,[change.product])});
+      const report={...old,midShiftBasePrices:old.midShiftBasePrices||old.prices,midShiftPriceChanges:old.midShiftPriceChanges.map(c=>c.id===change.id?{...c,confirmedAt:stamp()}:c),cashReviewState:'',recountRequired:false};
+      const result=storeReport(report,session,'mid-shift-price-confirmed');
+      const carried=carryMidShiftPrices(database,result.report,[change.product]);
+      syncUnsubmittedPrices(database,old.branch,old.date,old.shiftId);
+      audit('mid-shift-price-carried-forward',session,{reportKey:input.reportKey,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,prices:carried.prices});
+      return send({...result,priceDate:old.date,dailyPricePatch:carried.patch});
+    }
     if(route==='/api/prices/save') {
       if(input.date<database.startDate) reject('Historical prices are read-only.',423);
       requireRole(session,'Manager','Admin');branchAccess(session,input.branch);datePlus(input.date,0);
-      for(const p of ['Premium','Regular','Diesel']) if(amount(input.prices[p])<=0) reject('Prices must be positive.');
       const key=input.coverage==='Shift'?`${input.date}__${input.shiftId}`:input.date;
-      database.priceBook[input.branch][key]=input.prices;audit('fuel-price-changed',session,{date:input.date,prices:input.prices});save();return send({ok:true});
+      if(!['Daily','Shift'].includes(input.coverage)||(input.coverage==='Shift'&&!['shift-1','shift-2','shift-3'].includes(input.shiftId)))reject('Invalid price coverage.');
+      const previous=input.coverage==='Shift'?getEffectivePricing(database.priceBook,input.branch,input.date,input.shiftId).prices:getEffectiveDailyPricing(database.priceBook,input.branch,input.date).prices;
+      let prices;
+      if(input.pricePatch){
+        if(typeof input.pricePatch!=='object'||Array.isArray(input.pricePatch)||!Object.keys(input.pricePatch).length)reject('Invalid price update.');
+        const allowed=session.role==='Manager'?SELLING_PRODUCTS:[...SELLING_PRODUCTS,'PremiumCost','RegularCost','DieselCost','fuelDeliveryCostMeta'];
+        if(Object.keys(input.pricePatch).some(p=>!allowed.includes(p)))reject('Unknown price field.');
+        prices={...previous,...input.pricePatch};
+      }else{
+        // Older open manager screens send all fuels, including stale values from
+        // another confirmation. Keep confirmed mid-shift prices authoritative.
+        prices={...previous,...input.prices,...(input.coverage==='Daily'?confirmedDailyPricePatch(database,input.branch,input.date):{})};
+      }
+      for(const p of SELLING_PRODUCTS)if(amount(prices[p])<=0)reject('Prices must be positive.');
+      database.priceBook[input.branch][key]=prices;
+      syncUnsubmittedPrices(database,input.branch,input.date,input.coverage==='Shift'?input.shiftId:'shift-1');
+      audit('fuel-price-changed',session,{date:input.date,prices,pricePatch:input.pricePatch});save();return send({ok:true,prices});
     }
     if(route==='/api/demo/deposits') {
       requireRole(session,'Manager','Admin','Approver');const branch=input.branch||session.branch;branchAccess(session,branch);
