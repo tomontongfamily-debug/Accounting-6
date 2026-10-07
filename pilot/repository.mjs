@@ -6,6 +6,7 @@ import { initialState, ensureCurrentReports, reconcileSources } from './state.mj
 import { runAction } from './service.mjs';
 import { launchStatus } from './launch.mjs';
 import { backupImmutable } from './backup.mjs';
+import { posEnabled, refreshPosEvidence } from './pos-redemptions.mjs';
 
 const fail=(message,status=503)=>Object.assign(new Error(message),{status});
 export const BUCKET='fueltech-pilot-photos';
@@ -49,7 +50,7 @@ async function allRows(query) {
     rows.push(...data);if(data.length<1000)return rows;
   }
 }
-export async function execute(session,envelope,{db=pilotDatabase(),cvClient,attempt=0}={}) {
+export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,attempt=0}={}) {
   if(!['Admin','Approver','Cashier','Manager'].includes(session.role)||(['Cashier','Manager'].includes(session.role)&&session.branch!=='Liloan')) throw fail('This pilot is restricted to Liloan.',403);
   const config=await configuration(db);
   if(config.mode==='disabled') throw fail('The Liloan pilot has not been enabled.',423);
@@ -91,6 +92,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,atte
     const sources=await loadSources(db,cvClient,state.startDate,accountingTiming(new Date().toISOString()).date);
     reconcileSources(state,sources);
   }
+  await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
   const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:async(path,image)=>{
     const uploaded=await db.storage.from(BUCKET).upload(path,image,{contentType:'image/jpeg',upsert:false});
     if(uploaded.error) {
@@ -107,7 +109,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,atte
     const conflict=['PT409','40001'].includes(saved.error?.code);
     if(conflict&&attempt<2) {
       await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
-      return execute(session,envelope,{db,cvClient,attempt:attempt+1});
+      return execute(session,envelope,{db,cvClient,posRead,posEnv,attempt:attempt+1});
     }
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
     if(saved.error) throw fail(conflict?'Another device saved first. Refresh and retry.':'The save could not be verified. Retry with the same request.',conflict?409:503);
