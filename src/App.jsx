@@ -471,15 +471,15 @@ function fuelTechPayTotal(deductions = {}) {
 
 function pointsWithdrawnFromRedemptions(report = {}) {
   const deductions = report.deductions || {};
-  return n(deductions.cashRedemption) + n(deductions.fuelRedemption);
+  return n(deductions.posRedemption) + n(deductions.cashRedemption) + n(deductions.fuelRedemption);
 }
 
 function deductionLabel(key) {
-  return humanizeKey(key);
+  return key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
-  return Object.entries(deductions).filter(([key]) => !HIDDEN_DEDUCTION_KEYS.has(key) && !REMOVED_DEDUCTION_KEYS.has(key));
+  return Object.entries(deductions).filter(([key]) => !HIDDEN_DEDUCTION_KEYS.has(key) && !REMOVED_DEDUCTION_KEYS.has(key) && !(Object.hasOwn(deductions, "posRedemption") && ["cashRedemption", "fuelRedemption"].includes(key)));
 }
 
 function countedDeductionEntries(deductions = {}) {
@@ -1809,13 +1809,13 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
     excelRow([excelCell("BRANCH", "Header"), excelCell("DATE", "Header"), excelCell("SHIFT", "Header"), excelCell("TOTAL DEDUCTIONS", "Header", 9)]),
     excelRow([
       excelCell("", "SubHeader"), excelCell("", "SubHeader"), excelCell("", "SubHeader"),
-      ...["FUELTECH PAY TOTAL", "PO", "CASH VOUCHER", "CASH REDEEM", "FUEL REDEEM", "COKE RELEASE", "POINTS ISSUED", "POINTS WITHDRAWN"].map((label) => excelCell(label, "SubHeader")),
+      ...["FUELTECH PAY TOTAL", "PO", "CASH VOUCHER", "CASH / POS MONETARY REDEEM", "FUEL REDEEM", "COKE RELEASE", "POINTS ISSUED", "POINTS WITHDRAWN"].map((label) => excelCell(label, "SubHeader")),
     ]),
     totalRow("TOTAL", [
       summary.fuelTechPayTotal,
       summary.poTotal,
       summary.purchaseTotal,
-      exportReports.reduce((sum, report) => sum + n(report.deductions?.cashRedemption), 0),
+      exportReports.reduce((sum, report) => sum + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)), 0),
       exportReports.reduce((sum, report) => sum + n(report.deductions?.fuelRedemption), 0),
       summary.cokeSold,
       summary.pointsIssued,
@@ -1827,7 +1827,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
         excelCell(report.branch, "Text"), excelCell(report.date, "Text"), excelCell(shortShiftLabel(report.shiftId), "Text"),
         excelCell(fuelTechPayTotal(report.deductions)),
         excelCell(result.poTotal), excelCell(result.purchaseTotal),
-        excelCell(n(report.deductions?.cashRedemption)), excelCell(n(report.deductions?.fuelRedemption)), excelCell(result.cokeSold),
+        excelCell((n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption))), excelCell(n(report.deductions?.fuelRedemption)), excelCell(result.cokeSold),
         excelCell(result.pointsIssued), excelCell(result.pointsWithdrawn),
       ]);
     }),
@@ -1873,7 +1873,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
   const systemRows = [
     sheetTitle("SYSTEM REPORT", 16),
     excelRow([
-      ...["BRANCH", "DATE", "SHIFT", "TOTAL SALES IN LITERS", "FUEL SALES", "OIL SALES", "GROSS SALES", "TOTAL FUEL REDEMPTION", "TOTAL CASH REDEMPTION", "TOTAL COKE REDEMPTION", "POINTS ISSUED", "POINTS WITHDRAWN", "TOTAL REDEMPTION", "BANK DEPOSIT", "EXPECTED CASH", "SYSTEM VARIANCE"].map((label) => excelCell(label, "Header")),
+      ...["BRANCH", "DATE", "SHIFT", "TOTAL SALES IN LITERS", "FUEL SALES", "OIL SALES", "GROSS SALES", "TOTAL FUEL REDEMPTION", "TOTAL CASH / POS MONETARY REDEMPTION", "TOTAL COKE REDEMPTION", "POINTS ISSUED", "POINTS WITHDRAWN", "TOTAL REDEMPTION", "BANK DEPOSIT", "EXPECTED CASH", "SYSTEM VARIANCE"].map((label) => excelCell(label, "Header")),
     ]),
     totalRow("TOTAL", [
       "", "",
@@ -1882,7 +1882,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
       summary.oilSales,
       summary.grossSales,
       exportReports.reduce((sum, report) => sum + n(report.deductions?.fuelRedemption), 0),
-      exportReports.reduce((sum, report) => sum + n(report.deductions?.cashRedemption), 0),
+      exportReports.reduce((sum, report) => sum + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)), 0),
       summary.cokeSold,
       summary.pointsIssued,
       summary.pointsWithdrawn,
@@ -1893,11 +1893,11 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
     ], 16),
     ...exportReports.map((report) => {
       const result = compute(report);
-      const totalRedemption = n(report.deductions?.fuelRedemption) + n(report.deductions?.cashRedemption) + result.cokeSold;
+      const totalRedemption = n(report.deductions?.fuelRedemption) + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)) + result.cokeSold;
       return excelRow([
         excelCell(report.branch, "Text"), excelCell(report.date, "Text"), excelCell(shortShiftLabel(report.shiftId), "Text"),
         excelCell(result.totalLiters), excelCell(result.fuelSales), excelCell(n(report.oilSales)), excelCell(result.grossSales),
-        excelCell(n(report.deductions?.fuelRedemption)), excelCell(n(report.deductions?.cashRedemption)), excelCell(result.cokeSold),
+        excelCell(n(report.deductions?.fuelRedemption)), excelCell((n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption))), excelCell(result.cokeSold),
         excelCell(result.pointsIssued), excelCell(result.pointsWithdrawn),
         excelCell(totalRedemption), excelCell(result.bankDeposit), excelCell(result.expectedCash), excelCell(result.cashVariance, "RedValue"),
       ]);
@@ -4652,13 +4652,13 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
               onChange={(next) => patchReport(["fuelTechPayTotal"], next)}
             />
           </Field>
-          {visibleDeductionEntries(report.deductions).map(([key, value]) => (
-            <Field key={key} label={deductionLabel(key)}><NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} /></Field>
+          {visibleDeductionEntries(report.deductions).filter(([key]) => !report.posRedemptions?.automatic || !["cashRedemption", "fuelRedemption"].includes(key)).map(([key, value]) => (
+            <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} />}</Field>
           ))}
-          <Field label="Points Issued"><NumberInput ghostZero value={report.pointsIssued} onChange={(value) => patchReport(["root", "pointsIssued"], value)} /></Field>
+          <Field label="Points Issued">{report.posRedemptions?.automatic ? <b className="read-only-value">{report.posRedemptions.pointsStatus === "verified" ? peso(report.pointsIssued) : "Needs POS review"}</b> : <NumberInput ghostZero value={report.pointsIssued} onChange={(value) => patchReport(["root", "pointsIssued"], value)} />}</Field>
           <Field label="Points Withdrawn">
             <b className="read-only-value">{peso(pointsWithdrawnFromRedemptions(report))}</b>
-            <small>Cash Redemption + Fuel Redemption</small>
+            <small>{report.posRedemptions?.automatic ? "Automatic POS monetary redemption" : "Cash Redemption + Fuel Redemption"}</small>
           </Field>
         </div>
       </Section>
@@ -5942,7 +5942,7 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
     fuelTechPay: trend((item) => fuelTechPayTotal(item.deductions)),
     po: trend((item) => compute(item).poTotal),
     fuelRedemption: trend((item) => n(item.deductions?.fuelRedemption)),
-    cashRedemption: trend((item) => n(item.deductions?.cashRedemption)),
+    cashRedemption: trend((item) => (n(item.deductions?.cashRedemption) + n(item.deductions?.posRedemption))),
     coke: trend((item) => compute(item).cokeSold),
     points: trend((item) => compute(item).pointsIssued),
     cashVouchers: trend((item) => compute(item).purchaseTotal),
@@ -5974,7 +5974,7 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
     };
   }), [branches.join("|"), priceBook, range.end]);
   const fuelRedemption = reports.reduce((sum, item) => sum + n(item.deductions?.fuelRedemption), 0);
-  const cashRedemption = reports.reduce((sum, item) => sum + n(item.deductions?.cashRedemption), 0);
+  const cashRedemption = reports.reduce((sum, item) => sum + (n(item.deductions?.cashRedemption) + n(item.deductions?.posRedemption)), 0);
   const rangeLabel = range.start === range.end ? range.start : `${range.start} to ${range.end}`;
 
   function selectView(view) {
@@ -6104,7 +6104,7 @@ function AdminMobilePerformance({ logout, sessionToken, lastRefreshedAt, priceBo
         <PerformanceMetric index={3} title="Total FuelTech Pay" value={peso(summary.fuelTechPayTotal)} rows={trends.fuelTechPay} />
         <PerformanceMetric index={4} title="Total PO" value={peso(summary.poTotal)} rows={trends.po} />
         <PerformanceMetric index={5} title="Fuel Redemption" value={peso(fuelRedemption)} rows={trends.fuelRedemption} />
-        <PerformanceMetric index={6} title="Cash Redemption" value={peso(cashRedemption)} rows={trends.cashRedemption} />
+        <PerformanceMetric index={6} title="Cash / POS Redemption" value={peso(cashRedemption)} rows={trends.cashRedemption} />
         <PerformanceMetric index={7} title="Coke Used" value={`${new Intl.NumberFormat("en-PH", { maximumFractionDigits: 2 }).format(summary.cokeSold)} pcs`} rows={trends.coke} />
         <PerformanceMetric index={8} title="System Points" value={new Intl.NumberFormat("en-PH", { maximumFractionDigits: 2 }).format(summary.pointsIssued)} rows={trends.points} />
         <PerformanceMetric index={9} title="Cash Vouchers" value={peso(summary.purchaseTotal)} rows={trends.cashVouchers} />
@@ -6512,7 +6512,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
       fuelTechPay: trend((item) => fuelTechPayTotal(item.deductions)),
       po: trend((item) => compute(item).poTotal),
       fuelRedemption: trend((item) => n(item.deductions?.fuelRedemption)),
-      cashRedemption: trend((item) => n(item.deductions?.cashRedemption)),
+      cashRedemption: trend((item) => (n(item.deductions?.cashRedemption) + n(item.deductions?.posRedemption))),
       coke: trend((item) => compute(item).cokeSold),
       points: trend((item) => compute(item).pointsIssued),
       cashVouchers: trend((item) => compute(item).purchaseTotal),
@@ -6533,7 +6533,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
     }, 0);
   }, [allReports, performanceBranch, performanceRange.end, priceBook]);
   const performanceFuelRedemption = performanceReports.reduce((sum, item) => sum + n(item.deductions?.fuelRedemption), 0);
-  const performanceCashRedemption = performanceReports.reduce((sum, item) => sum + n(item.deductions?.cashRedemption), 0);
+  const performanceCashRedemption = performanceReports.reduce((sum, item) => sum + (n(item.deductions?.cashRedemption) + n(item.deductions?.posRedemption)), 0);
   async function testLatestBackupRestore() {
     setRestoreTest({ loading: true, result: null, error: "" });
     try {
@@ -7123,7 +7123,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
           <PerformanceMetric index={3} title="Total FuelTech Pay" value={peso(performanceSummary.fuelTechPayTotal)} rows={performanceMetricTrends.fuelTechPay} />
           <PerformanceMetric index={4} title="Total PO" value={peso(performanceSummary.poTotal)} rows={performanceMetricTrends.po} />
           <PerformanceMetric index={5} title="Fuel Redemption" value={peso(performanceFuelRedemption)} rows={performanceMetricTrends.fuelRedemption} />
-          <PerformanceMetric index={6} title="Cash Redemption" value={peso(performanceCashRedemption)} rows={performanceMetricTrends.cashRedemption} />
+          <PerformanceMetric index={6} title="Cash / POS Redemption" value={peso(performanceCashRedemption)} rows={performanceMetricTrends.cashRedemption} />
           <PerformanceMetric index={7} title="Coke Used" value={`${new Intl.NumberFormat("en-PH", { maximumFractionDigits: 2 }).format(performanceSummary.cokeSold)} pcs`} rows={performanceMetricTrends.coke} />
           <PerformanceMetric index={8} title="Points Issued" value={new Intl.NumberFormat("en-PH", { maximumFractionDigits: 2 }).format(performanceSummary.pointsIssued)} rows={performanceMetricTrends.points} />
           <PerformanceMetric index={9} title="Total Cash Vouchers" value={peso(performanceSummary.purchaseTotal)} rows={performanceMetricTrends.cashVouchers} />

@@ -25,3 +25,9 @@ test("manager confirmation uses the selected historical date and shift", () => {
   assert.match(confirmation, /pricingShiftId/);
   assert.doesNotMatch(confirmation, /activeDate|activeShiftId|saveReport/);
 });
+test('Submitted Liloan prices survive later daily updates; draft and other-station prices still sync',()=>{
+ const report={branch:'Liloan',confirmed:true,prices:{Diesel:104.95},pumpRows:[{closing:123}]},pricing={prices:{Diesel:99.20},pricingEffectiveDate:'2026-10-06'};
+ assert.deepEqual(applyEffectivePricing(report,pricing),report);
+ assert.equal(applyEffectivePricing({...report,confirmed:false},pricing).prices.Diesel,99.20);
+ assert.equal(applyEffectivePricing({...report,branch:'Mabolo'},pricing).prices.Diesel,99.20);
+});

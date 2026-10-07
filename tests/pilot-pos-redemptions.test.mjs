@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { compute } from '../src/accounting-engine.js';
 import { posRedemptionComparison } from '../src/pos-redemptions.js';
-import { posConnectionOptions, posEnabled, readPosRedemptions, normalizePosRedemptions, refreshPosEvidence, refreshPosReport, POS_PERMISSION_QUERY, POS_ROWS_QUERY } from '../pilot/pos-redemptions.mjs';
+import { posConnectionOptions, posEnabled, readPosRedemptions, normalizePosRedemptions, normalizePosPoints, refreshPosEvidence, refreshPosReport, POS_PERMISSION_QUERY, POS_ROWS_QUERY, POS_POINTS_QUERY } from '../pilot/pos-redemptions.mjs';
 import { execute } from '../pilot/repository.mjs';
 import { runAction } from '../pilot/service.mjs';
 import { fixture } from './pilot-fixture.mjs';
@@ -30,17 +30,18 @@ test('Monetary total includes both cash/fuel while Coke remains a separate CV re
   const rows=normalize([row('2026-09-23T05:00:00+08:00',515),row('2026-09-23T05:01:00+08:00',140,'Coke',2)]);
   const r=refreshPosReport(report,{startDate:report.date,status:'verified',rows,verifiedAt:new Date().toISOString()});
   assert.equal(r.posRedemptions.cashTotal,515);assert.equal(r.posRedemptions.cokeTotal,140);assert.equal(r.posRedemptions.cokeQuantity,2);
-  assert.equal(posRedemptionComparison(r).difference,0);assert.deepEqual(r.deductions,report.deductions);
+  assert.equal(posRedemptionComparison(r).difference,0);assert.equal(r.deductions.posRedemption,515);assert.equal(r.deductions.cashRedemption+r.deductions.fuelRedemption,0);assert.equal(compute(r).expectedCash,compute(report).expectedCash);
 });
-test('Submitted cash, deductions, photos, prices and balances survive refreshes and removed POS records',async()=>{
+test('Submitted shifts adjust once with original history and retain cash, photos, prices and posted balances',async()=>{
   const {state,key}=fixture();state.reports[key].confirmed=true;state.reports[key].actualCashCounted=500;
   const before=compute(state.reports[key]);const original=structuredClone(state.reports[key]);
   const rows=normalize([row('2026-09-23T05:00:00+08:00',1748)]);
-  for(let i=0;i<2;i++)await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>rows});
-  const r=state.reports[key];assert.equal(r.posRedemptions.cashTotal,1748);assert.ok(r.checkDetails.some(i=>i.source==='FuelTech POS'));
-  for(const field of ['actualCashCounted','deductions','prices','pumpRows','cashDenominations'])assert.deepEqual(r[field],original[field]);
-  assert.deepEqual(compute(r),before);assert.equal(state.audit.filter(a=>a.action==='pos-redemptions-read').length,1);
-  await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>[]});assert.equal(state.reports[key].posRedemptions.cashTotal,0);assert.equal(state.reports[key].checkDetails.filter(i=>i.source==='FuelTech POS').length,0);assert.deepEqual(compute(state.reports[key]),before);
+  for(let i=0;i<2;i++)await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows,points:[]})});
+  const r=state.reports[key];assert.equal(r.deductions.posRedemption,1748);
+  for(const field of ['actualCashCounted','prices','pumpRows','cashDenominations','deposits'])assert.deepEqual(r[field],original[field]);
+  assert.equal(compute(r).expectedCash,before.expectedCash-1748);assert.equal(compute(r).cashVariance,before.cashVariance+1748);assert.deepEqual(r.posAutomaticAdjustment.original.deductions,original.deductions);
+  assert.equal(state.audit.filter(a=>a.action==='pos-redemptions-read').length,1);assert.equal(state.audit.filter(a=>a.action==='pos-shift-reconciled'&&a.reportKey===key).length,1);
+  await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:[],points:[]})});assert.equal(state.reports[key].deductions.posRedemption,0);assert.equal(state.reports[key].checkDetails.filter(i=>i.source==='FuelTech POS').length,0);assert.deepEqual(compute(state.reports[key]),before);
 });
 test('Unavailable reads retain last copy and cannot masquerade as zero; recovery replaces it',async()=>{
   const {state,key}=fixture();const rows=normalize([row('2026-09-23T05:00:00+08:00',1461)]);
@@ -63,7 +64,7 @@ test('All pages share one read-only snapshot and fixed parameterized queries',as
   const calls=[];const first=Array.from({length:1000},()=>row('2026-09-23T05:00:00+08:00'));let pages=0,ended=false;
   const c={async connect(){},async end(){ended=true;},async query(sql,params){calls.push({sql,params});if(sql===POS_PERMISSION_QUERY)return {rows:[permissions]};if(sql===POS_ROWS_QUERY)return {rows:pages++?[]:first};return {rows:[]};}};
   const rows=await readPosRedemptions('2026-09-23','2026-09-24',{env,clientFactory:()=>c});
-  assert.equal(rows.length,1000);assert.equal(calls[0].sql,'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');assert.equal(calls.at(-1).sql,'COMMIT');assert.ok(ended);
+  assert.equal(rows.rows.length,1000);assert.deepEqual(rows.points,[]);assert.equal(calls[0].sql,'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');assert.equal(calls.at(-1).sql,'COMMIT');assert.ok(ended);assert.ok(calls.some(c=>c.sql===POS_POINTS_QUERY));
   const queries=calls.filter(c=>c.sql===POS_ROWS_QUERY);assert.equal(queries.length,2);assert.deepEqual(queries[0].params,['YTL','2026-09-23T04:00:00+08:00','2026-09-25T04:00:00+08:00',null,1000]);assert.equal(queries[1].params[3],first.at(-1).WithdrawalId);
 });
 test('An accidental privilege expansion stops the read and closes the connection',async()=>{
@@ -89,13 +90,37 @@ test('Liloan reader policy isolates rows and columns and denies business writes 
 test('Live repository refresh commits evidence only to Accounting and throttles subsequent reads',async()=>{
   const {state,key,cashier}=fixture();state.mode='live';ensureCurrentReports(state);ensureCurrentReports(state);let saved=structuredClone(state),reads=0,commits=0;
   const db={from(table){const result={data:table==='fueltech_pilot_config'?{mode:'live',start_date:state.startDate}:table==='fueltech_pilot_state'?{revision:1,data:structuredClone(saved)}:null,error:null};const query=new Proxy({},{get:(_t,k)=>k==='then'?(resolve=>resolve(result)):()=>query});return query;},async rpc(name,p){assert.equal(name,'fueltech_pilot_commit');commits++;saved=p.p_data;return {data:{ok:true}};}};
-  const options={db,posEnv:{FUELTECH_POS_REDEMPTIONS_ENABLED:'true'},posRead:async()=>{reads++;return normalize([row('2026-09-23T05:00:00+08:00',1748)]);}};
+  const options={db,posEnv:{FUELTECH_POS_REDEMPTIONS_ENABLED:'true'},posRead:async()=>{reads++;return {rows:normalize([row('2026-09-23T05:00:00+08:00',1748)]),points:[]};}};
   for(let i=0;i<2;i++)await execute(cashier,{route:'/api/store/load',mode:'live',startDate:state.startDate,mutationId:randomUUID()},options);
-  assert.equal(reads,1);assert.equal(commits,1);assert.equal(saved.reports[key].posRedemptions.cashTotal,1748);assert.deepEqual(saved.reports[key].deductions,state.reports[key].deductions);
+  assert.equal(reads,1);assert.equal(commits,1);assert.equal(saved.reports[key].posRedemptions.cashTotal,1748);assert.equal(saved.reports[key].deductions.posRedemption,1748);
 });
 test('A cashier cannot replace server POS evidence with a forged draft copy',async()=>{
   const {state,key,cashier}=fixture();await refreshPosEvidence(state,{enabled:true,read:async()=>normalize([row('2026-09-23T05:00:00+08:00',1748)])});
-  const report=structuredClone(state.reports[key]);report.posRedemptions.cashTotal=0;report.deductions.cashRedemption=100;report.deductions.fuelRedemption=1648;
+  const report=structuredClone(state.reports[key]);report.posRedemptions.cashTotal=0;report.deductions.cashRedemption=100;report.deductions.fuelRedemption=1648;report.deductions.posRedemption=0;report.pointsIssued=999999;
   const result=await runAction(state,cashier,'/api/reports/save',{report,operation:'save'});
-  assert.equal(result.state.reports[key].posRedemptions.cashTotal,1748);assert.equal(posRedemptionComparison(result.state.reports[key]).difference,0);
+  assert.equal(result.state.reports[key].posRedemptions.cashTotal,1748);assert.equal(posRedemptionComparison(result.state.reports[key]).difference,0);assert.equal(result.state.reports[key].deductions.cashRedemption,0);assert.equal(result.state.reports[key].pointsIssued,0);
+});
+test('Customer points use issued Discount, exclude voids and flag invalid or ambiguous source rows',()=>{
+ const point=(patch={})=>({TransactionId:randomUUID(),TransactionDate:'2026-09-23T05:00:00+08:00',OrgCode:'YTL',Discount:6.75,Liter:2.25,void_matches:0,tuple_matches:1,...patch});
+ const normal=point(),voided=point({void_matches:1,Discount:123659586192738,Liter:41219862064246}),invalid=point({Discount:123659586174972,Liter:41219862058324}),ambiguous=point({void_matches:1,tuple_matches:2});
+ const points=normalizePosPoints([normal,normal,voided,invalid,ambiguous],'2026-09-23','2026-09-24');assert.equal(points.length,4);assert.equal(points.filter(r=>r.issue).length,2);assert.equal(points.find(r=>r.id===voided.TransactionId).points,null);
+ const {report}=fixture();report.pointsIssued=50;
+ let next=refreshPosReport(report,{startDate:report.date,status:'verified',verifiedAt:new Date().toISOString(),rows:[],points});assert.equal(next.pointsIssued,50);assert.equal(next.posRedemptions.pointsStatus,'needs-review');assert.ok(next.integrationIssues.some(i=>i.source==='FuelTech POS'));
+ next=refreshPosReport(report,{startDate:report.date,status:'verified',verifiedAt:new Date().toISOString(),rows:[],points:points.filter(r=>!r.issue)});assert.equal(next.pointsIssued,6.75);assert.equal(next.posRedemptions.voidedCount,1);assert.equal(compute(next).expectedCash,compute(report).expectedCash);
+});
+test('Historical submitted shifts adjust, baselines and other stations remain untouched',async()=>{
+ const {state}=fixture();const historical=Object.values(state.reports)[0],key=Object.keys(state.reports)[0];let from;
+ await refreshPosEvidence(state,{enabled:true,force:true,read:async start=>{from=start;return {rows:[{id:randomUUID(),date:historical.date,shiftId:historical.shiftId,type:'Cash',amount:25,quantity:0}],points:[]};}});
+ assert.equal(from,historical.date);assert.equal(state.reports[key].deductions.posRedemption,25);
+ assert.deepEqual(refreshPosReport({...historical,branch:'Mabolo'},state.posRedemptionSync),{...historical,branch:'Mabolo'});
+ assert.deepEqual(refreshPosReport({...historical,baselineReport:true},state.posRedemptionSync),{...historical,baselineReport:true});
+});
+test('Unverified initial read blocks cash-check and submission without accepting a false zero',async()=>{
+ const {state,key,cashier}=fixture();await refreshPosEvidence(state,{enabled:true,read:async()=>{throw Error('offline');}});const report=state.reports[key];assert.equal(Object.hasOwn(report.deductions,'posRedemption'),false);
+ await assert.rejects(runAction(state,cashier,'/api/demo/cash-check',{report}),/Verify automatic POS/);
+ await assert.rejects(runAction(state,cashier,'/api/reports/save',{report,operation:'submit'}),/Verify automatic POS/);
+});
+test('Fractional earned points round only the shift total; points never deduct cash',()=>{
+ const {report}=fixture();const points=normalizePosPoints([0.004,0.004,6.870019629435].map(Discount=>({TransactionId:randomUUID(),TransactionDate:'2026-09-23T05:00:00+08:00',OrgCode:'YTL',Discount,Liter:1,void_matches:0,tuple_matches:1})),report.date,report.date);
+ const next=refreshPosReport(report,{startDate:report.date,status:'verified',verifiedAt:new Date().toISOString(),rows:[],points});assert.equal(next.pointsIssued,6.88);assert.equal(compute(next).expectedCash,compute(report).expectedCash);
 });
