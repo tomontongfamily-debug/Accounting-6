@@ -112,4 +112,21 @@ export function reconcileSources(state,incoming) {
     report.checkCategories=[...new Set(report.checkDetails.map(i=>i.category))];report.checkRequired=!!report.checkDetails.length;
     state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-shift-reconciled',role:'System',branch:'Liloan',reportKey:keyOf(report),before,after,beforeExpectedCash,afterExpectedCash:compute(report).expectedCash,assignment:'CV creation time; Pay paid time; PO transaction time'});
   }
+  // Persist review evidence with the canonical report as well as pilot state.
+  // Admin's general report endpoint cannot see state-only source alerts.
+  for(const report of Object.values(state.reports)) {
+    if(report.date<state.startDate||report.baselineReport)continue;
+    const issues=[...(report.integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
+      ...state.sourceAlerts.filter(a=>a.reportKey===keyOf(report)).map(a=>({...a,source:'Source reconciliation'}))];
+    if(isDeepStrictEqual(report.integrationIssues||[],issues))continue;
+    report.integrationIssues=issues;
+    if(report.confirmed) {
+      report.checkDetails=reportIssues(report,compute(report).cashVariance);
+      report.checkCategories=[...new Set(report.checkDetails.map(i=>i.category))];report.checkRequired=!!report.checkDetails.length;
+    }
+    report.pilotRevision=Number(report.pilotRevision||0)+1;
+    report.pilotLastNonReadingRevision=report.pilotRevision;
+    report.serverMeta={...report.serverMeta,savedAt:new Date().toISOString()};
+    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-review-status-changed',role:'System',branch:'Liloan',reportKey:keyOf(report),issues});
+  }
 }

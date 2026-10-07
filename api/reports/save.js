@@ -8,6 +8,7 @@ import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.
 import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 import { saveLivePilotCorrection } from "../../pilot/repository.mjs";
 import { validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
+import { midShiftReadingIssues } from "../../src/mid-shift-price-change.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -95,6 +96,8 @@ function validateOpeningReadings(report) {
 }
 
 export function validateSubmission(report) {
+  const priceReadingIssues = midShiftReadingIssues({...report, confirmed: true});
+  if (priceReadingIssues.length) return priceReadingIssues[0];
   if (!String(report.cashierName || "").trim()) return "Cashier name is required.";
   if (!Array.isArray(report.pumpRows) || report.pumpRows.length === 0) return "Pump readings are required.";
   for (const row of report.pumpRows) {

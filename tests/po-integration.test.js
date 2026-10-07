@@ -11,7 +11,7 @@ test("historical PO rows remain unchanged before the integration date", async ()
 
 test("new reports receive posted PO transactions only", async () => {
   const query = {
-    select() { return this; }, eq() { return this; }, order: async () => ({ data: [{ id: "tx-1", transaction_number: "FTPO-1", customer_name: "ABC", vehicle_name: "Truck", plate_number: "ABC-123", driver_name: "Juan", fuel_type: "Diesel", liters: 10, amount: 500, email_status: "SENT", transaction_at: "2026-08-19T01:00:00Z" }], error: null }),
+    select() { return this; }, eq() { return this; }, order() { return this; }, range: async () => ({ data: [{ id: "tx-1", transaction_number: "FTPO-1", customer_name: "ABC", vehicle_name: "Truck", plate_number: "ABC-123", driver_name: "Juan", fuel_type: "Diesel", liters: 10, amount: 500, email_status: "SENT", transaction_at: "2026-08-19T01:00:00Z" }], error: null }),
   };
   const supabase = { from: () => query };
   const rows = await authoritativePoRowsForReport(supabase, { branch: "Liloan", date: "2026-08-19", shiftId: "shift-1", poRows: [{ id: "manual", amount: 999 }] });

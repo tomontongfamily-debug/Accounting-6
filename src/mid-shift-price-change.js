@@ -7,6 +7,28 @@ export function midShiftReadingValue(change, row) {
   return readings[midShiftPumpKey(row)] ?? readings[row.id] ?? "";
 }
 
+// Meter totals must move forward as prices change, including across midnight.
+export function midShiftReadingIssues(report) {
+  const issues = [];
+  const order = change => {
+    const [hours, minutes] = String(change.effectiveTime || '').split(':').map(Number);
+    const value = hours * 60 + minutes;
+    return report.shiftId === 'shift-3' && value < 240 ? value + 1440 : value;
+  };
+  for (const row of report.pumpRows || []) {
+    let previous = Number(row.opening);
+    const changes = (report.midShiftPriceChanges || []).filter(c => c.product === row.product).sort((a, b) => order(a) - order(b));
+    for (const change of changes) {
+      const raw = midShiftReadingValue(change, row), reading = Number(raw);
+      if (raw === '' || raw == null || !Number.isFinite(reading) || reading < previous
+          || ((row.closingEntered || report.confirmed) && reading > Number(row.closing))) {
+        issues.push(`${row.pump} ${row.nozzle}: price-change readings must increase from opening to closing in time order.`);
+      } else previous = reading;
+    }
+  }
+  return [...new Set(issues)];
+}
+
 function sellingPrices(prices = {}) {
   return {
     Premium: prices.Premium ?? 0,
