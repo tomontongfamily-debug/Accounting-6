@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { compute } from '../src/accounting-engine.js';
 import { posRedemptionComparison } from '../src/pos-redemptions.js';
-import { posConnectionOptions, posEnabled, readPosRedemptions, normalizePosRedemptions, normalizePosPoints, refreshPosEvidence, refreshPosReport, POS_PERMISSION_QUERY, POS_ROWS_QUERY, POS_POINTS_QUERY } from '../pilot/pos-redemptions.mjs';
+import { posConnectionOptions, posEnabled, readPosRedemptions, normalizePosRedemptions, normalizePosPoints, refreshPosEvidence, refreshPosReport, attachPosVoids, POS_PERMISSION_QUERY, POS_ROWS_QUERY, POS_POINTS_QUERY, POS_VOIDS_QUERY } from '../pilot/pos-redemptions.mjs';
 import { execute } from '../pilot/repository.mjs';
 import { runAction } from '../pilot/service.mjs';
 import { fixture } from './pilot-fixture.mjs';
@@ -64,7 +64,7 @@ test('All pages share one read-only snapshot and fixed parameterized queries',as
   const calls=[];const first=Array.from({length:1000},()=>row('2026-09-23T05:00:00+08:00'));let pages=0,ended=false;
   const c={async connect(){},async end(){ended=true;},async query(sql,params){calls.push({sql,params});if(sql===POS_PERMISSION_QUERY)return {rows:[permissions]};if(sql===POS_ROWS_QUERY)return {rows:pages++?[]:first};return {rows:[]};}};
   const rows=await readPosRedemptions('2026-09-23','2026-09-24',{env,clientFactory:()=>c});
-  assert.equal(rows.rows.length,1000);assert.deepEqual(rows.points,[]);assert.equal(calls[0].sql,'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');assert.equal(calls.at(-1).sql,'COMMIT');assert.ok(ended);assert.ok(calls.some(c=>c.sql===POS_POINTS_QUERY));
+  assert.equal(rows.rows.length,1000);assert.deepEqual(rows.points,[]);assert.equal(calls[0].sql,'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');assert.equal(calls.at(-1).sql,'COMMIT');assert.ok(ended);assert.ok(calls.some(c=>c.sql===POS_POINTS_QUERY));assert.ok(calls.some(c=>c.sql===POS_VOIDS_QUERY));
   const queries=calls.filter(c=>c.sql===POS_ROWS_QUERY);assert.equal(queries.length,2);assert.deepEqual(queries[0].params,['YTL','2026-09-23T04:00:00+08:00','2026-09-25T04:00:00+08:00',null,1000]);assert.equal(queries[1].params[3],first.at(-1).WithdrawalId);
 });
 test('An accidental privilege expansion stops the read and closes the connection',async()=>{
@@ -123,4 +123,9 @@ test('Unverified initial read blocks cash-check and submission without accepting
 test('Fractional earned points round only the shift total; points never deduct cash',()=>{
  const {report}=fixture();const points=normalizePosPoints([0.004,0.004,6.870019629435].map(Discount=>({TransactionId:randomUUID(),TransactionDate:'2026-09-23T05:00:00+08:00',OrgCode:'YTL',Discount,Liter:1,void_matches:0,tuple_matches:1})),report.date,report.date);
  const next=refreshPosReport(report,{startDate:report.date,status:'verified',verifiedAt:new Date().toISOString(),rows:[],points});assert.equal(next.pointsIssued,6.88);assert.equal(compute(next).expectedCash,compute(report).expectedCash);
+});
+test('Void matching preserves microseconds and decimal equality without excluding distinct transactions',()=>{
+ const point={TransactionId:randomUUID(),OrgCode:'YTL',TransactionDate:'2026-09-23T00:26:33.870374Z',Discount:'42.3900',Liter:'14.13'},other={...point,TransactionId:randomUUID(),TransactionDate:'2026-09-23T00:26:33.870375Z'},voided={...point,Discount:'42.39',Liter:'14.1300'};
+ const rows=attachPosVoids([point,other],[voided]);assert.equal(rows[0].void_matches,1);assert.equal(rows[1].void_matches,0);assert.equal(rows[0].tuple_matches,1);
+ const ambiguous=attachPosVoids([point,{...point,TransactionId:randomUUID()}],[voided]);assert.equal(ambiguous[0].tuple_matches,2);assert.ok(normalizePosPoints(ambiguous,'2026-09-23','2026-09-23').every(r=>r.issue==='Ambiguous voided transaction'));
 });
