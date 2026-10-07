@@ -31,13 +31,26 @@ export const POS_PERMISSION_QUERY=`SELECT current_user AS reader,
 export const POS_ROWS_QUERY=`SELECT "WithdrawalId","WithdrawalDate","Type","CokeQuantity","RedeemedPoints","OrgCode"
  FROM public."Withdrawals" WHERE "OrgCode"=$1 AND "WithdrawalDate">=$2::timestamptz AND "WithdrawalDate"<$3::timestamptz
  AND ($4::uuid IS NULL OR "WithdrawalId">$4::uuid) ORDER BY "WithdrawalId" LIMIT $5`;
-// Approved MultiTransactions already appear in Transactions with different IDs.
-// Voiding leaves the original transaction present; exclude its exact source tuple.
-export const POS_POINTS_QUERY=`SELECT t."TransactionId",t."TransactionDate",t."OrgCode",t."Discount",t."Liter",
- (SELECT count(*) FROM public."VoidedTransactions" v WHERE v."OrgCode"=t."OrgCode" AND v."TransactionDate"=t."TransactionDate" AND v."Discount"=t."Discount" AND v."Liter"=t."Liter") AS void_matches,
- (SELECT count(*) FROM public."Transactions" same WHERE same."OrgCode"=t."OrgCode" AND same."TransactionDate"=t."TransactionDate" AND same."Discount"=t."Discount" AND same."Liter"=t."Liter") AS tuple_matches
+// Preserve microseconds for exact void matching. Fetch once and match in memory,
+// avoiding a repeated POS table scan for every transaction and requiring no new index.
+export const POS_POINTS_QUERY=`SELECT t."TransactionId",to_char(t."TransactionDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "TransactionDate",t."OrgCode",t."Discount",t."Liter"
  FROM public."Transactions" t WHERE t."OrgCode"=$1 AND t."TransactionDate">=$2::timestamptz AND t."TransactionDate"<$3::timestamptz
  AND ($4::uuid IS NULL OR t."TransactionId">$4::uuid) ORDER BY t."TransactionId" LIMIT $5`;
+export const POS_VOIDS_QUERY=`SELECT to_char("TransactionDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "TransactionDate","OrgCode","Discount","Liter"
+ FROM public."VoidedTransactions" WHERE "OrgCode"=$1 AND "TransactionDate">=$2::timestamptz AND "TransactionDate"<$3::timestamptz
+ ORDER BY "TransactionDate","Discount","Liter" LIMIT $4 OFFSET $5`;
+function numericKey(value) {
+  const [whole,fraction='']=String(value).split('.');
+  const integer=whole.replace(/^0+(?=\d)/,''),decimals=fraction.replace(/0+$/,'');
+  return integer+(decimals?'.'+decimals:'');
+}
+const tupleKey=r=>JSON.stringify([r.OrgCode,r.TransactionDate,numericKey(r.Discount),numericKey(r.Liter)]);
+export function attachPosVoids(transactions,voids) {
+  const counts=new Map(),voidCounts=new Map();
+  for(const r of transactions)counts.set(tupleKey(r),(counts.get(tupleKey(r))||0)+1);
+  for(const r of voids)voidCounts.set(tupleKey(r),(voidCounts.get(tupleKey(r))||0)+1);
+  return transactions.map(r=>({...r,tuple_matches:counts.get(tupleKey(r)),void_matches:voidCounts.get(tupleKey(r))||0}));
+}
 export async function readPosRedemptions(startDate,endDate,{env=process.env,clientFactory=options=>new Client(options)}={}) {
   const start=`${dateOffset(startDate,0)}T04:00:00+08:00`, end=`${dateOffset(endDate,1)}T04:00:00+08:00`;
   if(startDate>endDate)throw Error('Invalid POS reporting window.');
@@ -64,7 +77,13 @@ export async function readPosRedemptions(startDate,endDate,{env=process.env,clie
       if(result.rows.length<PAGE_SIZE)break;
       const next=result.rows.at(-1).TransactionId;if(next===cursor)throw Error('POS points pagination did not advance.');cursor=next;
     }
-    const normalized={rows:normalizePosRedemptions(rows,startDate,endDate),points:normalizePosPoints(points,startDate,endDate)};
+    const voids=[];
+    for(let offset=0;;offset+=PAGE_SIZE) {
+      const result=await client.query(POS_VOIDS_QUERY,['YTL',start,end,PAGE_SIZE,offset]);voids.push(...result.rows);
+      if(voids.length>MAX_ROWS)throw Error('POS void window exceeds the verified import limit.');
+      if(result.rows.length<PAGE_SIZE)break;
+    }
+    const normalized={rows:normalizePosRedemptions(rows,startDate,endDate),points:normalizePosPoints(attachPosVoids(points,voids),startDate,endDate)};
     await client.query('COMMIT');
     return normalized;
   } catch(error) {
@@ -122,7 +141,7 @@ export function refreshPosReport(report,sync) {
 export async function refreshPosEvidence(state,{enabled,read=readPosRedemptions,now=new Date().toISOString(),force=false}={}) {
   if(!enabled) {
     if(state.posRedemptionSync&&state.posRedemptionSync.status!=='disabled')state.posRedemptionSync.status='disabled';
-  } else if(force||!state.posRedemptionSync?.attemptedAt||Date.parse(now)-Date.parse(state.posRedemptionSync.attemptedAt)>60000) {
+  } else if(force||(state.posRedemptionSync?.status==='verified'&&!Array.isArray(state.posRedemptionSync.points))||!state.posRedemptionSync?.attemptedAt||Date.parse(now)-Date.parse(state.posRedemptionSync.attemptedAt)>60000) {
     const previous=state.posRedemptionSync;
     try {
       const startDate=Object.values(state.reports).filter(r=>r.branch==='Liloan'&&!r.baselineReport).reduce((d,r)=>r.date<d?r.date:d,state.startDate);
