@@ -136,6 +136,19 @@ export function readingWithVisibleDecimal(symbols,components){
 // its seven physical strokes in the original grayscale image, before a binary
 // threshold loses them. Neighbouring digit spacing defines the cell, never an
 // opening reading, pump identity, filename or expected result.
+const lcdPatterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
+function corroboratedNewStrokes(pattern,original,contrast){
+  const prior=lcdPatterns[Number(original)];
+  if(!prior)return false;
+  const retained=contrast.filter((_,i)=>pattern[i]==='1'&&prior[i]==='1').sort((a,b)=>a-b);
+  if(!retained.length)return false;
+  // A faint reflection must not add a stroke to a clearly recognized digit.
+  // New strokes must have comparable contrast to the strokes both readings
+  // share, rather than merely crossing the absolute noise threshold.
+  const minimum=Math.max(7,retained[Math.floor(retained.length/2)]*.5);
+  return [...pattern].every((on,i)=>on!=='1'||prior[i]==='1'||contrast[i]>=minimum);
+}
+
 export function refineLeadingLcdDigit(symbols,gray,width,height){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   if(digits.length<5)return symbols;
@@ -164,13 +177,12 @@ export function refineLeadingLcdDigit(symbols,gray,width,height){
     }
     return median(samples);
   });
-  const patterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
   // Active strokes need positive local contrast; inactive strokes must really
   // be absent. A damaged or ambiguous pattern leaves OCR unchanged.
   const votes=new Map();
   for(const shift of[-.04,-.02,0,.02,.03,.04]){
     const contrast=contrastAt(shift);
-    const matches=patterns.map((pattern,digit)=>({pattern,digit})).filter(({pattern})=>[...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3));
+    const matches=lcdPatterns.map((pattern,digit)=>({pattern,digit})).filter(({pattern})=>[...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3)&&corroboratedNewStrokes(pattern,digits[0].text,contrast));
     if(matches.length===1)votes.set(matches[0].digit,(votes.get(matches[0].digit)||0)+1);
   }
   if(votes.size!==1||[...votes.values()][0]<2)return symbols;
@@ -181,6 +193,7 @@ export function refineLeadingLcdDigit(symbols,gray,width,height){
 // A seven can be recognized as a narrow one even at high OCR confidence.
 // Verify the top bar and other six strokes in the original image. A top bar
 // seen at only one alignment requires review; a seven is never changed to a one.
+// A weak reflection above a strong one cannot supply the missing top stroke.
 export function refineNarrowLcdDigits(symbols,gray,width,height){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   const body=digits.filter(s=>s.text!=='1');
@@ -210,7 +223,7 @@ export function refineNarrowLcdDigits(symbols,gray,width,height){
         return median(samples);
       });
       for(const [text,pattern]of [['1','0110000'],['7','1110000']]) {
-        if([...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3))votes.set(text,(votes.get(text)||0)+1);
+        if([...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3)&&corroboratedNewStrokes(pattern,symbol.text,contrast))votes.set(text,(votes.get(text)||0)+1);
       }
     }
     if((votes.get('7')||0)>=2)return {...symbol,text:'7',lcdVerified:true};
