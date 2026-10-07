@@ -6,6 +6,7 @@ import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-ch
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
 import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
+import { refreshPosReport } from './pos-redemptions.mjs';
 const stamp=()=>new Date().toISOString();
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
 const reject=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
@@ -38,11 +39,11 @@ function authoritative(r) {
   const reserved=active.some(d=>d.coveredReportKeys.includes(keyOf(r)));
   const remainder=active.filter(d=>d.anchorKey===keyOf(r)&&!consumed.has(d.id)).reduce((sum,d)=>sum+d.carryoverRemaining+Math.max(0,d.unexplainedDifference),0);
   const pilotCashAwaitingDeposit=r.confirmed?money((reserved?0:Number(r.actualCashCounted||0))+remainder):undefined;
-  if(r.confirmed) return {...r,pilotCashAwaitingDeposit};
+  if(r.confirmed) return refreshPosReport({...r,pilotCashAwaitingDeposit},database.posRedemptionSync);
   const purchaseRows=r.confirmed?r.purchaseRows:[...(r.purchaseRows||[]).filter(row=>row.source!=='FuelTech CV'),...automaticCashVouchers(database.cvCashEvents||[],r)];
   const next={...r,purchaseRows,cvImport:{mode:database.mode,source:'FuelTech CV'},pilotCashAwaitingDeposit,prices:{...r.prices,...pricing.prices},poRows:po.transactions.map(t=>({...t,source:'FuelTech Pay'})),onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},deductions:{...r.deductions,gcash:pay.total,card:0,paymaya:0}};
   if(next.cashReviewState && next.reviewedExpectedCash!==compute(next).expectedCash) {next.cashReviewState='';next.recountRequired=false;}
-  return next;
+  return refreshPosReport(next,database.posRedemptionSync);
 }
 function candidate(input,session,readingId) {
   if(!input || !['shift-1','shift-2','shift-3'].includes(input.shiftId)) reject('Invalid report.');
@@ -116,6 +117,7 @@ function assertCorrectionWindow(report) {
   if(report.correctionRequest?.status==='rejected'&&!report.confirmed) reject('This correction was rejected. Request a new admin approval before editing.',423);
 }
 function storeReport(r,session,action) {
+  r=refreshPosReport(r,database.posRedemptionSync);
   if(r.date<database.startDate) reject('Historical reports are read-only in the pilot.',423);
   r.pilot=true; r.pilotRevision=Number(database.reports[keyOf(r)]?.pilotRevision||0)+1;
   const previous=database.reports[keyOf(r)];

@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4318 --strictPort",
     "test": "node --test tests/*.test.js",
-    "lint": "eslint src/deposit-coverage.js src/deposit-coverage.jsx src/totalizer-ocr.js src/totalizer-image.js src/phone-reading-sync.js src/upgrade-components.jsx src/deposit-cards.jsx src/shift-health.jsx src/cash-denominations.jsx src/mobile-pump-capture.jsx src/admin-deposits.jsx src/error-reduction.ts pilot/*.mjs api/pilot/*.js src/pilot-opening.js src/fuel-leak-loss.js src/fuel-leak-loss.jsx src/station-routing.js src/station-entry-gate.jsx api/auth/station-session.js src/store-pages.js src/store-refresh.js src/admin-store-gate.jsx api/_shared/store-page.js api/_shared/pages.js api/store/load.js api/admin/system-health.js",
+    "lint": "eslint src/pos-redemptions.js src/pos-redemptions.jsx src/deposit-coverage.js src/deposit-coverage.jsx src/totalizer-ocr.js src/totalizer-image.js src/phone-reading-sync.js src/upgrade-components.jsx src/deposit-cards.jsx src/shift-health.jsx src/cash-denominations.jsx src/mobile-pump-capture.jsx src/admin-deposits.jsx src/error-reduction.ts pilot/*.mjs api/pilot/*.js src/pilot-opening.js src/fuel-leak-loss.js src/fuel-leak-loss.jsx src/station-routing.js src/station-entry-gate.jsx api/auth/station-session.js src/store-pages.js src/store-refresh.js src/admin-store-gate.jsx api/_shared/store-page.js api/_shared/pages.js api/store/load.js api/admin/system-health.js",
     "typecheck": "tsc --noEmit --strict --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck src/error-reduction.ts",
     "test:demo": "node --test tests/demo-*.test.mjs",
     "dev:phone": "vite --host 0.0.0.0 --port 4317 --strictPort",
@@ -18,6 +18,7 @@
   "dependencies": {
     "@supabase/supabase-js": "2.106.1",
     "@tesseract.js-data/eng": "1.0.0",
+    "pg": "8.23.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tesseract.js": "7.0.0",

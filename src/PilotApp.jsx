@@ -1,4 +1,5 @@
 import {FuelLeakLoss} from './fuel-leak-loss.jsx';
+import { PosRedemptions } from './pos-redemptions.jsx';
 import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
@@ -4755,6 +4756,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
             <small>Cash Redemption + Fuel Redemption</small>
           </Field>
         </div>
+        <PosRedemptions report={report} />
       </Section>
       )}
 
@@ -6981,6 +6983,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
               </section>
             )}
 
+            <PosRedemptions report={selectedAdminReport} />
             <div className="grid three admin-report-products">
               {FUEL_TYPES.map((product) => (
                 <div className="admin-report-product" key={product}>
