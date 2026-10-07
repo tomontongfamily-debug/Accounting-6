@@ -1,3 +1,4 @@
+import { additionalReviewFlags } from './accounting-review.js';
 import {FuelLeakLoss} from './fuel-leak-loss.jsx';
 import { PosRedemptions } from './pos-redemptions.jsx';
 import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
@@ -978,6 +979,7 @@ function pumpRowSales(report, row) {
   sortedMidShiftChanges(report, row.product).forEach((change) => {
     if (!validMidShiftChangeForRow(change, row)) return;
     const changeReading = n(midShiftReadingValue(change, row));
+    if (changeReading < currentReading) return;
     sales += (changeReading - currentReading) * currentPrice;
     currentReading = changeReading;
     currentPrice = Math.max(0, n(change.newPrice));
@@ -1077,17 +1079,16 @@ function compute(report) {
 }
 
 function reportReviewFlags(report, result = compute(report)) {
-  if (report.pilot && report.confirmed && report.checkCategories) return report.checkCategories.map((category) => category.replaceAll("_", " "));
   if (!report.confirmed) return [];
 
-  const flags = [];
+  const flags = additionalReviewFlags(report);
   const hasHighPumpReading = (report.pumpRows || []).some((row) => pumpLitersSold(row) > REVIEW_LITERS_THRESHOLD);
   if (hasHighPumpReading || n(result.totalLiters) > REVIEW_LITERS_THRESHOLD) flags.push("High liters sold");
   const cashVariance = n(result.cashVariance);
   if (cashVariance > REVIEW_CASH_OVERAGE_THRESHOLD || cashVariance < -REVIEW_CASH_VARIANCE_THRESHOLD) {
     flags.push("High cash variance");
   }
-  return flags;
+  return [...new Set(flags)];
 }
 
 function isReportNeedsReview(report, result = compute(report)) {
@@ -2278,6 +2279,7 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
   next.purchaseRows = Array.isArray(next.purchaseRows) ? next.purchaseRows : [];
   next.midShiftPriceChanges = Array.isArray(next.midShiftPriceChanges)
     ? next.midShiftPriceChanges.map((change) => ({
+      ...change,
       id: change.id || uid(),
       product: FUEL_TYPES.includes(change.product) ? change.product : "Premium",
       effectiveTime: change.effectiveTime || "",

@@ -13,16 +13,23 @@ export async function authoritativePoRowsForReport(supabase, report) {
   if (!report?.date || report.date < PO_INTEGRATION_START_DATE) return Array.isArray(report?.poRows) ? report.poRows : [];
   const stationId = STATION_IDS[report.branch];
   if (!stationId) return [];
-  const { data, error } = await supabase
-    .from("po_transactions")
-    .select("id,transaction_number,customer_name,vehicle_name,plate_number,driver_name,fuel_type,liters,amount,email_status,transaction_at")
-    .eq("station_id", stationId)
-    .eq("business_date", report.date)
-    .eq("shift_id", report.shiftId)
-    .eq("status", "POSTED")
-    .order("transaction_at", { ascending: true });
-  if (error) throw error;
-  return (data || []).map(toAccountingPoRow);
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("po_transactions")
+      .select("id,transaction_number,customer_name,vehicle_name,plate_number,driver_name,fuel_type,liters,amount,email_status,transaction_at")
+      .eq("station_id", stationId)
+      .eq("business_date", report.date)
+      .eq("shift_id", report.shiftId)
+      .eq("status", "POSTED")
+      .order("transaction_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows.map(toAccountingPoRow);
 }
 
 export async function attachAuthoritativePoRows(supabase, reportRows, allowedBranch = "") {
@@ -42,6 +49,7 @@ export async function attachAuthoritativePoRows(supabase, reportRows, allowedBra
       .lte("business_date", to)
       .eq("status", "POSTED")
       .order("transaction_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(offset, offset + 999);
     if (error) throw error;
     transactions.push(...(data || []));

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
 import { CASH_DENOMINATIONS, amount, automaticCashVouchers, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
-import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
+import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues } from '../src/mid-shift-price-change.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -138,7 +138,7 @@ function coverage(branch,date) {
 function exposeReport(report,session) {
   const r=structuredClone(authoritative(report));
   const sourceIssues=(database.sourceAlerts||[]).filter(a=>a.reportKey===keyOf(r));
-  if(sourceIssues.length) r.checkDetails=[...(r.checkDetails||[]),...sourceIssues];
+  if(sourceIssues.length) r.checkDetails=[...(r.checkDetails||[]),...sourceIssues.filter(a=>!(r.checkDetails||[]).some(i=>i.id===a.id))];
   if(r.date>=database.startDate) r.pilot=true;
   if(r.confirmed) {
     r.checkDetails=(r.checkDetails||[]).filter(i=>!['BANK_DEPOSIT','BANK_VERIFIER'].includes(i.category));
@@ -166,6 +166,11 @@ function validatePricePhotos(report,change) {
     const value=midShiftReadingValue(change,row);
     if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject('Photograph and confirm every affected nozzle with a valid price-change reading.');
   }
+}
+function validatePriceReadingOrder(report,change) {
+  const changes=report.midShiftPriceChanges.filter(c=>c.confirmedAt||c.id===change.id);
+  const issues=midShiftReadingIssues({...report,midShiftPriceChanges:changes});
+  if(issues.length)reject(issues[0]);
 }
     if(route==='/api/realtime/config') return send({enabled:false});
     if(route==='/api/reports/lease') return send({ok:true,editors:[],activeEditors:[],acquired:true});
@@ -241,6 +246,7 @@ function validatePricePhotos(report,change) {
           return next;
         });
         const changed=JSON.stringify(changes)!==JSON.stringify(old.midShiftPriceChanges||[]);
+        for(const change of changes.filter(c=>c.confirmedAt))validatePriceReadingOrder({...old,midShiftPriceChanges:changes},change);
         const result=storeReport({...old,midShiftPriceChanges:changes,midShiftBasePrices:old.midShiftBasePrices||old.prices,...(changed?{cashReviewState:'',recountRequired:false}:{})},session,'mid-shift-price-change');
         if(newlyConfirmed.length){
           const carried=carryMidShiftPrices(database,result.report,newlyConfirmed);
@@ -268,6 +274,8 @@ function validatePricePhotos(report,change) {
           if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||Number(change.newPrice)<=0) reject('Complete the manager mid-shift price change before submission.');
           if(r.pumpRows.filter(row=>row.product===change.product).some(row=>midShiftReadingValue(change,row)===''||Number(midShiftReadingValue(change,row))<Number(row.opening)||Number(midShiftReadingValue(change,row))>Number(row.closing))) reject('Review all readings for the mid-shift price change.');
         }
+        const priceReadingIssues=midShiftReadingIssues(r);
+        if(priceReadingIssues.length)reject(priceReadingIssues[0]);
         r.confirmed=true;r.confirmedAt=stamp();r.checkDetails=reportIssues(r,compute(r).cashVariance);r.checkCategories=[...new Set(r.checkDetails.map(i=>i.category))];r.checkRequired=!!r.checkDetails.length;
         if(r.correctionRequest?.status==='approved') r.correctionRequest={...r.correctionRequest,status:'completed',completedAt:stamp()};
       }
@@ -390,6 +398,7 @@ function validatePricePhotos(report,change) {
       if(!change)reject('This price change no longer exists. Refresh first.',409);
       if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||amount(change.newPrice)<=0)reject('Enter the price-change time and new price.');
       if(change.photoRequired)validatePricePhotos(old,change);
+      validatePriceReadingOrder(old,change);
       if(change.confirmedAt)return send({ok:true,report:old,alreadyConfirmed:true,priceDate:old.date,dailyPricePatch:confirmedDailyPricePatch(database,old.branch,old.date,[change.product])});
       const report={...old,midShiftBasePrices:old.midShiftBasePrices||old.prices,midShiftPriceChanges:old.midShiftPriceChanges.map(c=>c.id===change.id?{...c,confirmedAt:stamp()}:c),cashReviewState:'',recountRequired:false};
       const result=storeReport(report,session,'mid-shift-price-confirmed');
