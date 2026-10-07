@@ -31,7 +31,8 @@ test('Real station photos are read in the browser without guessing ambiguous dig
     }
     return out;
    },{data,variants:process.env.TOTALIZER_UPLOAD_VARIANTS==='1'});
-   results.push(...values.map(value=>({sample:i+1,expected:sample.expected,...value})));
+   results.push(...values.map(value=>({sample:i+1,
+     expected:Object.hasOwn(sample.variantExpected||{},value.label)?sample.variantExpected[value.label]:sample.expected,...value})));
   }
   console.log('Station OCR validation:',JSON.stringify(results));
   if(process.env.TOTALIZER_BENCHMARK_RESULTS)fs.writeFileSync(process.env.TOTALIZER_BENCHMARK_RESULTS,JSON.stringify(results,null,2));

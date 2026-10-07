@@ -32,7 +32,7 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
      await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
     });
     await page.goto('http://127.0.0.1:4341/pilot/cashier');
-    await page.getByLabel('Six-digit branch PIN').fill('000000');await page.getByRole('button',{name:'Proceed',exact:true}).click();
+    // The auth mock restores an already signed-in cashier.
     await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
     await page.getByLabel('Shift to photograph').selectOption(key);
     const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);

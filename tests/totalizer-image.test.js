@@ -114,3 +114,20 @@ test('A top-bar speck seen at only one alignment flags the digit for review inst
   assert.equal(refined[0].text,'1');assert.equal(refined[0].lcdAmbiguous,true);
   assert.equal(s[0].lcdAmbiguous,undefined);
 });
+
+test('A faint upper-left reflection cannot turn a strongly visible three into a nine',()=>{
+  const {s,gray,width,height}=faintDigit(patterns[3],40);s[0].text='3';
+  for(let y=56;y<87;y++)for(let x=101;x<108;x++)gray[y*width+x]-=8;
+  const refined=refineLeadingLcdDigit(s,gray,width,height);
+  assert.equal(refined[0].text,'3');
+  assert.equal(refined[0].lcdVerified,undefined);
+});
+
+test('A faint top reflection cannot turn a strongly visible one into a seven',()=>{
+  const {s,gray,width,height}=faintDigit(patterns[1],40);s[0].text='1';
+  for(let y=43;y<50;y++)for(let x=108;x<132;x++)gray[y*width+x]-=8;
+  const refined=refineNarrowLcdDigits(s,gray,width,height);
+  assert.equal(refined[0].text,'1');
+  assert.equal(refined[0].lcdVerified,undefined);
+  assert.equal(refined[0].lcdAmbiguous,undefined);
+});
