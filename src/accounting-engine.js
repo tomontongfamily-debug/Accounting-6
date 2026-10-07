@@ -523,7 +523,7 @@ function getEffectivePricing(priceBook, branch, date, shiftId = "shift-1") {
   };
 }
 
-function getEffectiveDailyPricing(priceBook, branch, date) {
+export function getEffectiveDailyPricing(priceBook, branch, date) {
   const branchPrices = priceBook[branch] || {};
   const dailyDates = Object.keys(branchPrices)
     .filter((item) => !item.includes("__") && item <= date)
@@ -948,7 +948,7 @@ function sortedMidShiftChanges(report, product) {
 
 function validMidShiftChangeForRow(change, row) {
   const reading = n(midShiftReadingValue(change, row));
-  return n(change.newPrice) > 0 && reading > n(row.opening) && reading < n(row.closing);
+  return n(change.newPrice) > 0 && reading >= n(row.opening) && reading <= n(row.closing);
 }
 
 function pumpRowSales(report, row) {
