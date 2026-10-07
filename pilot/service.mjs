@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
-import { CASH_DENOMINATIONS, amount, automaticCashVouchers, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
+import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
+import { accountingCashVouchers } from './cv-allocations.mjs';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues } from '../src/mid-shift-price-change.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
@@ -41,7 +42,7 @@ function authoritative(r) {
   const remainder=active.filter(d=>d.anchorKey===keyOf(r)&&!consumed.has(d.id)).reduce((sum,d)=>sum+d.carryoverRemaining+Math.max(0,d.unexplainedDifference),0);
   const pilotCashAwaitingDeposit=r.confirmed?money((reserved?0:Number(r.actualCashCounted||0))+remainder):undefined;
   if(r.confirmed) return refreshPosReport({...r,pilotCashAwaitingDeposit},database.posRedemptionSync);
-  const purchaseRows=r.confirmed?r.purchaseRows:[...(r.purchaseRows||[]).filter(row=>row.source!=='FuelTech CV'),...automaticCashVouchers(database.cvCashEvents||[],r)];
+  const purchaseRows=r.confirmed?r.purchaseRows:[...(r.purchaseRows||[]).filter(row=>row.source!=='FuelTech CV'),...accountingCashVouchers(database,r)];
   const next={...r,purchaseRows,cvImport:{mode:database.mode,source:'FuelTech CV'},pilotCashAwaitingDeposit,prices:{...r.prices,...pricing.prices},poRows:po.transactions.map(t=>({...t,source:'FuelTech Pay'})),onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},deductions:{...r.deductions,gcash:pay.total,card:0,paymaya:0}};
   if(next.cashReviewState && next.reviewedExpectedCash!==compute(next).expectedCash) {next.cashReviewState='';next.recountRequired=false;}
   return refreshPosReport(next,database.posRedemptionSync);
