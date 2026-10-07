@@ -31,7 +31,7 @@ function branchAccess(session,branch) {
   if(['Cashier','Manager'].includes(session.role)&&branch!==session.branch) reject('This report belongs to another station.',403);
 }
 function authoritative(r) {
-  if(r.date<database.startDate) return r;
+  if(r.date<database.startDate) return refreshPosReport(r,database.posRedemptionSync);
   const pay=automaticTransactions(database.pay,r), po=automaticTransactions(database.po,r);
   const pricing=getEffectivePricing(database.priceBook,r.branch,r.date,r.shiftId);
   const active=database.deposits.filter(d=>d.status!=='rejected');
@@ -78,7 +78,8 @@ function candidate(input,session,readingId) {
   r.initialCashDenominations=old.initialCashDenominations;
   r.depositCoverage=old.depositCoverage;
   r.midShiftBasePrices=old.midShiftBasePrices;
-  for(const key of ['cashRedemption','fuelRedemption']) r.deductions[key]=input.deductions?.[key]??old.deductions?.[key]??0;
+  if(!r.posRedemptions?.automatic)for(const key of ['cashRedemption','fuelRedemption']) r.deductions[key]=input.deductions?.[key]??old.deductions?.[key]??0;
+  if(r.posRedemptions?.automatic&&r.posRedemptions.pointsStatus!=='verified')r.pointsIssued=old.pointsIssued;
   amount(r.oilSales||0);
   const deliveryKeys=new Set();
   for(const delivery of r.deliveries||[]) {
@@ -239,6 +240,7 @@ function validatePricePhotos(report,change) {
       }
       const r=candidate(input.report,session);
       if(input.operation==='submit') {
+        if(r.posRedemptions?.automatic&&(r.posRedemptions.status!=='verified'||!r.posRedemptions.verifiedAt||Date.now()-Date.parse(r.posRedemptions.verifiedAt)>120000))reject('Verify automatic POS redemptions before submission.');
         const leakLossError=validateFuelLeakLosses(r,{requireNotes:true});
         if(leakLossError) reject(leakLossError);
         if(r.reviewedExpectedCash!==compute(r).expectedCash) reject('Cash or source totals changed. Check cash reconciliation again.');
@@ -284,6 +286,7 @@ function validatePricePhotos(report,change) {
         r.actualCashCounted=total;r.cashDenominations=input.denominations;r.initialCashDenominations=input.denominations;r.cashCountConfirmed=true;
       } else r=candidate(input.report,session);
       if(route.endsWith('cash-check')) {
+        if(r.posRedemptions?.automatic&&(r.posRedemptions.status!=='verified'||!r.posRedemptions.verifiedAt||Date.now()-Date.parse(r.posRedemptions.verifiedAt)>120000))reject('Verify automatic POS redemptions before checking cash.');
         if(!r.cashCountConfirmed || r.pumpRows.some(row=>!readingComplete(row))) reject('Confirm cash and complete all readings first.');
         if(r.cashReviewState && r.reviewedExpectedCash===compute(r).expectedCash) return send({ok:true,needsRecount:!!r.recountRequired,report:exposeReport(r,session)});
         r.reviewedExpectedCash=compute(r).expectedCash;

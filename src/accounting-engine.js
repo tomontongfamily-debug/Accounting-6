@@ -461,15 +461,15 @@ function fuelTechPayTotal(deductions = {}) {
 
 function pointsWithdrawnFromRedemptions(report = {}) {
   const deductions = report.deductions || {};
-  return n(deductions.cashRedemption) + n(deductions.fuelRedemption);
+  return n(deductions.posRedemption) + n(deductions.cashRedemption) + n(deductions.fuelRedemption);
 }
 
 function deductionLabel(key) {
-  return humanizeKey(key);
+  return key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
-  return Object.entries(deductions).filter(([key]) => !HIDDEN_DEDUCTION_KEYS.has(key) && !REMOVED_DEDUCTION_KEYS.has(key));
+  return Object.entries(deductions).filter(([key]) => !HIDDEN_DEDUCTION_KEYS.has(key) && !REMOVED_DEDUCTION_KEYS.has(key) && !(Object.hasOwn(deductions, "posRedemption") && ["cashRedemption", "fuelRedemption"].includes(key)));
 }
 
 function countedDeductionEntries(deductions = {}) {
@@ -1801,13 +1801,13 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
     excelRow([excelCell("BRANCH", "Header"), excelCell("DATE", "Header"), excelCell("SHIFT", "Header"), excelCell("TOTAL DEDUCTIONS", "Header", 9)]),
     excelRow([
       excelCell("", "SubHeader"), excelCell("", "SubHeader"), excelCell("", "SubHeader"),
-      ...["FUELTECH PAY TOTAL", "PO", "CASH VOUCHER", "CASH REDEEM", "FUEL REDEEM", "COKE RELEASE", "POINTS ISSUED", "POINTS WITHDRAWN"].map((label) => excelCell(label, "SubHeader")),
+      ...["FUELTECH PAY TOTAL", "PO", "CASH VOUCHER", "CASH / POS MONETARY REDEEM", "FUEL REDEEM", "COKE RELEASE", "POINTS ISSUED", "POINTS WITHDRAWN"].map((label) => excelCell(label, "SubHeader")),
     ]),
     totalRow("TOTAL", [
       summary.fuelTechPayTotal,
       summary.poTotal,
       summary.purchaseTotal,
-      exportReports.reduce((sum, report) => sum + n(report.deductions?.cashRedemption), 0),
+      exportReports.reduce((sum, report) => sum + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)), 0),
       exportReports.reduce((sum, report) => sum + n(report.deductions?.fuelRedemption), 0),
       summary.cokeSold,
       summary.pointsIssued,
@@ -1819,7 +1819,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
         excelCell(report.branch, "Text"), excelCell(report.date, "Text"), excelCell(shortShiftLabel(report.shiftId), "Text"),
         excelCell(fuelTechPayTotal(report.deductions)),
         excelCell(result.poTotal), excelCell(result.purchaseTotal),
-        excelCell(n(report.deductions?.cashRedemption)), excelCell(n(report.deductions?.fuelRedemption)), excelCell(result.cokeSold),
+        excelCell((n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption))), excelCell(n(report.deductions?.fuelRedemption)), excelCell(result.cokeSold),
         excelCell(result.pointsIssued), excelCell(result.pointsWithdrawn),
       ]);
     }),
@@ -1865,7 +1865,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
   const systemRows = [
     sheetTitle("SYSTEM REPORT", 16),
     excelRow([
-      ...["BRANCH", "DATE", "SHIFT", "TOTAL SALES IN LITERS", "FUEL SALES", "OIL SALES", "GROSS SALES", "TOTAL FUEL REDEMPTION", "TOTAL CASH REDEMPTION", "TOTAL COKE REDEMPTION", "POINTS ISSUED", "POINTS WITHDRAWN", "TOTAL REDEMPTION", "BANK DEPOSIT", "EXPECTED CASH", "SYSTEM VARIANCE"].map((label) => excelCell(label, "Header")),
+      ...["BRANCH", "DATE", "SHIFT", "TOTAL SALES IN LITERS", "FUEL SALES", "OIL SALES", "GROSS SALES", "TOTAL FUEL REDEMPTION", "TOTAL CASH / POS MONETARY REDEMPTION", "TOTAL COKE REDEMPTION", "POINTS ISSUED", "POINTS WITHDRAWN", "TOTAL REDEMPTION", "BANK DEPOSIT", "EXPECTED CASH", "SYSTEM VARIANCE"].map((label) => excelCell(label, "Header")),
     ]),
     totalRow("TOTAL", [
       "", "",
@@ -1874,7 +1874,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
       summary.oilSales,
       summary.grossSales,
       exportReports.reduce((sum, report) => sum + n(report.deductions?.fuelRedemption), 0),
-      exportReports.reduce((sum, report) => sum + n(report.deductions?.cashRedemption), 0),
+      exportReports.reduce((sum, report) => sum + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)), 0),
       summary.cokeSold,
       summary.pointsIssued,
       summary.pointsWithdrawn,
@@ -1885,11 +1885,11 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
     ], 16),
     ...exportReports.map((report) => {
       const result = compute(report);
-      const totalRedemption = n(report.deductions?.fuelRedemption) + n(report.deductions?.cashRedemption) + result.cokeSold;
+      const totalRedemption = n(report.deductions?.fuelRedemption) + (n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption)) + result.cokeSold;
       return excelRow([
         excelCell(report.branch, "Text"), excelCell(report.date, "Text"), excelCell(shortShiftLabel(report.shiftId), "Text"),
         excelCell(result.totalLiters), excelCell(result.fuelSales), excelCell(n(report.oilSales)), excelCell(result.grossSales),
-        excelCell(n(report.deductions?.fuelRedemption)), excelCell(n(report.deductions?.cashRedemption)), excelCell(result.cokeSold),
+        excelCell(n(report.deductions?.fuelRedemption)), excelCell((n(report.deductions?.cashRedemption) + n(report.deductions?.posRedemption))), excelCell(result.cokeSold),
         excelCell(result.pointsIssued), excelCell(result.pointsWithdrawn),
         excelCell(totalRedemption), excelCell(result.bankDeposit), excelCell(result.expectedCash), excelCell(result.cashVariance, "RedValue"),
       ]);

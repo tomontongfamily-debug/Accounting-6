@@ -1,4 +1,5 @@
 export function applyEffectivePricing(report, pricing) {
+  if (report?.branch === 'Liloan' && report.confirmed) return report;
   if (!report || !pricing?.pricingEffectiveDate) return report;
   return {
     ...report,

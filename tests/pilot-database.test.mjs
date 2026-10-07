@@ -16,6 +16,7 @@ test('Postgres migration, idempotency, stale saves, historical protection, live 
     await db.exec(migration);
     await db.exec(fs.readFileSync(new URL('../supabase/migrations/20260923053901_optimize_pilot_commit_snapshots.sql',import.meta.url),'utf8'));
     await db.exec(fs.readFileSync(new URL('../supabase/migrations/20260924014306_fix_pilot_conflict_retry_loop.sql',import.meta.url),'utf8'));
+    await db.exec(fs.readFileSync(new URL('../supabase/migrations/20261007075000_allow_historical_pos_adjustments.sql',import.meta.url),'utf8'));
     assert.equal((await db.query('select mode from fueltech_pilot_config')).rows[0].mode,'disabled');
     assert.equal((await db.query("select has_function_privilege('anon','public.fueltech_pilot_commit(text,bigint,uuid,text,jsonb,jsonb)','execute') as allowed")).rows[0].allowed,false);
     const {state,key}=fixture();
@@ -39,6 +40,13 @@ test('Postgres migration, idempotency, stale saves, historical protection, live 
     await db.exec("update fueltech_pilot_config set mode='live'");
     const live={...state,mode:'live'};await commit(0,randomUUID(),live,'live');
     assert.equal((await db.query('select count(*)::int as n from fueltech_reports')).rows[0].n,1);
+    const historyKey=Object.keys(live.reports).find(k=>k!==key),adjusted=structuredClone(live);
+    adjusted.reports[historyKey]={...adjusted.reports[historyKey],deductions:{...adjusted.reports[historyKey].deductions,cashRedemption:0,fuelRedemption:0,posRedemption:25},posRedemptions:{automatic:true,cashTotal:25}};
+    await commit(1,randomUUID(),adjusted,'live');
+    assert.equal((await db.query('select data from fueltech_reports where report_key=$1',[historyKey])).rows[0].data.deductions.posRedemption,25);
+    for(const patch of [{actualCashCounted:999},{prices:{Premium:1}},{deductions:{...adjusted.reports[historyKey].deductions,gcash:100}}]){
+      const invalid=structuredClone(adjusted);Object.assign(invalid.reports[historyKey],patch);await assert.rejects(commit(2,randomUUID(),invalid,'live'),/Historical/);
+    }
     await assert.rejects(db.query("update fueltech_reports set data='{}' where report_key=$1",[key]),/Use the Liloan pilot/);
     await db.query("insert into fueltech_reports values('Mabolo-test','Mabolo','2026-09-23','shift-1','{}',now())");
     await db.exec("set role anon");

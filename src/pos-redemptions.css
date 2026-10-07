@@ -1,4 +1,4 @@
-.pos-redemptions{background:#f4f8fc;border:1px solid #d0dde9;border-radius:12px;padding:16px;margin:16px 0;color:#172b3f}
+.pos-redemptions{background:#f4f8fc;border:1px solid #d0dde9;border-radius:12px;padding:16px;margin:16px 0;color:#172b3f;overflow-wrap:anywhere}
 .pos-redemptions h3{margin:0 0 8px}.pos-redemptions p{margin:8px 0}.pos-redemptions .pos-warning{color:#8c3511;font-weight:600}
 .pos-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.pos-values span,.pos-values strong,.pos-values small{display:block}.pos-values strong{font-size:1.15rem;margin:6px 0}.pos-values small,.pos-redemptions p small{line-height:1.5}
 .pos-table{overflow-x:auto;margin-top:12px}.pos-table table{width:100%;border-collapse:collapse}.pos-table th,.pos-table td{padding:8px;text-align:left;border-bottom:1px solid #d0dde9;white-space:nowrap}.pos-redemptions summary{cursor:pointer}
