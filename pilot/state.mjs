@@ -1,7 +1,8 @@
 import { createReport, normalizeReport, carryForwardOpenings, getEffectivePricing, reportKey, compute } from '../src/accounting-engine.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { automaticCashVouchers, automaticTransactions, reportIssues } from './domain.mjs';
+import { automaticTransactions, reportIssues } from './domain.mjs';
+import { accountingCashVouchers, cvAllocationReportKey } from './cv-allocations.mjs';
 import { accountingTiming, dateOffset } from './integrations.mjs';
 
 export function initialState(reportRows, priceRows, config) {
@@ -72,7 +73,7 @@ export function reconcileSources(state,incoming) {
     const creationMigration=next?.assignmentBasis==='created_at'&&old.assignmentBasis!=='created_at'
       && ['id','branch','amount','category','item','fundingSource'].every(k=>next[k]===old[k]);
     if(!sameEvent(next,old)&&!creationMigration) {
-      alerts.set(`CV:${old.id}`,{id:`CV:${old.id}`,reportKey:keyOf(old),category:'MANUAL_DEDUCTION',detail:`CV ${old.reference||old.id} changed after import. Review the release before submitting.`,sourceId:old.id});
+      alerts.set(`CV:${old.id}`,{id:`CV:${old.id}`,reportKey:cvAllocationReportKey(state,old),category:'MANUAL_DEDUCTION',detail:`CV ${old.reference||old.id} changed after import. Review the release before submitting.`,sourceId:old.id});
       incoming.cvCashEvents=incoming.cvCashEvents.filter(r=>r.id!==old.id).concat(old);
     } else alerts.delete(`CV:${old.id}`);
   }
@@ -97,7 +98,7 @@ export function reconcileSources(state,incoming) {
     const pay=automaticTransactions(state.pay,report),po=automaticTransactions(state.po,report);
     const before={purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],onlinePay:report.onlinePay,deductions:report.deductions};
     const after=JSON.parse(JSON.stringify({
-      purchaseRows:[...before.purchaseRows.filter(row=>row.source!=='FuelTech CV'),...automaticCashVouchers(state.cvCashEvents,report)],
+      purchaseRows:[...before.purchaseRows.filter(row=>row.source!=='FuelTech CV'),...accountingCashVouchers(state,report)],
       poRows:po.transactions.map(row=>({...row,source:'FuelTech Pay'})),
       onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},
       deductions:{...report.deductions,gcash:pay.total,card:0,paymaya:0},
