@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { fixture } from './pilot-fixture.mjs';
 import { runAction } from '../pilot/service.mjs';
 import { createReport, compute, getEffectivePricing, reportKey } from '../src/accounting-engine.js';
-import { midShiftPumpKey } from '../src/mid-shift-price-change.js';
+import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
 import { midShiftSalesBreakdown } from '../src/mid-shift-sales-breakdown.js';
 const selling=p=>Object.fromEntries(['Premium','Regular','Diesel'].map(k=>[k,p[k]]));
 
@@ -84,4 +86,16 @@ for(const boundary of ['opening','closing'])test(`a price-change reading at the 
   const expected=report.pumpRows.filter(r=>r.product==='Regular').length*20*(boundary==='opening'?85:80);
   assert.equal(compute(report).fuelSalesByProduct.Regular,expected);
   assert.equal(midShiftSalesBreakdown(report).filter(r=>r.product==='Regular').reduce((a,r)=>a+r.sales,0),expected);
+});
+
+test('Admin, Liloan and server calculations all accept opening and closing price-change readings',()=>{
+  const row={pump:'Pump 2',nozzle:'Diesel',product:'Diesel',opening:199038.55,closing:199117.70};
+  for(const file of ['App.jsx','PilotApp.jsx','accounting-engine.js']){
+    const source=readFileSync(new URL('../src/'+file,import.meta.url),'utf8');
+    const body=source.match(/function validMidShiftChangeForRow\(change, row\) \{[\s\S]*?\n\}/)?.[0];
+    assert(body,file);
+    const validate=vm.runInNewContext('('+body+')',{n:v=>Number(v)||0,midShiftReadingValue});
+    for(const reading of [row.opening,row.closing])assert.equal(validate({newPrice:99.2,readings:{[midShiftPumpKey(row)]:reading}},row),true,file);
+    for(const reading of [row.opening-1,row.closing+1])assert.equal(validate({newPrice:99.2,readings:{[midShiftPumpKey(row)]:reading}},row),false,file);
+  }
 });
