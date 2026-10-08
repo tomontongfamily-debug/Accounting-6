@@ -24,3 +24,15 @@ test('A submitted shift or a saved locked cash confirmation remains locked',()=>
  const next=mergePhoneReadings(local,saved);assert.equal(next.cashCountConfirmed,true);assert.equal(next.actualCashCounted,200);assert.deepEqual(next.cashDenominations,{200:1});
  const submitted={...saved,confirmed:true};assert.equal(mergePhoneReadings(local,submitted),submitted);
 });
+
+test('POS updates merge current automatic totals without losing desktop entries or authorizing another manual edit',()=>{
+ const local=report();local.deductions={gcash:25,cashRedemption:12};
+ const saved={...report(),pilotRevision:6,pilotLastNonReadingRevision:4,
+   posRedemptions:{automatic:true,status:'verified',pointsStatus:'verified'},
+   deductions:{gcash:25,posRedemption:40,cashRedemption:0,fuelRedemption:0},pointsIssued:88,pointsWithdrawn:40};
+ const next=mergePhoneReadings(local,saved);
+ assert.equal(next.pilotRevision,6);assert.equal(next.pointsIssued,88);assert.equal(next.deductions.posRedemption,40);
+ assert.equal(next.deductions.cashRedemption,0);assert.equal(next.notes,local.notes);assert.deepEqual(next.tankRows,local.tankRows);
+ const manual=mergePhoneReadings(local,{...saved,pilotLastNonReadingRevision:5});
+ assert.equal(manual.pilotRevision,4);
+});

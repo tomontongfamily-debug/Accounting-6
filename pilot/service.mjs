@@ -107,7 +107,7 @@ function candidate(input,session,readingId) {
 }
 function cashierRevisionMatches(input,old) {
   const incoming=Number(input?.pilotRevision||0),current=Number(old.pilotRevision||0);
-  // Phone saves own their nozzle fields. A desktop can retain its other edits
+  // Phone and POS imports own separate fields. A desktop can retain its edits
   // across those saves, but must never cross another cash/draft/manager edit.
   const lastEdit=Number(old.pilotLastNonReadingRevision??current);
   return incoming===current || (incoming>=lastEdit && incoming<current);

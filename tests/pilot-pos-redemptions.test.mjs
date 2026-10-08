@@ -129,3 +129,29 @@ test('Void matching preserves microseconds and decimal equality without excludin
  const rows=attachPosVoids([point,other],[voided]);assert.equal(rows[0].void_matches,1);assert.equal(rows[1].void_matches,0);assert.equal(rows[0].tuple_matches,1);
  const ambiguous=attachPosVoids([point,{...point,TransactionId:randomUUID()}],[voided]);assert.equal(ambiguous[0].tuple_matches,2);assert.ok(normalizePosPoints(ambiguous,'2026-09-23','2026-09-23').every(r=>r.issue==='Ambiguous voided transaction'));
 });
+
+test('Changing imported POS points permits cashier work but retains manual edit conflicts and authoritative totals',async()=>{
+ const {state,key,cashier}=fixture();
+ const read=points=>async()=>({rows:[],points:[{id:'test-point',date:state.reports[key].date,shiftId:'shift-1',points,voided:false}]});
+ await refreshPosEvidence(state,{enabled:true,force:true,read:read(1)});
+ const desktop=structuredClone(state.reports[key]);
+ await refreshPosEvidence(state,{enabled:true,force:true,read:read(2)});
+ assert.ok(state.reports[key].pilotRevision>desktop.pilotRevision);
+ assert.equal(state.reports[key].pilotLastNonReadingRevision,desktop.pilotLastNonReadingRevision);
+ const saved=await runAction(state,cashier,'/api/reports/save',{report:{...desktop,notes:'Cashier work retained',pointsIssued:999}});
+ assert.equal(saved.result.report.notes,'Cashier work retained');assert.equal(saved.result.report.pointsIssued,2);
+ await assert.rejects(runAction(saved.state,cashier,'/api/reports/save',{report:desktop}),/another device/);
+});
+
+test('A new POS redemption still invalidates cash review and cannot be hidden by a stale draft',async()=>{
+ const {state,key,cashier}=fixture();
+ await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:[],points:[]})});
+ const current=state.reports[key];current.cashCountConfirmed=true;current.actualCashCounted=200;
+ current.cashReviewState='checked';current.reviewedExpectedCash=compute(current).expectedCash;
+ const desktop=structuredClone(current);
+ await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:[{id:'new-redemption',date:current.date,shiftId:current.shiftId,type:'Cash',amount:40,quantity:0}],points:[]})});
+ assert.equal(state.reports[key].cashReviewState,'');
+ const saved=await runAction(state,cashier,'/api/reports/save',{report:desktop});
+ assert.equal(saved.result.report.deductions.posRedemption,40);assert.equal(saved.result.report.actualCashCounted,200);
+ await assert.rejects(runAction(saved.state,cashier,'/api/reports/save',{report:saved.result.report,operation:'submit'}),/Cash or source totals changed|recount/);
+});

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
 import { recoverCashDraft } from './cash-recovery.js';
 import { mergePhoneReadings } from './phone-reading-sync.js';
+import { pilotDraftAlreadySaved } from './pilot-draft-recovery.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
 import { StationHealthReview } from "./shift-health.jsx";
 import { AutomaticVouchers } from "./cash-denominations.jsx";
@@ -847,6 +848,20 @@ function removeLocalDraft(report) {
   writeStorageMap(LOCAL_DRAFTS_KEY, drafts);
 }
 
+function keepRecoveryDraft(report) {
+  const key = `${LOCAL_DRAFTS_KEY}:recovery`;
+  const drafts = readStorageMap(key);
+  const reportId = reportKey(report.branch, report.date, report.shiftId);
+  drafts[reportId] = [...(drafts[reportId] || []), { at: new Date().toISOString(), report }];
+  const encoded = JSON.stringify(drafts);
+  try {
+    window.localStorage.setItem(key, encoded);
+    if (window.localStorage.getItem(key) !== encoded) throw new Error('Unverified recovery copy');
+  } catch {
+    throw new Error('Unable to keep a recovery copy. Your current draft is retained. Free some device storage and try again.');
+  }
+}
+
 function readSavedWizardStep(report, maximumStep) {
   const steps = readStorageMap(LOCAL_WIZARD_STEPS_KEY);
   const saved = Number(steps[reportKey(report.branch, report.date, report.shiftId)]);
@@ -896,6 +911,12 @@ function storeWithLocalDrafts(store = emptyStore(), allowedBranch = "") {
       continue;
     }
     const onlineReport = reports[key];
+    if (pilotDraftAlreadySaved(draft, onlineReport)) {
+      removeLocalDraft(draft);
+      const queued = readOfflineQueue()[key];
+      if (pilotDraftAlreadySaved(queued, onlineReport)) removeQueuedReport(queued);
+      continue;
+    }
     if (reportCompleted(onlineReport)) {
       removeLocalDraft(draft);
       removeQueuedReportByKey(key);
@@ -2412,11 +2433,16 @@ function removeQueuedReportByKey(key) {
   writeStorageMap(OFFLINE_QUEUE_KEY, queue);
 }
 
-async function flushOfflineReports(sessionToken, allowedBranch = "") {
+async function flushOfflineReports(sessionToken, allowedBranch = "", onlineReports = {}) {
   for (const [key, report] of Object.entries(readOfflineQueue()).filter(([, item]) => !allowedBranch || item?.branch === allowedBranch)) {
     if (shouldDiscardOfflineReport(report, GLOBAL_OPENING_DATE)) {
       removeQueuedReportByKey(key);
       if (report) removeLocalDraft(report);
+      continue;
+    }
+    if (pilotDraftAlreadySaved(report, onlineReports[key])) {
+      removeQueuedReport(report);
+      if (pilotDraftAlreadySaved(readLocalDrafts()[key], onlineReports[key])) removeLocalDraft(report);
       continue;
     }
     const clientId = report.clientSave?.clientId || deviceClientId();
@@ -2428,6 +2454,7 @@ async function flushOfflineReports(sessionToken, allowedBranch = "") {
       const result = await saveOnlineReport(rebasedReport, sessionToken);
       removeQueuedReport(rebasedReport);
       if (reportCompleted(result.report)) removeLocalDraft(result.report);
+      else if (result.report && readLocalDrafts()[key]?.clientSave?.mutationId === rebasedReport.clientSave?.mutationId) cacheLocalDraft(result.report);
     } catch (error) {
       if (error.status === 423) {
         removeQueuedReport(rebasedReport);
@@ -2992,7 +3019,7 @@ export default function App() {
       try {
         const { onlineStore, draftSyncError } = await loadReportsWithDraftSync({
           load: () => loadOnlineStore(sessionToken),
-          flush: navigator.onLine && role !== "Approver" ? () => flushOfflineReports(sessionToken, role === "Admin" ? "" : branch) : null,
+          flush: navigator.onLine && role !== "Approver" ? (onlineStore) => flushOfflineReports(sessionToken, role === "Admin" ? "" : branch, onlineStore.reports) : null,
         });
         if (!mounted) return;
         if (refreshStartedAtVersion !== localChangeVersionRef.current || pumpVersion !== pumpMutationVersionRef.current || pendingSaveCountRef.current > 0) return;
@@ -3350,6 +3377,7 @@ export default function App() {
       const result = await saveOnlineReport(reportWithSaveMeta, sessionToken, operation);
       if (operation === "save") removeQueuedReport(reportWithSaveMeta);
       if (result.report && localChangeVersionRef.current === version) {
+        if (operation === "save" && !reportCompleted(result.report)) cacheLocalDraft(result.report);
         setStore((old) => ({
           ...old,
           reports: { ...old.reports, [reportKey(result.report.branch, result.report.date, result.report.shiftId)]: normalizeExistingReport(result.report) },
@@ -3504,6 +3532,23 @@ export default function App() {
     if(next!==latest)stageLocalReport(next);
     else setHasUnsavedOnlineChange(false);
     setSyncMessage('Latest saved shift loaded. Check your cash quantities before confirming.');
+  }
+
+  async function reloadLatestShift() {
+    const current = latestActiveReportForEdit();
+    keepRecoveryDraft(current);
+    if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current);
+    if (localDraftCacheTimerRef.current) window.clearTimeout(localDraftCacheTimerRef.current);
+    draftSaveTimerRef.current = null; pendingDraftReportRef.current = null;
+    localDraftCacheTimerRef.current = null; pendingLocalDraftCacheRef.current = null;
+    await pendingSaveRef.current.catch(() => {});
+    const { report: latest } = await demoApi('pump-report', { reportKey: reportKey(current.branch, current.date, current.shiftId) });
+    if (!latest) throw new Error('The latest saved report could not be verified. Try again.');
+    acceptDemoReport(latest);
+    setActiveEditors([]);
+    setHasUnsavedOnlineChange(false);
+    setSubmitReportError('');
+    setSyncMessage('Latest saved report loaded. A recovery copy of the previous local draft is kept on this device. Review the report before submitting.');
   }
 
   async function updatePumpReading(nextRow) {
@@ -4327,6 +4372,7 @@ export default function App() {
               <ReportSubmitErrorDialog
                 message={submitReportError}
                 onClose={() => setSubmitReportError("")}
+                onReload={reloadLatestShift}
               />
             )}
           </>
@@ -4395,7 +4441,15 @@ function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting
   );
 }
 
-function ReportSubmitErrorDialog({ message, onClose }) {
+function ReportSubmitErrorDialog({ message, onClose, onReload }) {
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState('');
+  async function reload() {
+    setReloading(true); setReloadError('');
+    try { await onReload(); }
+    catch (error) { setReloadError(error.message || 'Unable to load the latest report. Try again.'); }
+    finally { setReloading(false); }
+  }
   const shouldReload = /newer|another device|restarted|older draft|changed while|reload/i.test(message);
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="submit-error-title">
@@ -4404,10 +4458,11 @@ function ReportSubmitErrorDialog({ message, onClose }) {
           <span>Report Not Submitted</span>
           <h2 id="submit-error-title">Report Not Submitted</h2>
           <p>{message}</p>
+          {reloadError && <p role="alert">{reloadError}</p>}
         </div>
         <div className="modal-actions">
-          <button type="button" className="secondary" onClick={onClose}>Close and Review</button>
-          {shouldReload && <button type="button" className="confirm-button" onClick={() => window.location.reload()}>Reload Latest Report</button>}
+          <button type="button" className="secondary" onClick={onClose} disabled={reloading}>Close and Review</button>
+          {shouldReload && <button type="button" className="confirm-button" onClick={reload} disabled={reloading}>{reloading ? 'Loading Latest Report...' : 'Reload Latest Report'}</button>}
         </div>
       </div>
     </div>
