@@ -1,4 +1,4 @@
-import { midShiftBasePrice, midShiftReadingValue } from "./mid-shift-price-change.js";
+import { midShiftBasePrice, midShiftReadingValue, midShiftChangeHasDetails } from "./mid-shift-price-change.js";
 
 const SHIFT_BOUNDS = {
   "shift-1": ["04:00", "13:00"],
@@ -30,7 +30,7 @@ function clockLabel(value) {
 }
 
 export function midShiftReadingRows(report) {
-  return (report?.midShiftPriceChanges || []).flatMap((change, changeIndex) => (
+  return (report?.midShiftPriceChanges || []).filter(midShiftChangeHasDetails).flatMap((change, changeIndex) => (
     (report?.pumpRows || [])
       .filter((pumpRow) => pumpRow.product === change.product)
       .map((pumpRow, pumpIndex) => {
@@ -53,7 +53,7 @@ export function midShiftSalesBreakdown(report) {
   const [shiftStart, shiftEnd] = SHIFT_BOUNDS[report?.shiftId] || SHIFT_BOUNDS["shift-1"];
   return (report?.pumpRows || []).flatMap((pumpRow) => {
     const changes = (report.midShiftPriceChanges || [])
-      .filter((change) => change.product === pumpRow.product)
+      .filter((change) => change.product === pumpRow.product && midShiftChangeHasDetails(change))
       .sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
     if (!changes.length) return [];
 

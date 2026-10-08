@@ -7,6 +7,16 @@ export function midShiftReadingValue(change, row) {
   return readings[midShiftPumpKey(row)] ?? readings[row.id] ?? "";
 }
 
+// Opening an optional change card saves a blank draft, not an actual price change.
+// Keep partial entries active so unfinished real changes still block submission.
+export function midShiftChangeHasDetails(change) {
+  const entered = value => value != null && String(value).trim() !== '' && Number(value) !== 0;
+  return Boolean(String(change.effectiveTime || '').trim() || change.confirmedAt
+    || entered(change.newPrice)
+    || Object.values(change.readings || {}).some(entered)
+    || Object.values(change.readingPhotos || {}).some(photo => photo?.photo_path || photo?.photoId || photo?.readingConfirmed));
+}
+
 // Meter totals must move forward as prices change, including across midnight.
 export function midShiftReadingIssues(report) {
   const issues = [];
@@ -17,7 +27,7 @@ export function midShiftReadingIssues(report) {
   };
   for (const row of report.pumpRows || []) {
     let previous = Number(row.opening);
-    const changes = (report.midShiftPriceChanges || []).filter(c => c.product === row.product).sort((a, b) => order(a) - order(b));
+    const changes = (report.midShiftPriceChanges || []).filter(c => c.product === row.product && midShiftChangeHasDetails(c)).sort((a, b) => order(a) - order(b));
     for (const change of changes) {
       const raw = midShiftReadingValue(change, row), reading = Number(raw);
       if (raw === '' || raw == null || !Number.isFinite(reading) || reading < previous
@@ -47,7 +57,7 @@ export function midShiftBasePrice(report, product) {
 }
 
 export function reportStartingPrice(report, product) {
-  const hasMidShiftChange = (report.midShiftPriceChanges || []).some((change) => change.product === product);
+  const hasMidShiftChange = (report.midShiftPriceChanges || []).some((change) => change.product === product && midShiftChangeHasDetails(change));
   return hasMidShiftChange ? midShiftBasePrice(report, product) : report.prices?.[product] ?? 0;
 }
 

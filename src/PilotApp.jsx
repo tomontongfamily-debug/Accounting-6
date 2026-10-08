@@ -33,6 +33,7 @@ import {
   ensureMidShiftBasePrices,
   midShiftPumpKey,
   midShiftReadingValue,
+  midShiftChangeHasDetails,
   patchMidShiftChange,
   patchMidShiftReading,
   reportStartingPrice,
@@ -769,6 +770,7 @@ function reportWarnings(report, result) {
   });
 
   (report.midShiftPriceChanges || []).forEach((change) => {
+    if (!midShiftChangeHasDetails(change)) return;
     if (!change.effectiveTime) warnings.push(`${change.product}: mid-shift price change is missing the effective time.`);
     if (n(change.newPrice) <= 0) warnings.push(`${change.product}: mid-shift price change is missing the new price.`);
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
@@ -1138,6 +1140,7 @@ function cashVarianceCauseHints(report, result = compute(report)) {
   });
 
   (report.midShiftPriceChanges || []).forEach((change) => {
+    if (!midShiftChangeHasDetails(change)) return;
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
     const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
     if (missingReading) {
