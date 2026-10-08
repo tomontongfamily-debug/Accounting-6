@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { posRedemptionIssues } from '../src/pos-redemptions.js';
 import { compute, reportKey } from '../src/accounting-engine.js';
@@ -158,9 +159,12 @@ export async function refreshPosEvidence(state,{enabled,read=readPosRedemptions,
   for(const [key,report] of Object.entries(state.reports)) {
     const next=refreshPosReport(report,state.posRedemptionSync);
     const before={deductions:report.deductions,pointsIssued:report.pointsIssued},after={deductions:next.deductions,pointsIssued:next.pointsIssued};
-    if(JSON.stringify(before)!==JSON.stringify(after)) {
+    if(!isDeepStrictEqual(before,after)) {
       next.posAutomaticAdjustment=report.posAutomaticAdjustment||{appliedAt:now,original:before,beforeExpectedCash:compute(report).expectedCash,beforeVariance:compute(report).cashVariance};
-      next.pilotRevision=Number(report.pilotRevision||0)+1;next.pilotLastNonReadingRevision=next.pilotRevision;
+      next.pilotRevision=Number(report.pilotRevision||0)+1;
+      // POS owns these imported fields. Its refresh must not masquerade as a
+      // cashier/manager edit; candidate() always takes current POS evidence.
+      next.pilotLastNonReadingRevision=Number(report.pilotLastNonReadingRevision??report.pilotRevision??0);
       next.serverMeta={...report.serverMeta,savedAt:now};
       if(!next.confirmed&&compute(report).expectedCash!==compute(next).expectedCash){next.cashReviewState='';next.recountRequired=false;}
       state.audit.push({id:randomUUID(),at:now,action:'pos-shift-reconciled',role:'System',branch:'Liloan',reportKey:reportKey(report.branch,report.date,report.shiftId),before,after,beforeExpectedCash:compute(report).expectedCash,afterExpectedCash:compute(next).expectedCash,beforeVariance:compute(report).cashVariance,afterVariance:compute(next).cashVariance,fingerprint:state.posRedemptionSync?.fingerprint});

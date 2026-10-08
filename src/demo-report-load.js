@@ -3,7 +3,7 @@ export async function loadReportsWithDraftSync({ load, flush }) {
   const firstStore = await load();
   if (!flush) return { onlineStore: firstStore, draftSyncError: null };
   let draftSyncError = null;
-  try { await flush(); }
+  try { await flush(firstStore); }
   catch (error) {
     if (error.status === 401 || error.status === 403) throw error;
     draftSyncError = error;
