@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
 import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
 import { accountingCashVouchers } from './cv-allocations.mjs';
-import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues } from '../src/mid-shift-price-change.js';
+import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -270,7 +270,7 @@ function validatePriceReadingOrder(report,change) {
         if(!String(r.cashierName||'').trim()) reject('Enter the cashier name.');
         for(const row of r.purchaseRows||[]) if(!['OPEX','Personal','Personnel','Construction'].includes(row.category)||!String(row.item||'').trim()||amount(row.amount)<=0) reject('Complete the category, note and amount for each deduction.');
         if(r.pumpRows.some(row=>Number(r.prices[row.product])<=0)) reject('Manager fuel prices are missing.');
-        for(const change of r.midShiftPriceChanges||[]) {
+        for(const change of (r.midShiftPriceChanges||[]).filter(midShiftChangeHasDetails)) {
           if(change.photoRequired){validatePricePhotos(r,change);if(!change.confirmedAt)reject('Manager must confirm the price change before submission.');}
           if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||Number(change.newPrice)<=0) reject('Complete the manager mid-shift price change before submission.');
           if(r.pumpRows.filter(row=>row.product===change.product).some(row=>midShiftReadingValue(change,row)===''||Number(midShiftReadingValue(change,row))<Number(row.opening)||Number(midShiftReadingValue(change,row))>Number(row.closing))) reject('Review all readings for the mid-shift price change.');

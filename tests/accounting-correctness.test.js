@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { compute, normalizeReport } from '../src/accounting-engine.js';
 import { additionalReviewFlags } from '../src/accounting-review.js';
-import { midShiftReadingIssues, midShiftReadingValue, reportStartingPrice } from '../src/mid-shift-price-change.js';
+import { midShiftReadingIssues, midShiftReadingValue, reportStartingPrice, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 import { midShiftChangeOrder, midShiftSalesBreakdown } from '../src/mid-shift-sales-breakdown.js';
 import { reconcileSources } from '../pilot/state.mjs';
 import { fixture } from './pilot-fixture.mjs';
@@ -18,6 +18,25 @@ function extracts(file, names, context) {
   assert(bodies.every(Boolean),file);
   return vm.runInNewContext(bodies.join('\n')+'\n({'+names.join(',')+'})',context);
 }
+
+test('empty optional price-change drafts do not block Pondol or change its sales price',()=>{
+  const report={branch:'Pondol',shiftId:'shift-1',prices:{Premium:75},midShiftBasePrices:{Premium:70},
+    midShiftPriceChanges:[{id:'empty',product:'Premium',effectiveTime:'',newPrice:0,readings:{}}],
+    pumpRows:[{id:'p',pump:'Pump 1',nozzle:'Premium',product:'Premium',opening:1000,closing:1100,closingEntered:true}],tankRows:[]};
+  assert.equal(midShiftChangeHasDetails(report.midShiftPriceChanges[0]),false);
+  assert.deepEqual(midShiftReadingIssues(report),[]);
+  assert.equal(reportStartingPrice(report,'Premium'),75);
+  assert.deepEqual(midShiftSalesBreakdown(report),[]);
+  const context={n:v=>Number(v)||0,midShiftReadingValue,midShiftChangeHasDetails,CRITICAL_GROSS_SALES_THRESHOLD:1e9};
+  for(const file of ['App.jsx','PilotApp.jsx','accounting-engine.js']) {
+    const warnings=extracts(file,['reportWarnings'],context).reportWarnings;
+    assert.equal(warnings(report,{grossSales:7500}).length,0,file);
+    assert.ok(warnings({...report,midShiftPriceChanges:[{...report.midShiftPriceChanges[0],newPrice:76}]},{grossSales:7500}).length>0,file);
+  }
+  assert.equal(midShiftChangeHasDetails({...report.midShiftPriceChanges[0],effectiveTime:'10:00'}),true);
+  assert.equal(midShiftChangeHasDetails({...report.midShiftPriceChanges[0],readings:{p:1050}}),true);
+  assert.equal(midShiftChangeHasDetails({...report.midShiftPriceChanges[0],confirmedAt:'2026-10-08T02:00:00Z'}),true);
+});
 
 test('all calculation copies preserve confirmation and photos when reports are normalized',()=>{
   const {report}=fixture();
