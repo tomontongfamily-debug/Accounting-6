@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import { runAction } from '../pilot/service.mjs';
 import { fixture } from './pilot-fixture.mjs';
 import { compute } from '../src/accounting-engine.js';
+import { refreshPosEvidence } from '../pilot/pos-redemptions.mjs';
+
+test('POS-enabled reading and cash actions return saved revisions through recount, draft save and submission',async()=>{
+ let {state,report,key,cashier}=fixture();
+ await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:[],points:[]})});
+ const act=async(route,input)=>{
+  const out=await runAction(state,cashier,route,input);state=out.state;
+  for(const field of ['pilotRevision','pilotLastNonReadingRevision','pilotCashRevision','serverMeta'])assert.deepEqual(out.result.report[field],state.reports[key][field],field);
+  return out.result.report;
+ };
+ for(const row of report.pumpRows){
+  const photo_path='/api/pilot/photo?id=pos-save-'+row.id;state.photos[photo_path]={branch:'Liloan',reportKey:key,rowId:row.id};
+  report=await act('/api/demo/pump-reading',{reportKey:key,revision:0,row:{...row,closing:Number(row.opening)+10,closingEntered:true,readingConfirmed:true,photo_path}});
+ }
+ report=await act('/api/demo/cash-confirm',{report,denominations:{1000:1}});
+ assert.equal(report.pilotCashRevision,1);
+ report=await act('/api/demo/cash-check',{report});assert.equal(report.cashReviewState,'recount');
+ report=await act('/api/demo/cash-recount',{report,denominations:{1000:1}});assert.equal(report.cashReviewState,'final');
+ report=await act('/api/reports/save',{report:{...report,cashierName:'POS test cashier'}});
+ report=await act('/api/reports/save',{report,operation:'submit'});
+ assert.equal(report.confirmed,true);assert.equal(report.actualCashCounted,1000);assert.equal(report.cashierName,'POS test cashier');
+});
 
 test('Roles, station scope, stale desktop drafts and nozzle revisions',async()=>{
   let {state,report,key,cashier,manager}=fixture();

@@ -4549,6 +4549,9 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
+    !reportCompleted(report) && !report.cashCountConfirmed ? "Confirm physical cash in Step 1 before submitting." : "",
+    !reportCompleted(report) && report.cashCountConfirmed && !report.cashReviewState ? "Cash reconciliation is required. Press Check my cash count before submitting." : "",
+    !reportCompleted(report) && report.recountRequired && report.cashReviewState !== "final" ? "A final cash recount is required. Enter the recounted quantities and press Confirm final recount before submitting." : "",
     !String(report.cashierName || "").trim() ? "Cashier name is required. Complete Step 5 before submitting." : "",
     !Array.isArray(report.tankRows) || report.tankRows.some((row) => row.actualDip === "" || row.actualDip === null || row.actualDip === undefined)
       ? "Underground tank readings are incomplete. Complete Step 4 before submitting."
@@ -4568,6 +4571,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
     ),
   ])];
   const [highlightedPumpRowId, setHighlightedPumpRowId] = useState("");
+  const cashReviewRef = useRef(null);
   const [wizardStep, setWizardStep] = useState(() => openingSetupMode ? 1 : reportCompleted(report) ? 4 : readSavedWizardStep(report, 4));
   const [cashierNameDraft, setCashierNameDraft] = useState(report.cashierName || "");
   const [cashierNameError, setCashierNameError] = useState("");
@@ -4642,7 +4646,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
   function attemptSubmitReport() {
     if (!report.cashCountConfirmed) { setWizardStep(0); return; }
     if (report.pumpRows.some(row => !readingComplete(row))) { setWizardStep(1); return; }
-    if (!report.cashReviewState || (report.recountRequired && report.cashReviewState !== "final")) { setWizardStep(4); return; }
+    if (!report.cashReviewState || (report.recountRequired && report.cashReviewState !== "final")) { goToCashReview(); return; }
     if (!hasActualCashCounted(report)) {
       setWizardStep(0);
       return;
@@ -4667,6 +4671,12 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
       return;
     }
     confirmReport();
+  }
+
+  function goToCashReview() {
+    setWizardStep(4);
+    cashReviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    cashReviewRef.current?.querySelector("input:not(:disabled), button:not(:disabled)")?.focus({ preventScroll: true });
   }
 
   return (
@@ -4832,7 +4842,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
       {wizardStep === 4 && (
         <Section title="Review and Submit">
           <div className="upgrade-review-summary"><h3>Final review</h3>{FUEL_TYPES.map(p => <p key={p}>{p}: {peso(result.fuelSalesByProduct[p])}</p>)}<p>Total sales: <b>{peso(result.grossSales)}</b></p><p>Online Pay: {peso(fuelTechPayTotal(report.deductions))} · PO: {peso(result.poTotal)} · Cash vouchers: {peso(result.purchaseTotal)}</p>{visibleDeductionEntries(report.deductions).map(([k,v]) => <p key={k}>{deductionLabel(k)}: {peso(v)}</p>)}<p>Physical cash entered: <b>{peso(report.actualCashCounted)}</b></p></div>
-          <CashConfirmation report={report} onSaved={onDemoSaved} onReload={onReloadCash} review />
+          <div ref={cashReviewRef}><CashConfirmation report={report} onSaved={onDemoSaved} onReload={onReloadCash} review /></div>
           <div className="grid four">
             <Card title="Cashier" value={report.cashierName || "Missing"} tone={report.cashierName ? "green" : "yellow"} />
             <Card title="Total Liters Sold" value={liter(result.totalLiters)} />
@@ -4870,6 +4880,9 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
               {submitBlockers.map((warning) => <p key={warning}>{warning}</p>)}
               {submitBlockers.some((warning) => warning.includes("End-of-shift cash count")) && (
                 <button type="button" className="secondary" onClick={() => setWizardStep(0)}>Go to Physical Cash</button>
+              )}
+              {submitBlockers.some((warning) => warning.includes("Cash reconciliation is required") || warning.includes("A final cash recount is required")) && (
+                <button type="button" className="secondary" onClick={goToCashReview}>Go to cash reconciliation</button>
               )}
               {submitBlockers.some((warning) => warning.includes("pump price is missing")) && (
                 <p>Ask the manager to confirm this station's Premium, Regular, and Diesel selling prices. The cashier report will apply them automatically.</p>
