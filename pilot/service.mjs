@@ -314,7 +314,8 @@ function validatePriceReadingOrder(report,change) {
         r.recountRequired=!hasDepositCoverage(r)&&cashNeedsRecount(Number(r.actualCashCounted),compute(r).expectedCash);r.cashReviewState=r.recountRequired?'recount':'checked';
       }
       if(route.endsWith('cash-recount')) { if(hasDepositCoverage(r)) reject('This cash count is already covered by a deposit. Correct the deposit coverage before changing cash.',409);if(r.cashReviewState!=='recount') reject('Recount is not available.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.cashReviewState='final'; }
-      storeReport(r,session,route.split('/').at(-1));return send({ok:true,needsRecount:!!r.recountRequired,report:exposeReport(r,session)});
+      const saved=storeReport(r,session,route.split('/').at(-1));
+      return send({ok:true,needsRecount:!!saved.report.recountRequired,report:exposeReport(saved.report,session)});
     }
     if(route==='/api/demo/pump-report' || route==='/api/demo/pump-reading') {
       requireRole(session,'Cashier');
@@ -332,7 +333,8 @@ function validatePriceReadingOrder(report,change) {
       // A changed reading requires a fresh final cash check.
       r.cashReviewState='';r.recountRequired=false;
       audit(row.ocr_was_edited?'ocr-reading-edited':'pump-reading-saved',session,{reportKey:keyOf(r),rowId:row.id,ocr:row.ocr_detected_reading,final:row.closing});
-      storeReport(r,session,'pump-reading-saved');return send({ok:true,report:exposeReport(r,session)});
+      const saved=storeReport(r,session,'pump-reading-saved');
+      return send({ok:true,report:exposeReport(saved.report,session)});
     }
     if(route==='/api/demo/midshift-reading') {
       requireRole(session,'Manager');const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
