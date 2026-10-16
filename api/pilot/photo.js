@@ -14,9 +14,11 @@ export default async function handler(req,res) {
     const db=pilotDatabase(),cfg=await configuration(db);
     if(cfg.mode==='disabled') return res.status(423).end();
     if(process.env.VERCEL_ENV==='preview'&&cfg.mode!=='shadow') return res.status(423).end();
-    const state=await db.from('fueltech_pilot_state').select('data').eq('mode',cfg.mode).single();
+    const state=cfg.storage_version===2
+      ?await db.from('fueltech_pilot_documents').select('data').eq('mode',cfg.mode).eq('section','photos').eq('item_key','/api/pilot/photo?id='+id).maybeSingle()
+      :await db.from('fueltech_pilot_state').select('data').eq('mode',cfg.mode).single();
     if(state.error) return res.status(503).end();
-    const photo=state.data.data.photos['/api/pilot/photo?id='+id];
+    const photo=cfg.storage_version===2?state.data?.data:state.data.data.photos['/api/pilot/photo?id='+id];
     if(!photo||photo.branch!=='Liloan'||!photo.file.startsWith(cfg.mode+'/Liloan/')) return res.status(404).end();
     const file=await db.storage.from(BUCKET).download(photo.file);
     if(file.error) return res.status(503).end();

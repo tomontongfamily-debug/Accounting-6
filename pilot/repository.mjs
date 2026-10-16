@@ -7,6 +7,7 @@ import { runAction } from './service.mjs';
 import { launchStatus } from './launch.mjs';
 import { backupImmutable } from './backup.mjs';
 import { posEnabled, refreshPosEvidence } from './pos-redemptions.mjs';
+import { loadState, statePatch } from './storage.mjs';
 
 const fail=(message,status=503)=>Object.assign(new Error(message),{status});
 export const BUCKET='fueltech-pilot-photos';
@@ -16,7 +17,7 @@ export function pilotDatabase() {
   return createClient(process.env.SUPABASE_URL||'https://chqinknijqtixeenhtvu.supabase.co',key,{auth:{persistSession:false,autoRefreshToken:false}});
 }
 export async function configuration(db=pilotDatabase()) {
-  const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').single();
+  const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date,storage_version').eq('branch','Liloan').single();
   if(error) throw fail('Pilot preparation is not installed. The existing app remains available.');
   return data;
 }
@@ -67,8 +68,10 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     if(receipt.data.request_hash!==hash) throw fail('This save ID was already used for different data.',409);
     return receipt.data.result;
   }
-  const loaded=await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
+  const incremental=config.storage_version===2;
+  const loaded=incremental?{data:await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null})}:await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
   if(loaded.error) throw fail('Unable to load the pilot records.');
+  let storeRevision=loaded.data?.revision||0;
   let state=loaded.data?.data;
   if(state&&(state.mode!==config.mode||state.startDate!==config.start_date)) throw fail('Cutover differs from saved pilot records. Restore or review configuration before continuing.');
   if(!state) {
@@ -104,7 +107,8 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     await backupImmutable('photos/'+path,image);
   }});
   if(!loaded.data||outcome.changed||!isDeepStrictEqual(before,JSON.parse(JSON.stringify(outcome.state)))) {
-    const saved=await db.rpc('fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,p_data:outcome.state,p_result:readOnly?{ok:true}:outcome.result});
+    const persisted=JSON.parse(JSON.stringify(outcome.state));
+    const saved=await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:statePatch(loaded.data?before:{},persisted)}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result});
     // Re-read and revalidate after aggregate contention. Per-report/nozzle checks still
     // reject stale edits; a concurrent refresh must not make saved reports disappear.
     const conflict=['PT409','40001'].includes(saved.error?.code);
@@ -114,7 +118,32 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     }
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
     if(saved.error) throw fail(conflict?'Another device saved first. Refresh and retry.':'The save could not be verified. Retry with the same request.',conflict?409:503);
-    return readOnly?outcome.result:saved.data;
+    storeRevision++;
+    if(!readOnly)return saved.data;
+  }
+  if(incremental&&route==='/api/demo/audit')outcome.result.nextCursor=loaded.data?.auditCursor??null;
+  if(incremental&&route==='/api/store/load'&&input.paged) {
+    // Dependent totals/prices can change after source imports and deposits. A
+    // root or POS metadata change deliberately falls back to a complete page.
+    const scope=JSON.stringify([config.mode,config.start_date,session.role,session.branch||'']);
+    const since=Number(input.sinceRevision);
+    let delta=false;
+    if(input.storeScope===scope&&Number.isSafeInteger(since)&&since>=0&&since<=storeRevision) {
+      const changes=await db.rpc('fueltech_pilot_changes_v2',{p_mode:config.mode,p_since:since,p_through:storeRevision});
+      if(changes.error)throw fail('Unable to verify changed station records.');
+      // Sources are refreshed during reads too. All affected computed fields
+      // remain authoritative when a global dependency changes.
+      delta=!changes.data.full;
+      if(delta) {
+        const keys=new Set(changes.data.keys);
+        const filtered=await runAction(outcome.state,session,route,input,{storeChangedKeys:keys});
+        outcome.result=filtered.result;
+      }
+    }
+    // A concurrent save after this request's snapshot must be requested on the
+    // next refresh rather than being incorrectly acknowledged by this one.
+    outcome.result.storeRevision=storeRevision;
+    outcome.result.storeScope=scope;outcome.result.delta=delta;
   }
   return outcome.result;
 }
