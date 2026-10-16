@@ -11,6 +11,7 @@ import { ManagerDepositCards } from './deposit-cards.jsx';
 import { depositCoverage, depositDayLabel } from './deposit-coverage.js';
 import { DepositCoverageLines } from './deposit-coverage.jsx';
 import { pumpSalesBreakdown } from './fuel-leak-loss.js';
+import { compute } from './accounting-engine.js';
 const php=n=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(n||0));
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 function PumpSales({report,row}) {
@@ -130,11 +131,14 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
 export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
+  const reconciliation=review?compute(report):null;
+  const unusuallySmall=report.branch==='Liloan'&&reconciliation?.actualCashCountEntered&&reconciliation.expectedCash>1500&&reconciliation.actualCashCounted<reconciliation.expectedCash*.1;
   useEffect(()=>{if(!review&&report.cashCountConfirmed){setError('');setStale(false);}},[report.cashCountConfirmed,review]);
   let valid=false;try{denominationTotal(denominations);valid=true;}catch{ /* An empty/invalid count cannot be confirmed. */ }
   async function run(action) {setBusy(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409);}finally{setBusy(false);}}
   async function reload(){setBusy(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);}}
   return <div className="cash-confirmation">
+    {unusuallySmall&&<p className="warning-box" role="alert">Physical cash recorded: <strong>{php(reconciliation.actualCashCounted)}</strong>. Expected cash: <strong>{php(reconciliation.expectedCash)}</strong>. Check that all notes and coins were included, including cash set aside for deposit. Recount the actual cash; do not change it just to match the expected amount.</p>}
     {!review&&<><CashDenominations counts={denominations} onChange={onCountsChange} disabled={report.cashCountConfirmed||busy} label="End-of-shift cash count"/>{report.cashCountConfirmed?<p>✓ Physical cash confirmed: <strong>{php(report.actualCashCounted)}</strong>{!report.cashDenominations&&' · Earlier count has no denomination breakdown.'}</p>:<button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-confirm')}>Confirm physical cash</button>}</>}
     {review&&<><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'?<><p className="warning-box">Please recount your physical cash.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your confirmed count is locked. A requested recount can be confirmed once.</small></>}
     {error&&<p className="error" role="alert">{error}</p>}

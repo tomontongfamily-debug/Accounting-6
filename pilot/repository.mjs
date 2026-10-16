@@ -32,7 +32,7 @@ export async function saveLivePilotCorrection(db,session,report,operation) {
 }
 // The existing Admin screen must refresh approved vouchers and delayed payment
 // notifications too; importing cannot depend on a cashier opening the pilot.
-export async function refreshLivePilotSources(db,session) {
+export async function refreshLivePilotSources(db,session,{forceSources=false}={}) {
   if(!['Admin','Approver'].includes(session.role)&&session.branch!=='Liloan')return;
   const config=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').maybeSingle();
   if(config.error)throw fail('Unable to verify Liloan source configuration.');
@@ -40,7 +40,8 @@ export async function refreshLivePilotSources(db,session) {
   const saved=await db.from('fueltech_pilot_state').select('revision').eq('mode','live').maybeSingle();
   if(saved.error)throw fail('Unable to verify Liloan source records.');
   if(!saved.data)return;
-  await execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/realtime/config',mutationId:randomUUID()},{db});
+  await execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/realtime/config',mutationId:randomUUID()},{db,forceSources});
+  return true;
 }
 async function allRows(query) {
   const rows=[];
@@ -50,7 +51,7 @@ async function allRows(query) {
     rows.push(...data);if(data.length<1000)return rows;
   }
 }
-export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,attempt=0}={}) {
+export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,attempt=0}={}) {
   if(!['Admin','Approver','Cashier','Manager'].includes(session.role)||(['Cashier','Manager'].includes(session.role)&&session.branch!=='Liloan')) throw fail('This pilot is restricted to Liloan.',403);
   const config=await configuration(db);
   if(config.mode==='disabled') throw fail('The Liloan pilot has not been enabled.',423);
@@ -84,7 +85,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   const before=structuredClone(state);
   ensureCurrentReports(state);
   const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
-  if(requiresFresh||!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000) {
+  if(forceSources||requiresFresh||!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
       cvClient=createClient(process.env.FUELTECH_CV_URL,process.env.FUELTECH_CV_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
@@ -109,7 +110,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const conflict=['PT409','40001'].includes(saved.error?.code);
     if(conflict&&attempt<2) {
       await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
-      return execute(session,envelope,{db,cvClient,posRead,posEnv,attempt:attempt+1});
+      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,attempt:attempt+1});
     }
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
     if(saved.error) throw fail(conflict?'Another device saved first. Refresh and retry.':'The save could not be verified. Retry with the same request.',conflict?409:503);

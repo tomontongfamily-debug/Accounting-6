@@ -1,5 +1,6 @@
 import { BRANCHES, SHIFT_IDS } from "./supabase.js";
 import { isStationPreOpeningSlot, openingSlotHealth } from "../../src/opening-health.js";
+import { compute } from "../../src/accounting-engine.js";
 
 export function manilaDateOffset(days = 0) {
   const now = new Date();
@@ -32,6 +33,20 @@ function isOpeningSetup(report = {}) {
   return report.baselineReport === true;
 }
 
+function reportTotals(report) {
+  // Health checks and owner messages must use the report screen's price-change,
+  // loss, deduction and physical-cash rules. Partial historical rows are allowed.
+  return compute({
+    ...report,
+    pumpRows: report.pumpRows || [],
+    tankRows: report.tankRows || [],
+    poRows: report.poRows || [],
+    purchaseRows: report.purchaseRows || [],
+    deductions: report.deductions || {},
+    coke: report.coke || {},
+  });
+}
+
 const removedDeductionKeys = new Set(["calibration" + "Cash"]);
 
 function countedDeductions(deductions = {}) {
@@ -60,6 +75,10 @@ function pumpRowSales(report, row) {
 }
 
 export function computeReportFuel(report = {}) {
+  if (report.branch === "Liloan") {
+    const totals = reportTotals(report);
+    return { liters: totals.totalLiters, sales: totals.fuelSales };
+  }
   const fuelByProduct = {};
   (report.pumpRows || []).forEach((row) => {
     const totals = fuelByProduct[row.product] || { liters: 0, sales: 0, calibration: 0 };
@@ -83,6 +102,10 @@ export function computeReportFuel(report = {}) {
 }
 
 export function computeReportCash(report = {}) {
+  if (report.branch === "Liloan") {
+    const { grossSales, bankDeposit, expectedCash, pendingCashOnHand, cashVariance } = reportTotals(report);
+    return { grossSales, bankDeposit, expectedCash, pendingCashOnHand, cashVariance };
+  }
   const fuelSales = computeReportFuel(report).sales;
   const poTotal = (report.poRows || []).reduce((sum, row) => sum + numberValue(row.amount), 0);
   const purchaseTotal = (report.purchaseRows || []).reduce((sum, row) => sum + numberValue(row.amount), 0);
