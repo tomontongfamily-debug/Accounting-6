@@ -2336,7 +2336,7 @@ function normalizeReport(report, branch, date, shiftId, prices, pricingMeta = {}
 }
 
 async function loadOnlineStore(sessionToken) {
-  const { priceRows = [], reportRows = [] } = await loadStorePages(input=>apiPost("/api/store/load", input, sessionToken));
+  const { priceRows = [], reportRows = [] } = await loadStorePages(input=>apiPost("/api/store/load", input, sessionToken), undefined, {cacheKey:JSON.stringify([sessionToken,window.__fueltechPilotConfig.mode,window.__fueltechPilotConfig.start_date])});
 
   const nextStore = emptyStore();
 
