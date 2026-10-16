@@ -121,6 +121,23 @@ export function normalizePosPoints(rows,startDate,endDate) {
 }
 export function refreshPosReport(report,sync) {
   if(report.branch!=='Liloan'||report.baselineReport||!sync||report.date<sync.startDate)return report;
+  if(sync._deferred){
+    // These summaries came from a committed, verified import. User input never
+    // supplies them; keep enforcing imported totals without loading all points.
+    if(!report.posRedemptions?.automatic)return report;
+    const next={...report},evidence=report.posRedemptions;
+    if(sync.status==='verified'&&sync.verifiedAt){
+      next.deductions={...report.deductions,cashRedemption:0,fuelRedemption:0,posRedemption:evidence.cashTotal};
+      next.pointsWithdrawn=evidence.cashTotal;
+      if(evidence.pointsStatus==='verified')next.pointsIssued=evidence.pointsTotal;
+    }
+    next.integrationIssues=[...(report.integrationIssues||[]).filter(i=>i.source!=='FuelTech POS'),...posRedemptionIssues(next)];
+    if(next.confirmed){
+      next.checkDetails=[...(report.checkDetails||[]).filter(i=>i.source!=='FuelTech POS'&&i.category!=='CASH_VARIANCE'),...posRedemptionIssues(next),...reportIssues({...next,integrationIssues:[],pumpRows:[]},compute(next).cashVariance)];
+      next.checkCategories=[...new Set(next.checkDetails.map(i=>i.category))];next.checkRequired=!!next.checkDetails.length;
+    }
+    return next;
+  }
   const rows=(sync.rows||[]).filter(r=>r.date===report.date&&r.shiftId===report.shiftId);
   const cashRows=rows.filter(r=>r.type==='Cash'), cokeRows=rows.filter(r=>r.type==='Coke');
   const total=values=>values.reduce((sum,r)=>sum+Math.round(r.amount*100),0)/100;
@@ -140,6 +157,7 @@ export function refreshPosReport(report,sync) {
   return next;
 }
 export async function refreshPosEvidence(state,{enabled,read=readPosRedemptions,now=new Date().toISOString(),force=false}={}) {
+  if(state.posRedemptionSync?._deferred)return;
   if(!enabled) {
     if(state.posRedemptionSync&&state.posRedemptionSync.status!=='disabled')state.posRedemptionSync.status='disabled';
   } else if(force||(state.posRedemptionSync?.status==='verified'&&!Array.isArray(state.posRedemptionSync.points))||!state.posRedemptionSync?.attemptedAt||Date.parse(now)-Date.parse(state.posRedemptionSync.attemptedAt)>60000) {

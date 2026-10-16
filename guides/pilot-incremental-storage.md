@@ -2,7 +2,7 @@
 
 The migration retains the original state in `fueltech_pilot_state_legacy`, preserves all existing transaction snapshots, and verifies exact JSON equality before completing. The `fueltech_pilot_state` compatibility view reconstructs the original representation, so existing exports, nightly backups and already-open deployments continue to work.
 
-`storage_version=2` enables the new repository path. Reports and photos are individual documents; audit events are appended once with an ordered sequence; POS rows and points are individual documents with explicit order lists. Unchanged documents are not rewritten. Normal requests load no historical audit events; the Admin audit endpoint loads 100 at a time and returns `nextCursor` for the next request's `before` field.
+`storage_version=2` enables the new repository path. Reports and photos are individual documents; audit events are appended once with an ordered sequence; POS rows and points are individual documents with explicit order lists. Unchanged documents are not rewritten. Normal requests load no historical audit events; the Admin audit endpoint loads 100 at a time and returns `nextCursor` for the next request's `before` field. Compact reads use committed POS summaries. Full POS evidence is loaded for forced cash checks/submission, expired imports, status transitions and newly created shifts. Financial fields remain server-owned in both paths.
 
 Every accepted mutation writes its document delta, appended audit events, canonical report/price changes, revision and idempotent receipt in one transaction. All canonical historical guards and per-report stale-edit checks remain enforced. The legacy RPC is adapted to the same writer for rolling deployment compatibility.
 

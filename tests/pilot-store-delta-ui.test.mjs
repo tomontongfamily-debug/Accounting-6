@@ -6,7 +6,7 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 
 test('built pilot refresh requests only changes and retains the existing report dashboard',async()=>{
- const server=await preview({preview:{host:'127.0.0.1',port:4354,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
+ const server=await preview({preview:{host:'127.0.0.1',port:4379,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage();let {state}=fixture();const inputs=[],errors=[];
   page.on('pageerror',e=>errors.push(e.stack));
@@ -26,7 +26,7 @@ test('built pilot refresh requests only changes and retains the existing report 
    }else {status=404;result={ok:false,error:'Unmocked API route'};}
    await request.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
   });
-  await page.goto('http://127.0.0.1:4354/pilot/admin');
+  await page.goto('http://127.0.0.1:4379/pilot/admin');
   await page.getByRole('button',{name:'Error Analytics',exact:true}).first().waitFor({timeout:8000}).catch(async error=>{throw Error(JSON.stringify({body:await page.locator('body').innerText(),inputs,errors,reason:error.message}));});
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   const deadline=Date.now()+10000;while(!inputs.some(input=>input.sinceRevision===7)&&Date.now()<deadline)await new Promise(r=>setTimeout(r,50));

@@ -12,7 +12,7 @@ export function documents(state) {
   add('shape','pos',!Object.hasOwn(state,'posRedemptionSync')?'missing':state.posRedemptionSync===null?'null':'object');
   if(state.posRedemptionSync) {
     for(const [key,value] of Object.entries(state.posRedemptionSync)) {
-      if(!['rows','points'].includes(key))add('pos',key,value);
+      if(!['rows','points','_deferred'].includes(key))add('pos',key,value);
     }
     for(const kind of ['rows','points']) {
       const values=state.posRedemptionSync[kind];
@@ -40,8 +40,8 @@ export function statePatch(before,after) {
   if(newAudit.length<oldAudit.length||!isDeepStrictEqual(oldAudit,newAudit.slice(0,oldAudit.length)))throw Error('Saved audit events are immutable.');
   return {upserts,removals:[...prior.values()].map(({section,key})=>({section,key})),audit:newAudit.slice(oldAudit.length)};
 }
-export async function loadState(db,mode,{audit=false,before=null}={}) {
-  const result=await db.rpc('fueltech_pilot_load_v2',{p_mode:mode,p_audit_limit:audit?100:0,p_before:before});
+export async function loadState(db,mode,{audit=false,before=null,fullPos=false}={}) {
+  const result=await db.rpc(fullPos?'fueltech_pilot_load_v2':'fueltech_pilot_load_compact',{p_mode:mode,p_audit_limit:audit?100:0,p_before:before});
   if(result.error)throw Object.assign(Error('Unable to load verified station records.'),{status:503});
   return result.data;
 }
