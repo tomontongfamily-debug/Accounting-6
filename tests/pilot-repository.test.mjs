@@ -50,3 +50,33 @@ test('Refreshing draft reports preserves manager price-change photo evidence',()
   ensureCurrentReports(state,'2026-09-23T05:01:00Z');
   assert.deepEqual(state.reports[key].midShiftPriceChanges,evidence);
 });
+
+test('a CV server notification bypasses a recent source cache and preserves the closed shift count',async()=>{
+ const {state,key}=fixture();state.mode='live';
+ const report=state.reports[key];report.confirmed=true;report.actualCashCounted=1000;
+ report.cashDenominations={1000:1};report.cashCountConfirmed=true;
+ const voucher={id:'00000000-0000-4000-8000-000000000001',ref:'CV-test',station:'liloan',payment_method:'cash',status:'approved',created_at:'2026-09-23T09:00:00+08:00',amount:500,category:{name:'OPEX'},purpose:'Supplies'};
+ function query(source){
+  let data=structuredClone(source),head=false;
+  const api=new Proxy({}, {get:(_target,method)=>{
+   if(method==='then')return resolve=>resolve({data:head?null:data,count:Array.isArray(data)?data.length:0,error:null});
+   return (...args)=>{
+    if(method==='select')head=!!args[1]?.head;
+    if(Array.isArray(data)&&['eq','in','gte','lt','is'].includes(method)){
+     const [field,value]=args;
+     data=data.filter(r=>method==='eq'?r[field]===value:method==='in'?value.includes(r[field]):method==='gte'?r[field]>=value:method==='lt'?r[field]<value:r[field]===null);
+    }
+    return api;
+   };
+  }});return api;
+ }
+ let committed;
+ const db={from(table){return query(table==='fueltech_pilot_config'?{mode:'live',start_date:state.startDate}:table==='fueltech_pilot_state'?{revision:1,data:state}:table==='fueltech_pilot_receipts'?null:[]);},async rpc(_name,params){committed=params.p_data;return {data:{ok:true}};}};
+ const cvClient={from(){return query([voucher]);}};
+ await execute({role:'Admin',branch:'Liloan'},{route:'/api/realtime/config',mode:'live',startDate:state.startDate,mutationId:randomUUID()},{db,cvClient,posEnv:{},forceSources:true});
+ assert.equal(committed.reports[key].purchaseRows.length,1);
+ assert.equal(committed.reports[key].purchaseRows[0].sourceVoucherId,voucher.id);
+ assert.equal(committed.reports[key].actualCashCounted,1000);
+ assert.deepEqual(committed.reports[key].cashDenominations,{1000:1});
+ assert.equal(committed.reports[key].confirmed,true);
+});
