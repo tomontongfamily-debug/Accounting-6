@@ -27,6 +27,7 @@ test('incremental storage preserves migration, every revision, audit order, POS 
   await db.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
   await db.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
   await db.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await db.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
   assert.deepEqual((await db.query('select data from fueltech_pilot_state')).rows[0].data,state);
   assert.deepEqual((await db.query('select data from fueltech_pilot_state_legacy')).rows[0].data,state);
   const load=(limit=0,before=null)=>db.query('select fueltech_pilot_load_v2($1,$2,$3) as v',['shadow',limit,before]).then(r=>r.rows[0].v);
@@ -80,6 +81,7 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
   await pg.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
   await pg.query('insert into fueltech_pilot_state values($1,1,$2,now())',['shadow',JSON.stringify(state)]);
   await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await pg.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
   let conflict=true;
   const db={from(table){
    const filters=[];let single=false,cols='*';
@@ -104,4 +106,25 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
   assert.equal(changed.delta,true);assert.ok(changed.reportRows.some(r=>r.report_key===key&&r.data.notes==='Repository save'));
   const unknownScope=await execute(cashier,{...envelope(),input:{paged:true,sinceRevision:changed.storeRevision,storeScope:'Admin'}},{db});assert.equal(unknownScope.delta,false);assert.ok(unknownScope.reportRows.length>0);
  }finally{await pg.close();}
+});
+
+test('bulk POS reconstruction preserves all 7000 records through the set-based read optimization',async()=>{
+ const db=await prepared();
+ try{
+  const {state}=fixture();
+  state.posRedemptionSync={status:'verified',rows:[],points:Array.from({length:7000},(_,i)=>({id:String(i).padStart(36,'0'),at:'2026-10-16T01:00:00Z',date:'2026-10-16',shiftId:'shift-1',points:i/100,voided:false}))};
+  await db.query('insert into fueltech_pilot_state values($1,1,$2,now())',['shadow',JSON.stringify(state)]);
+  await db.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  const start=performance.now();const old=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;const oldMs=performance.now()-start;
+  await db.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  const optimizedStart=performance.now();const next=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;const newMs=performance.now()-optimizedStart;
+  assert.deepEqual(next,old);assert.deepEqual(next.data.posRedemptionSync,state.posRedemptionSync);
+  console.info('7000-record POS read comparison',JSON.stringify({beforeMs:Math.round(oldMs),afterMs:Math.round(newMs)}));
+  const compactStart=performance.now();const compact=(await db.query("select fueltech_pilot_load_compact('shadow',0,null) v")).rows[0].v;
+  assert.equal(compact.data.posRedemptionSync._deferred,true);assert.equal(compact.data.posRedemptionSync.points,undefined);
+  assert.deepEqual(compact.data.reports,state.reports);assert.deepEqual(compact.data.priceBook,state.priceBook);
+  assert.ok(JSON.stringify(compact).length<JSON.stringify(next).length/5);
+  assert.equal(statePatch(compact.data,compact.data).upserts.length,0);
+  console.info('Compact POS read',JSON.stringify({milliseconds:Math.round(performance.now()-compactStart),bytes:JSON.stringify(compact).length,fullBytes:JSON.stringify(next).length}));
+ }finally{await db.close();}
 });

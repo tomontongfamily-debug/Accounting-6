@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { accountingTiming, loadSources } from './integrations.mjs';
+import { accountingTiming, dateOffset, loadSources } from './integrations.mjs';
 import { initialState, ensureCurrentReports, reconcileSources } from './state.mjs';
 import { runAction } from './service.mjs';
 import { launchStatus } from './launch.mjs';
@@ -59,6 +59,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   if(process.env.VERCEL_ENV==='preview'&&config.mode!=='shadow') throw fail('Preview deployments may only use trial records.',423);
   if(envelope.mode!==config.mode||envelope.startDate!==config.start_date) throw fail('Pilot configuration changed. Reload the page.',409);
   const {route,input={},mutationId}=envelope;
+  const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
   const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
@@ -73,6 +74,15 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   if(loaded.error) throw fail('Unable to load the pilot records.');
   let storeRevision=loaded.data?.revision||0;
   let state=loaded.data?.data;
+  const sync=state?.posRedemptionSync;
+  if(incremental&&sync?._deferred){
+    const enabled=posEnabled(config.mode,posEnv),today=accountingTiming(new Date().toISOString()).date;
+    const missingShift=[dateOffset(today,-1),today].filter(date=>date>=state.startDate).some(date=>['shift-1','shift-2','shift-3'].some(shift=>!state.reports[`Liloan__${date}__${shift}`]));
+    const needsEvidence=requiresFresh||(enabled&&(!sync.attemptedAt||Date.now()-Date.parse(sync.attemptedAt)>60000))
+      ||enabled!==(sync.status!=='disabled')||missingShift
+      ||(enabled&&Object.values(state.reports).some(r=>!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic));
+    if(needsEvidence){loaded.data=await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,fullPos:true});state=loaded.data?.data;storeRevision=loaded.data?.revision||0;}
+  }
   if(state&&(state.mode!==config.mode||state.startDate!==config.start_date)) throw fail('Cutover differs from saved pilot records. Restore or review configuration before continuing.');
   if(!state) {
     const launch=await launchStatus(db,config);
@@ -87,7 +97,6 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   }
   const before=structuredClone(state);
   ensureCurrentReports(state);
-  const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
   if(forceSources||requiresFresh||!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
