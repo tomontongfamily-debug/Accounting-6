@@ -26,7 +26,7 @@ test('incremental storage preserves migration, every revision, audit order, POS 
   state.posRedemptionSync={status:'verified',rows:[{id:'b',amount:2},{id:'a',amount:1}],points:[]};
   await db.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
   await db.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
-  await db.exec(sql('20261016071347_pilot_incremental_storage.sql'));
+  await db.exec(sql('20261016072516_pilot_incremental_storage.sql'));
   assert.deepEqual((await db.query('select data from fueltech_pilot_state')).rows[0].data,state);
   assert.deepEqual((await db.query('select data from fueltech_pilot_state_legacy')).rows[0].data,state);
   const load=(limit=0,before=null)=>db.query('select fueltech_pilot_load_v2($1,$2,$3) as v',['shadow',limit,before]).then(r=>r.rows[0].v);
@@ -79,7 +79,7 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
   ensureCurrentReports(state);ensureCurrentReports(state);
   await pg.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
   await pg.query('insert into fueltech_pilot_state values($1,1,$2,now())',['shadow',JSON.stringify(state)]);
-  await pg.exec(sql('20261016071347_pilot_incremental_storage.sql'));
+  await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
   let conflict=true;
   const db={from(table){
    const filters=[];let single=false,cols='*';
