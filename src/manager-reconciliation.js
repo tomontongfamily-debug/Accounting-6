@@ -25,7 +25,17 @@ export function managerReconciliationIssues(report) {
   if (Number.isFinite(r.manualOnlinePay) && Math.abs(round(r.manualOnlinePay - Number(report.deductions?.gcash || 0))) >= .01) issues.push({ source:'Manager reconciliation',category:'ONLINE_PAY',detail:`Manager online payments: ${r.manualOnlinePay.toFixed(2)}; actual FuelTech Pay: ${Number(report.deductions?.gcash || 0).toFixed(2)}. Actual payment records are retained.` });
   return issues;
 }
-export function refreshManagerReconciliation(report) {
-  if (!approvedManagerReconciliation(report)) return report;
-  return { ...report, integrationIssues:[...(report.integrationIssues || []).filter(i => i.source !== 'Manager reconciliation'), ...managerReconciliationIssues(report)] };
+export function managerDepositCoverageIssues(report, state) {
+  if (!state) return [];
+  const key=report.branch+'__'+report.date+'__'+report.shiftId;
+  return (state.deposits || []).filter(d => d.status !== 'rejected' && d.anchorKey === key && (d.coveredReportKeys || []).some(k => approvedManagerReconciliation(state.reports[k]))).flatMap(d => {
+    const reports=(d.coveredReportKeys || []).map(k => state.reports[k]);
+    if (reports.some(r => !r || !Number.isFinite(Number(r.actualCashCounted)))) return [];
+    const cash=round(reports.reduce((sum,r) => sum+Number(r.actualCashCounted),0)), saved=Number(d.coveredCash), difference=round(cash-saved);
+    return Number.isFinite(saved) && Math.abs(difference)>=.01 ? [{source:'Manager cash/deposit reconciliation',category:'BANK_DEPOSIT',detail:`Deposit ${d.reference}: corrected cash in covered shifts is ${cash.toFixed(2)}; saved coverage is ${saved.toFixed(2)} (difference ${difference.toFixed(2)}). Original deposit amount and record are retained. Verify the cash coverage and bank receipt.`}] : [];
+  });
+}
+export function refreshManagerReconciliation(report, state) {
+  if (!approvedManagerReconciliation(report) && !state) return report;
+  return { ...report, integrationIssues:[...(report.integrationIssues || []).filter(i => !['Manager reconciliation','Manager cash/deposit reconciliation'].includes(i.source)), ...managerReconciliationIssues(report), ...managerDepositCoverageIssues(report,state)] };
 }

@@ -109,7 +109,7 @@ export function reconcileSources(state,incoming) {
     if(isDeepStrictEqual(before,after))continue;
     const beforeExpectedCash=compute(report).expectedCash;
     Object.assign(report,after);
-    Object.assign(report,refreshManagerReconciliation(report));
+    Object.assign(report,refreshManagerReconciliation(report,state));
     Object.assign(report,refreshFuelCVReview(report,compute(report)));
     report.pilotRevision=Number(report.pilotRevision||0)+1;
     report.pilotLastNonReadingRevision=report.pilotRevision;
@@ -122,7 +122,7 @@ export function reconcileSources(state,incoming) {
   // Admin's general report endpoint cannot see state-only source alerts.
   for(const report of Object.values(state.reports)) {
     if(report.date<state.startDate||report.baselineReport)continue;
-    const issues=[...(report.integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
+    const issues=[...(refreshManagerReconciliation(report,state).integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
       ...state.sourceAlerts.filter(a=>(a.reportKey===keyOf(report)||a.reportKeys?.includes(keyOf(report)))).map(a=>({...a,source:'Source reconciliation'}))];
     if(isDeepStrictEqual(report.integrationIssues||[],issues))continue;
     report.integrationIssues=issues;
