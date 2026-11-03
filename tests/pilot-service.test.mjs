@@ -5,6 +5,19 @@ import { fixture } from './pilot-fixture.mjs';
 import { compute } from '../src/accounting-engine.js';
 import { refreshPosEvidence } from '../pilot/pos-redemptions.mjs';
 
+test('cashier enters Cash on Hand before pump photos and the confirmed count survives later readings',async()=>{
+  let {state,report,key,cashier}=fixture();
+  assert.equal(report.pumpRows.some(r=>r.photo_path),false);
+  const counted=await runAction(state,cashier,'/api/demo/cash-confirm',{report,denominations:{1000:'2',500:'1'}});
+  state=counted.state;report=counted.result.report;
+  assert.equal(report.cashCountConfirmed,true);assert.equal(report.actualCashCounted,2500);
+  const row=report.pumpRows[0],photo='/api/pilot/photo?id=cash-first-test';state.photos[photo]={branch:'Liloan',reportKey:key,rowId:row.id};
+  const photographed=await runAction(state,cashier,'/api/demo/pump-reading',{reportKey:key,revision:0,row:{...row,closing:Number(row.opening)+10,closingEntered:true,readingConfirmed:true,photo_path:photo}});
+  assert.equal(photographed.result.report.actualCashCounted,2500);assert.equal(photographed.result.report.cashCountConfirmed,true);
+  assert.deepEqual(photographed.result.report.cashDenominations,{1000:'2',500:'1'});
+  await assert.rejects(runAction(photographed.state,cashier,'/api/demo/cash-confirm',{report,denominations:{1000:'9'}}),/already confirmed/);
+});
+
 test('POS-enabled reading and cash actions return saved revisions through recount, draft save and submission',async()=>{
  let {state,report,key,cashier}=fixture();
  await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:[],points:[]})});

@@ -58,7 +58,7 @@ test('The desktop opens October 5 Shift 2 and retains all eight phone-confirmed 
       assert.match(await opening.innerText(),/2026-10-02/);
       assert.equal(await shift.isEnabled(),!missing);
       if(!missing) {
-        await shift.click();await page.getByRole('heading',{name:'End-of-Shift Cash Count',exact:true}).waitFor();
+        await shift.click();await page.getByRole('heading',{name:'Cash on Hand',exact:true}).waitFor();
         await page.getByLabel('End-of-shift cash count ₱200 quantity',{exact:true}).fill('1');
         await page.getByRole('button',{name:'Confirm physical cash',exact:true}).click();
         await page.getByText(/Physical cash confirmed/).waitFor();

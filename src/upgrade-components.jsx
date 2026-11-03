@@ -128,15 +128,15 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
   const done=rows.filter(row=>readingComplete(photoRow(row))).length;
   return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p><div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={next=>onReading(change,next)}/>)}</div></div>;
 }
-export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
+export function CashConfirmation({report,onSaved,onCountsChange,onReload,onBusy,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
   const reconciliation=review?compute(report):null;
   const unusuallySmall=report.branch==='Liloan'&&reconciliation?.actualCashCountEntered&&reconciliation.expectedCash>1500&&reconciliation.actualCashCounted<reconciliation.expectedCash*.1;
   useEffect(()=>{if(!review&&report.cashCountConfirmed){setError('');setStale(false);}},[report.cashCountConfirmed,review]);
   let valid=false;try{denominationTotal(denominations);valid=true;}catch{ /* An empty/invalid count cannot be confirmed. */ }
-  async function run(action) {setBusy(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409);}finally{setBusy(false);}}
-  async function reload(){setBusy(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);}}
+  async function run(action) {setBusy(true);onBusy?.(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409);}finally{setBusy(false);onBusy?.(false);}}
+  async function reload(){setBusy(true);onBusy?.(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);onBusy?.(false);}}
   return <div className="cash-confirmation">
     {unusuallySmall&&<p className="warning-box" role="alert">Physical cash recorded: <strong>{php(reconciliation.actualCashCounted)}</strong>. Expected cash: <strong>{php(reconciliation.expectedCash)}</strong>. Check that all notes and coins were included, including cash set aside for deposit. Recount the actual cash; do not change it just to match the expected amount.</p>}
     {!review&&<><CashDenominations counts={denominations} onChange={onCountsChange} disabled={report.cashCountConfirmed||busy} label="End-of-shift cash count"/>{report.cashCountConfirmed?<p>✓ Physical cash confirmed: <strong>{php(report.actualCashCounted)}</strong>{!report.cashDenominations&&' · Earlier count has no denomination breakdown.'}</p>:<button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-confirm')}>Confirm physical cash</button>}</>}

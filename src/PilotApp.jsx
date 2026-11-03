@@ -12,6 +12,7 @@ import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
 import { recoverCashDraft } from './cash-recovery.js';
+import { initialCashierStep } from './cash-first-workflow.js';
 import { mergePhoneReadings } from './phone-reading-sync.js';
 import { pilotDraftAlreadySaved } from './pilot-draft-recovery.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
@@ -866,8 +867,7 @@ function readSavedWizardStep(report, maximumStep) {
   const steps = readStorageMap(LOCAL_WIZARD_STEPS_KEY);
   const saved = Number(steps[reportKey(report.branch, report.date, report.shiftId)]);
   // Resume the former sixth step at the combined final step.
-  if (saved === 5 && maximumStep === 4) return 4;
-  return Number.isInteger(saved) && saved >= 0 && saved <= maximumStep ? saved : 0;
+  return initialCashierStep(report,saved,maximumStep);
 }
 
 function saveWizardStep(report, step) {
@@ -4236,7 +4236,7 @@ export default function App() {
   }
 
   if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError) {
-    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} />;
+    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} onSaved={acceptDemoReport} />;
   }
 
   if (!role) {
@@ -4576,7 +4576,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
   const [cashierNameDraft, setCashierNameDraft] = useState(report.cashierName || "");
   const [cashierNameError, setCashierNameError] = useState("");
   const [cashVoucherError, setCashVoucherError] = useState("");
-  const wizardSteps = ["Physical Cash", "Pump Register", "Payments, Deductions and Other Sales", "Reference Inventory and Deliveries", "Review and Submit"];
+  const wizardSteps = ["Cash on Hand", "Pump Register", "Payments, Deductions and Other Sales", "Reference Inventory and Deliveries", "Review and Submit"];
 
   useEffect(() => {
     setWizardStep((report.baselineMissing || report.baselineReport) ? 1 : reportCompleted(report) ? wizardSteps.length - 1 : readSavedWizardStep(report, wizardSteps.length - 1));
@@ -4741,7 +4741,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
 
       <fieldset className="cashier-wizard-step" disabled={reportCompleted(report)}>
       {wizardStep === 0 && (
-      <Section title="End-of-Shift Cash Count">
+      <Section title="Cash on Hand">
 
         <p className="neutral">Count the notes and coins at the end of the shift. The total is calculated automatically. Expected cash and the difference are shown only to admin.</p>
         <CashConfirmation report={report} onSaved={onDemoSaved} onReload={onReloadCash} onCountsChange={value => patchReport(["root", "cashDenominations"], value)} />

@@ -41,7 +41,7 @@ test('Phone confirmation reaches a dirty desktop without re-entering readings or
   await desktop.getByRole('button',{name:'Open Reference Inventory and Deliveries',exact:true}).click();
   const tank=desktop.locator('.cashier-wizard-step table tbody tr').first().locator('input').last();await tank.fill('123');
   await desktop.clock.runFor(2000);await desktop.waitForFunction(()=>document.body.textContent.includes('Simulated unrelated draft conflict'));
-  await phone.getByLabel('Shift to photograph').selectOption(key);
+  await phone.getByLabel('Report shift').selectOption(key);
   const phoneCard=phone.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
   await phoneCard.getByRole('button',{name:'Edit number',exact:true}).click();
   await phoneCard.locator('input[inputmode=decimal]').fill('10012');await phoneCard.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
@@ -54,6 +54,6 @@ test('Phone confirmation reaches a dirty desktop without re-entering readings or
   await card.getByText('10,012.00',{exact:true}).waitFor();assert.equal(await card.getByRole('button',{name:'Yes, confirm reading'}).count(),0);assert.equal(await card.locator('input[inputmode=decimal]').count(),0);
   assert.equal(phoneWrites,writesAfterConfirm);assert.ok(failedDrafts>0);assert.ok(desktopPumpReads>0);
   await desktop.getByRole('button',{name:'Open Reference Inventory and Deliveries',exact:true}).click();assert.equal(await tank.inputValue(),'123');
-  await desktop.getByRole('button',{name:'Open Physical Cash',exact:true}).click();await desktop.getByText(/Physical cash confirmed/).waitFor();assert.equal(state.reports[key].actualCashCounted,200);assert.deepEqual(errors,[]);
+  await desktop.getByRole('button',{name:'Open Cash on Hand',exact:true}).click();await desktop.getByText(/Physical cash confirmed/).waitFor();assert.equal(state.reports[key].actualCashCounted,200);assert.deepEqual(errors,[]);
  }finally{await browser.close();await new Promise(r=>server.httpServer.close(r));}
 });
