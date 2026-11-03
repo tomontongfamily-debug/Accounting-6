@@ -33,12 +33,8 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
     });
     await page.goto('http://127.0.0.1:4341/pilot/cashier');
     // The auth mock restores an already signed-in cashier.
-    await page.getByLabel('Report shift').waitFor();
-    await page.getByLabel('Report shift').selectOption(key);
-    await page.getByRole('heading',{name:'Cash on Hand',exact:true}).waitFor();
-    await page.getByLabel('End-of-shift cash count ₱1000 quantity',{exact:true}).fill('1');
-    await page.getByRole('button',{name:'Confirm physical cash',exact:true}).click();
     await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
+    await page.getByLabel('Shift to photograph').selectOption(key);
     const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
     await card.locator('input[type=file]').setInputFiles(sample.file);
     await card.getByText('Saving photo or reading…',{exact:true}).waitFor({state:'hidden',timeout:30000});

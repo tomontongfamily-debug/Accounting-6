@@ -4236,7 +4236,7 @@ export default function App() {
   }
 
   if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError) {
-    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} onSaved={acceptDemoReport} />;
+    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} />;
   }
 
   if (!role) {

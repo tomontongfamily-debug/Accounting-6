@@ -41,7 +41,7 @@ test('Phone confirmation reaches a dirty desktop without re-entering readings or
   await desktop.getByRole('button',{name:'Open Reference Inventory and Deliveries',exact:true}).click();
   const tank=desktop.locator('.cashier-wizard-step table tbody tr').first().locator('input').last();await tank.fill('123');
   await desktop.clock.runFor(2000);await desktop.waitForFunction(()=>document.body.textContent.includes('Simulated unrelated draft conflict'));
-  await phone.getByLabel('Report shift').selectOption(key);
+  await phone.getByLabel('Shift to photograph').selectOption(key);
   const phoneCard=phone.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
   await phoneCard.getByRole('button',{name:'Edit number',exact:true}).click();
   await phoneCard.locator('input[inputmode=decimal]').fill('10012');await phoneCard.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
