@@ -1,3 +1,6 @@
+import ManagerReconciliation from './ManagerReconciliation.jsx';
+import { managerReconciliationAdjustments } from './manager-reconciliation.js';
+import { cvFuelIssueSummary } from './cv-fuel-issues.js';
 import { additionalReviewFlags } from './accounting-review.js';
 import {FuelLeakLoss} from './fuel-leak-loss.jsx';
 import { PosRedemptions } from './pos-redemptions.jsx';
@@ -995,6 +998,8 @@ function compute(report) {
     fuelSalesByProduct[row.product] += pumpRowSales(report, row);
   });
 
+  const cvFuelIssues = cvFuelIssueSummary(report);
+  const cvFuelExcessProducts = [];
   const leakLoss = fuelLeakLossSummary(report, row => pumpRowSales(report, row));
   const calibrationLiters = tankTotalsByProduct(report, "calibration");
   FUEL_TYPES.forEach((product) => {
@@ -1002,18 +1007,22 @@ function compute(report) {
     const grossSales = n(fuelSalesByProduct[product]);
     const returnedCalibration = Math.min(grossLiters, n(calibrationLiters[product]));
     const averagePrice = grossLiters > 0 ? grossSales / grossLiters : Math.max(0, n(report.prices?.[product]));
-    fuelLiters[product] = Math.max(0, grossLiters - returnedCalibration - leakLoss.meteredLiters[product]);
-    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product]);
+    if (cvFuelIssues.liters[product] > grossLiters - returnedCalibration - leakLoss.meteredLiters[product] + .001 || cvFuelIssues.sales[product] > grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product] + .01) cvFuelExcessProducts.push(product);
+    fuelLiters[product] = Math.max(0, grossLiters - returnedCalibration - leakLoss.meteredLiters[product] - cvFuelIssues.liters[product]);
+    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product] - cvFuelIssues.sales[product]);
   });
 
   const totalLiters = FUEL_TYPES.reduce((sum, product) => sum + fuelLiters[product], 0);
-  const fuelSales = FUEL_TYPES.reduce((sum, product) => sum + fuelSalesByProduct[product], 0);
+  const baseFuelSales = FUEL_TYPES.reduce((sum, product) => sum + fuelSalesByProduct[product], 0);
+  const sourcePurchaseTotal = report.purchaseRows.reduce((sum, row) => sum + n(row.amount), 0);
+  const reconciliation = managerReconciliationAdjustments(report, sourcePurchaseTotal, baseFuelSales);
+  const fuelSales = baseFuelSales + reconciliation.sales;
 
   const poTotal = report.poRows.reduce((sum, row) => sum + n(row.amount), 0);
-  const purchaseTotal = report.purchaseRows.reduce((sum, row) => sum + n(row.amount), 0);
+  const purchaseTotal = sourcePurchaseTotal + reconciliation.cashVouchers;
   const pointsIssued = n(report.pointsIssued);
   const pointsWithdrawn = pointsWithdrawnFromRedemptions(report);
-  const deductionTotal = countedDeductionEntries(report.deductions).reduce((sum, [, value]) => sum + n(value), 0) + poTotal + purchaseTotal;
+  const deductionTotal = countedDeductionEntries(report.deductions).reduce((sum, [, value]) => sum + n(value), 0) + poTotal + purchaseTotal + reconciliation.otherCash;
   const grossSales = fuelSales + n(report.oilSales);
   const expectedCash = grossSales - deductionTotal;
   const deposits = activeDeposits(report);
@@ -1032,7 +1041,7 @@ function compute(report) {
     return sum + pumpVarianceAmount(report, row);
   }, 0);
 
-  const tankOutflowLiters = Object.fromEntries(FUEL_TYPES.map(product => [product, fuelLiters[product] + leakLoss.meteredLiters[product]]));
+  const tankOutflowLiters = Object.fromEntries(FUEL_TYPES.map(product => [product, fuelLiters[product] + leakLoss.meteredLiters[product] + cvFuelIssues.liters[product]]));
   const tankRows = report.tankRows.map((row) => {
     const unadjustedExpectedDip = n(row.opening) + n(row.delivery) - tankOutflowLiters[row.product] - n(row.pullOut);
     const expectedDip = unadjustedExpectedDip - leakLoss.tankLiters[row.product];
@@ -1053,6 +1062,12 @@ function compute(report) {
     fuelSales,
     poTotal,
     purchaseTotal,
+    sourcePurchaseTotal,
+    reconciliationSalesAdjustment: reconciliation.sales,
+    reconciliationCVAdjustment: reconciliation.cashVouchers,
+    cvFuelExcessProducts,
+    cvFuelIssueLiters: cvFuelIssues.totalLiters,
+    cvFuelIssueValue: cvFuelIssues.totalSales,
     pointsIssued,
     pointsWithdrawn,
     deductionTotal,
@@ -6913,6 +6928,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
               </div>
             </div>
 
+            <ManagerReconciliation report={selectedAdminReport} />
             <div className="grid four admin-report-summary-grid">
               <Card title="Total Liters" value={liter(selectedAdminReportResult.totalLiters)} tone="dark" />
               <Card title="Gross Sales" value={peso(selectedAdminReportResult.grossSales)} />
