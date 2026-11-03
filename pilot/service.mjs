@@ -1,7 +1,9 @@
+import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
 import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
-import { accountingCashVouchers } from './cv-allocations.mjs';
+import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
+import { refreshManagerReconciliation } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
 
@@ -34,6 +36,7 @@ function branchAccess(session,branch) {
   if(['Cashier','Manager'].includes(session.role)&&branch!==session.branch) reject('This report belongs to another station.',403);
 }
 function authoritative(r) {
+  r=refreshFuelCVReview(refreshManagerReconciliation(r),compute(r));
   if(r.date<database.startDate) return refreshPosReport(r,database.posRedemptionSync);
   const pay=automaticTransactions(database.pay,r), po=automaticTransactions(database.po,r);
   const pricing=getEffectivePricing(database.priceBook,r.branch,r.date,r.shiftId);
@@ -44,9 +47,9 @@ function authoritative(r) {
   const pilotCashAwaitingDeposit=r.confirmed?money((reserved?0:Number(r.actualCashCounted||0))+remainder):undefined;
   if(r.confirmed) return refreshPosReport({...r,pilotCashAwaitingDeposit},database.posRedemptionSync);
   const purchaseRows=r.confirmed?r.purchaseRows:[...(r.purchaseRows||[]).filter(row=>row.source!=='FuelTech CV'),...accountingCashVouchers(database,r)];
-  const next={...r,purchaseRows,cvImport:{mode:database.mode,source:'FuelTech CV'},pilotCashAwaitingDeposit,prices:{...r.prices,...pricing.prices},poRows:po.transactions.map(t=>({...t,source:'FuelTech Pay'})),onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},deductions:{...r.deductions,gcash:pay.total,card:0,paymaya:0}};
+  const next={...r,purchaseRows,cvFuelRows:accountingFuelVouchers(database,r),cvImport:{mode:database.mode,source:'FuelTech CV'},pilotCashAwaitingDeposit,prices:{...r.prices,...pricing.prices},poRows:po.transactions.map(t=>({...t,source:'FuelTech Pay'})),onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},deductions:{...r.deductions,gcash:pay.total,card:0,paymaya:0}};
   if(next.cashReviewState && next.reviewedExpectedCash!==compute(next).expectedCash) {next.cashReviewState='';next.recountRequired=false;}
-  return refreshPosReport(next,database.posRedemptionSync);
+  return refreshPosReport(refreshFuelCVReview(next,compute(next)),database.posRedemptionSync);
 }
 function candidate(input,session,readingId) {
   if(!input || !['shift-1','shift-2','shift-3'].includes(input.shiftId)) reject('Invalid report.');
@@ -140,7 +143,7 @@ function coverage(branch,date) {
 }
 function exposeReport(report,session) {
   const r=structuredClone(authoritative(report));
-  const sourceIssues=(database.sourceAlerts||[]).filter(a=>a.reportKey===keyOf(r));
+  const sourceIssues=(database.sourceAlerts||[]).filter(a=>(a.reportKey===keyOf(r)||a.reportKeys?.includes(keyOf(r))));
   if(sourceIssues.length) r.checkDetails=[...(r.checkDetails||[]),...sourceIssues.filter(a=>!(r.checkDetails||[]).some(i=>i.id===a.id))];
   if(r.date>=database.startDate) r.pilot=true;
   if(r.confirmed) {
@@ -265,7 +268,7 @@ function validatePriceReadingOrder(report,change) {
         const leakLossError=validateFuelLeakLosses(r,{requireNotes:true});
         if(leakLossError) reject(leakLossError);
         if(r.reviewedExpectedCash!==compute(r).expectedCash) reject('Cash or source totals changed. Check cash reconciliation again.');
-        if((database.sourceAlerts||[]).some(a=>a.reportKey===keyOf(r))) reject('A source voucher changed or was cancelled. Admin must review before submission.');
+        if((database.sourceAlerts||[]).some(a=>(a.reportKey===keyOf(r)||a.reportKeys?.includes(keyOf(r))))) reject('A source voucher changed or was cancelled. Admin must review before submission.');
         if(!database.sourcesVerifiedAt || Date.now()-Date.parse(database.sourcesVerifiedAt)>120000) reject('Verify online payment, PO and CV records before submission.');
         if(!r.cashCountConfirmed || !r.cashReviewState || (r.recountRequired && r.cashReviewState!=='final')) reject('Confirm your cash and complete the recount first.');
         if(r.pumpRows.some(row=>!readingComplete(row))) reject('Complete all pump/nozzle photos and confirmed readings before submitting.');

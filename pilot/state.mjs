@@ -1,8 +1,10 @@
+import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
+import { refreshManagerReconciliation } from '../src/manager-reconciliation.js';
 import { createReport, normalizeReport, carryForwardOpenings, getEffectivePricing, reportKey, compute } from '../src/accounting-engine.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { automaticTransactions, reportIssues } from './domain.mjs';
-import { accountingCashVouchers, cvAllocationReportKey } from './cv-allocations.mjs';
+import { accountingCashVouchers, accountingFuelVouchers, cvAllocationReportKey, cvAllocationReportKeys } from './cv-allocations.mjs';
 import { accountingTiming, dateOffset } from './integrations.mjs';
 
 export function initialState(reportRows, priceRows, config) {
@@ -43,7 +45,7 @@ export function ensureCurrentReports(state, now=new Date().toISOString()) {
 }
 
 const keyOf=r=>reportKey(r.branch,r.date,r.shiftId);
-const sameEvent=(a,b)=>!!a&&!!b&&['id','branch','date','shiftId','amount','category','item','fundingSource','account','transactionNumber','fuelType','liters'].every(k=>a[k]===b[k]);
+const sameEvent=(a,b)=>!!a&&!!b&&['id','branch','date','shiftId','amount','category','item','fundingSource','account','transactionNumber','fuelType','liters'].every(k=>a[k]===b[k])&&JSON.stringify(a.fundingAllocations||[])===JSON.stringify(b.fundingAllocations||[]);
 export function reconcileSources(state,incoming) {
   // Owner rule: explicit cancellation/decline removes the deduction, including
   // from a submitted pilot report. Preserve counted cash and an audit trail.
@@ -73,7 +75,7 @@ export function reconcileSources(state,incoming) {
     const creationMigration=next?.assignmentBasis==='created_at'&&old.assignmentBasis!=='created_at'
       && ['id','branch','amount','category','item','fundingSource'].every(k=>next[k]===old[k]);
     if(!sameEvent(next,old)&&!creationMigration) {
-      alerts.set(`CV:${old.id}`,{id:`CV:${old.id}`,reportKey:cvAllocationReportKey(state,old),category:'MANUAL_DEDUCTION',detail:`CV ${old.reference||old.id} changed after import. Review the release before submitting.`,sourceId:old.id});
+      alerts.set(`CV:${old.id}`,{id:`CV:${old.id}`,reportKey:cvAllocationReportKey(state,old),category:'MANUAL_DEDUCTION',detail:`CV ${old.reference||old.id} changed after import. Review the release before submitting.`,sourceId:old.id,reportKeys:cvAllocationReportKeys(state,old)});
       incoming.cvCashEvents=incoming.cvCashEvents.filter(r=>r.id!==old.id).concat(old);
     } else alerts.delete(`CV:${old.id}`);
   }
@@ -96,9 +98,10 @@ export function reconcileSources(state,incoming) {
   for(const report of Object.values(state.reports)) {
     if(!report.confirmed||report.baselineReport||report.date<state.startDate)continue;
     const pay=automaticTransactions(state.pay,report),po=automaticTransactions(state.po,report);
-    const before={purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],onlinePay:report.onlinePay,deductions:report.deductions};
+    const before={cvFuelRows:report.cvFuelRows||[],purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],onlinePay:report.onlinePay,deductions:report.deductions};
     const after=JSON.parse(JSON.stringify({
       purchaseRows:[...before.purchaseRows.filter(row=>row.source!=='FuelTech CV'),...accountingCashVouchers(state,report)],
+      cvFuelRows:accountingFuelVouchers(state,report),
       poRows:po.transactions.map(row=>({...row,source:'FuelTech Pay'})),
       onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},
       deductions:{...report.deductions,gcash:pay.total,card:0,paymaya:0},
@@ -106,19 +109,21 @@ export function reconcileSources(state,incoming) {
     if(isDeepStrictEqual(before,after))continue;
     const beforeExpectedCash=compute(report).expectedCash;
     Object.assign(report,after);
+    Object.assign(report,refreshManagerReconciliation(report));
+    Object.assign(report,refreshFuelCVReview(report,compute(report)));
     report.pilotRevision=Number(report.pilotRevision||0)+1;
     report.pilotLastNonReadingRevision=report.pilotRevision;
     report.serverMeta={...report.serverMeta,savedAt:new Date().toISOString()};
     report.checkDetails=reportIssues(report,compute(report).cashVariance);
     report.checkCategories=[...new Set(report.checkDetails.map(i=>i.category))];report.checkRequired=!!report.checkDetails.length;
-    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-shift-reconciled',role:'System',branch:'Liloan',reportKey:keyOf(report),before,after,beforeExpectedCash,afterExpectedCash:compute(report).expectedCash,assignment:'CV creation time; Pay paid time; PO transaction time'});
+    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-shift-reconciled',role:'System',branch:'Liloan',reportKey:keyOf(report),before,after,beforeExpectedCash,afterExpectedCash:compute(report).expectedCash,assignment:'Explicit CV funding or approved historical allocation; legacy CV creation time; Pay paid time; PO transaction time'});
   }
   // Persist review evidence with the canonical report as well as pilot state.
   // Admin's general report endpoint cannot see state-only source alerts.
   for(const report of Object.values(state.reports)) {
     if(report.date<state.startDate||report.baselineReport)continue;
     const issues=[...(report.integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
-      ...state.sourceAlerts.filter(a=>a.reportKey===keyOf(report)).map(a=>({...a,source:'Source reconciliation'}))];
+      ...state.sourceAlerts.filter(a=>(a.reportKey===keyOf(report)||a.reportKeys?.includes(keyOf(report)))).map(a=>({...a,source:'Source reconciliation'}))];
     if(isDeepStrictEqual(report.integrationIssues||[],issues))continue;
     report.integrationIssues=issues;
     if(report.confirmed) {
