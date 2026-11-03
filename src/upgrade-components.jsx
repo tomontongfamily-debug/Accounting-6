@@ -1,6 +1,6 @@
 import { pilotPost } from './pilot-client.js';
 import { useEffect, useRef, useState } from 'react';
-import { detectTotalizer as detect, prepareTotalizer } from './totalizer-ocr.js';
+import { detectTotalizerResult as detect, prepareTotalizer } from './totalizer-ocr.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
@@ -33,6 +33,7 @@ export async function savePumpReading(report,row) {
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const phoneView=usePhoneView();
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
+  const [ocrResult,setOcrResult]=useState(row.ocr_result);
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
@@ -43,7 +44,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   useEffect(()=>{onBusy?.(row.id,busy||camera||openingCamera);return()=>onBusy?.(row.id,false);},[busy,camera,openingCamera,onBusy,row.id]);
   useEffect(()=>{
     if(busy || Number(row.readingRevision||0)===revision.current)return;
-    revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
+    revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setOcrResult(row.ocr_result);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
   },[row,busy]);
   async function saveReading(next) {
     const saved=await onConfirm({...next,readingRevision:revision.current});
@@ -53,21 +54,21 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const warning=readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
   async function processPhoto(data) {
-    setBusy(true);setError('');setDraft('');setDetected(null);setEditing(false);
+    setBusy(true);setError('');setDraft('');setDetected(null);setOcrResult(undefined);setEditing(false);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
-      const recognition=detect(data).catch(()=>null);
+      const recognition=detect(data);
       await onPrepare?.();
       const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,replaceReading:true,revision:revision.current,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
       if(!active.current)return;setPhoto(saved.photo_path);
       // Photo upload atomically invalidates the old confirmation. Persist the
       // suggestion in one reading save, using the revision returned by upload.
       revision.current=Number(saved.readingRevision);
-      const value=await recognition;
-      if(!active.current)return;setDetected(value);setDraft(value===null?'':String(value));
-      await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value});
+      const {reading:value,attempt}=await recognition;
+      if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
+      await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt});
       if(value===null)setEditing(true);
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }
@@ -103,7 +104,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     if(!photo||draft===''||warning.blocked)return;
     if(warning.level!=='NORMAL'&&!window.confirm(`${warning.message}\nConfirm this reading only after checking the pump. Admin will see the warning.`))return;
     setBusy(true);setError('');
-    try {await saveReading({...row,closing:Number(draft),closingEntered:true,closingEntrySource:'cashier',photo_path:photo,ocr_detected_reading:detected,ocr_was_edited:detected!==null&&Number(draft)!==detected,readingConfirmed:true,confirmed_closing_reading:Number(draft),calculated_liters:warning.liters,reading_warning:warning.level});
+    try {await saveReading({...row,closing:Number(draft),closingEntered:true,closingEntrySource:'cashier',photo_path:photo,ocr_detected_reading:detected,ocr_result:ocrResult,ocr_was_edited:detected!==null&&Number(draft)!==detected,readingConfirmed:true,confirmed_closing_reading:Number(draft),calculated_liters:warning.liters,reading_warning:warning.level});
     setEditing(false);
     } catch(e){setError(e.message);} finally{setBusy(false);}
   }
@@ -118,6 +119,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo?'Retake photo':'Open camera'}</button>{!phoneView&&<label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label>}</div>
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
+    {photo&&!busy&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?'Automatic reader failed. The photo is saved; enter the visible number below.':ocrResult.status==='pending'?'The photo was saved, but its automatic reading did not finish. Enter the visible number below.':'Automatic reader could not verify every digit. Enter the visible number below.'}</p>}
     {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/>{warning.message}</p>}
       <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>

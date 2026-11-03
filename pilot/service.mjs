@@ -3,6 +3,7 @@ import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEf
 import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
 import { accountingCashVouchers } from './cv-allocations.mjs';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
+import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -68,7 +69,8 @@ function candidate(input,session,readingId) {
     if(!row) reject('Every configured pump/nozzle is required.');
     const photo=database.photos[row.photo_path];
     if(row.photo_path && (!photo || photo.reportKey!==keyOf(old) || photo.rowId!==base.id || photo.changeId)) reject('The photo does not belong to this reading.');
-    return {...base,closing:row.closing,closingEntered:row.closingEntered,closingEntrySource:row.closingEntrySource,photo_path:row.photo_path,ocr_detected_reading:row.ocr_detected_reading??null,ocr_was_edited:row.ocr_detected_reading!=null && Number(row.closing)!==Number(row.ocr_detected_reading),readingConfirmed:row.readingConfirmed,calculated_liters:row.closing===''?null:money(Number(row.closing)-Number(base.opening))};
+    const ocr=mergeOcrEvidence(base,row);
+    return {...base,closing:row.closing,closingEntered:row.closingEntered,closingEntrySource:row.closingEntrySource,photo_path:row.photo_path,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null && Number(row.closing)!==Number(ocr.ocr_detected_reading),readingConfirmed:row.readingConfirmed,calculated_liters:row.closing===''?null:money(Number(row.closing)-Number(base.opening))};
   });
   const allowed=Object.fromEntries(['cashierName','tankRows','fuelLeakLosses','deliveries','oilSales','actualCashCounted','cashDenominations','notes','coke','pointsIssued','pointsWithdrawn','clientSave'].filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
   const incomingLeakLossError=validateFuelLeakLosses({...old,...allowed,pumpRows:rows});
@@ -332,7 +334,7 @@ function validatePriceReadingOrder(report,change) {
       row.readingRevision=Number(base.readingRevision||0)+1;
       // A changed reading requires a fresh final cash check.
       r.cashReviewState='';r.recountRequired=false;
-      audit(row.ocr_was_edited?'ocr-reading-edited':'pump-reading-saved',session,{reportKey:keyOf(r),rowId:row.id,ocr:row.ocr_detected_reading,final:row.closing});
+      audit(row.ocr_was_edited?'ocr-reading-edited':'pump-reading-saved',session,{reportKey:keyOf(r),rowId:row.id,photo_path:row.photo_path,ocr:row.ocr_detected_reading,ocr_result:row.ocr_result,final:row.closing});
       const saved=storeReport(r,session,'pump-reading-saved');
       return send({ok:true,report:exposeReport(saved.report,session)});
     }
@@ -350,10 +352,11 @@ function validatePriceReadingOrder(report,change) {
       if(!photo||photo.reportKey!==keyOf(r)||photo.rowId!==row.id||photo.changeId!==change.id||photo.product!==change.product||photo.effectiveTime!==change.effectiveTime) reject('This photo does not belong to this price-change reading.');
       const value=input.row.readingConfirmed?amount(input.row.closing):'';
       if(input.row.readingConfirmed&&(value<Number(row.opening)||(row.closingEntered&&value>Number(row.closing)))) reject('Price-change reading must be between opening and the confirmed closing.');
-      const evidence={photo_path:input.row.photo_path,readingConfirmed:!!input.row.readingConfirmed,readingRevision:Number(previous?.readingRevision||0)+1,ocr_detected_reading:input.row.ocr_detected_reading??null,ocr_was_edited:input.row.ocr_detected_reading!=null&&value!==Number(input.row.ocr_detected_reading)};
+      const ocr=mergeOcrEvidence(previous,input.row);
+      const evidence={photo_path:input.row.photo_path,readingConfirmed:!!input.row.readingConfirmed,readingRevision:Number(previous?.readingRevision||0)+1,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null&&value!==Number(ocr.ocr_detected_reading)};
       change.readingPhotos={...change.readingPhotos,[key]:evidence};change.readings={...change.readings,[key]:value};change.confirmedAt='';change.photoRequired=true;
       r.cashReviewState='';r.recountRequired=false;
-      audit('price-change-reading-saved',session,{reportKey:keyOf(r),changeId:change.id,rowId:row.id,final:value,ocr:evidence.ocr_detected_reading});
+      audit('price-change-reading-saved',session,{reportKey:keyOf(r),changeId:change.id,rowId:row.id,photo_path:evidence.photo_path,final:value,ocr:evidence.ocr_detected_reading,ocr_result:evidence.ocr_result});
       return send(storeReport(r,session,'price-change-photo-saved'));
     }
     if(route==='/api/demo/photo') {
@@ -365,6 +368,7 @@ function validatePriceReadingOrder(report,change) {
       const change=input.changeId?r.midShiftPriceChanges?.find(c=>c.id===input.changeId):null;
       if(input.changeId&&(!change||!change.effectiveTime||photoRow.product!==change.product)) reject('Save the product and price-change time before taking photos.');
       const previous=change?change.readingPhotos?.[midShiftPumpKey(photoRow)]:photoRow;
+      const previousPhoto=previous?.photo_path,previousOcr=previous?.ocr_detected_reading;
       if(input.replaceReading&&Number(input.revision)!==Number(previous?.readingRevision||0))reject('This reading changed on another device. Refresh before replacing its photo.',409);
       if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(input.data||'')) reject('Use a JPEG photo.');
       const image=Buffer.from(input.data.split(',')[1],'base64');
@@ -376,7 +380,7 @@ function validatePriceReadingOrder(report,change) {
       let readingRevision;
       if(input.replaceReading){
         readingRevision=Number(previous?.readingRevision||0)+1;
-        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_was_edited:false,readingRevision};
+        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:{status:'pending',version:TOTALIZER_VERSION},ocr_was_edited:false,readingRevision};
         if(change){
           const pumpKey=midShiftPumpKey(photoRow);
           change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;
@@ -384,7 +388,7 @@ function validatePriceReadingOrder(report,change) {
         r.cashReviewState='';r.recountRequired=false;
         storeReport(r,session,change?'price-change-photo-saved':'pump-reading-saved');
       }
-      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision}: {})});
+      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id,photo_path:photoPath,previousPhoto,previousOcr,...(change?{changeId:change.id}: {})});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision}: {})});
     }
     if(route==='/api/demo/issue') {
       requireRole(session,'Cashier');const r=candidate(input.report,session);

@@ -1,5 +1,6 @@
 import { createWorker } from 'tesseract.js';
-import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
+import { TOTALIZER_VERSION } from './ocr-evidence.js';
+import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
@@ -12,6 +13,15 @@ export function prepareTotalizer(){
 export function detectTotalizer(data){
   const request=detectionQueue.catch(()=>{}).then(()=>recognizePhoto(data));
   detectionQueue=request;return request;
+}
+
+export async function detectTotalizerResult(data){
+  try{
+    const reading=await detectTotalizer(data);
+    return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,completedAt:new Date().toISOString()}};
+  }catch{
+    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason:'recognition-failed',completedAt:new Date().toISOString()}};
+  }
 }
 
 async function recognizePhoto(data){
@@ -28,12 +38,13 @@ async function recognizePhoto(data){
   let worker;
   try{
     worker=await ready;
-    const readings=new Set();
+    const readings=new Set(),evidence=new Map();
     let sensitiveMask;
     for(const primary of analysis.regions){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
       for(const region of layouts){
+        const clean=withoutDisplayFrame(analysis.mask,canvas.width,region);
         const votes=new Map(),agreed=new Set();
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
           // Retain the original row boundaries. Re-detecting them on a more
@@ -43,7 +54,7 @@ async function recognizePhoto(data){
           if(agreed.size===1)break;
           if(sensitive&&[...votes.values()].some(count=>count>=2))break;
           if(sensitive)sensitiveMask ||= totalizerMask(gray,canvas.width,canvas.height,5);
-          const crop=totalizerCrop(sensitive?sensitiveMask:analysis.mask,canvas.width,canvas.height,region,pad,grow);
+          const crop=totalizerCrop(sensitive?withoutDisplayFrame(sensitiveMask,canvas.width,region):clean,canvas.width,canvas.height,region,pad,grow);
           const part=document.createElement('canvas');part.width=crop.width;part.height=crop.height;
           part.getContext('2d').putImageData(new ImageData(crop.rgba,crop.width,crop.height),0,0);
           const passes=[];
@@ -55,7 +66,10 @@ async function recognizePhoto(data){
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
             const verifiedLeading=digits[0]?.lcdVerified===true;
-            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components):null;
+            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components,{integerDigits:6,decimalPlaces:2}):null;
+            // The supported station LCD has six integer and two decimal cells.
+            // A frame recognized as a ninth digit must not become a suggestion.
+            if(value!==null&&!evidence.has(value))evidence.set(value,{symbols:translated,segments:segmentDisplaySymbols(clean,canvas.width,region)});
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
             passes.push({value,confidence:result.confidence});
@@ -70,6 +84,9 @@ async function recognizePhoto(data){
         if(agreed.size>1)return null;
       }
     }
-    return readings.size===1?[...readings][0]:null;
+    if(readings.size!==1)return null;
+    const value=[...readings][0];
+    const candidate=evidence.get(value);
+    return verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }
