@@ -6,6 +6,63 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {refreshPosEvidence} from '../pilot/pos-redemptions.mjs';
 
+for(const action of ['cash-check','cash-recount'])test(`${action} recovers a stalled response without repeating a committed cash action`,async()=>{
+ const server=await preview({preview:{host:'127.0.0.1',port:4354,strictPort:true}});
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  let {state,key,cashier}=fixture();const report=state.reports[key];
+  Object.values(state.reports).find(r=>r.confirmed).openingSetupComplete=true;
+  for(const row of report.pumpRows){
+   const photo_path='/api/pilot/photo?id='+row.id;
+   state.photos[photo_path]={branch:'Liloan',reportKey:key,rowId:row.id};
+   Object.assign(row,{closing:Number(row.opening)+10,closingEntered:true,readingConfirmed:true,readingRevision:1,photo_path});
+  }
+  report.tankRows.forEach(row=>row.actualDip=10000);
+  Object.assign(report,{pilot:true,pilotRevision:1,pilotLastNonReadingRevision:1,pilotCashRevision:1,cashCountConfirmed:true,cashDenominations:{1000:1},actualCashCounted:1000,cashReviewState:'',recountRequired:false});
+  if(action==='cash-recount')state=(await runAction(state,cashier,'/api/demo/cash-check',{report})).state;
+  const page=await browser.newPage({viewport:{width:1280,height:1000},timezoneId:'Asia/Manila'});
+  await page.clock.install({time:new Date('2026-09-23T02:00:00Z')});
+  const errors=[];let actions=0;
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/api/**',async route=>{
+   const path=new URL(route.request().url()).pathname;let result,status=200;
+   if(path==='/api/pilot/photo')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg"><text>10010</text></svg>'});
+   if(path==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:state.startDate};
+   else if(path==='/api/auth/station-session'){status=401;result={ok:false};}
+   else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',token:'cookie',branch:'Liloan',expiresAt:Date.now()+3600000};
+   else if(path==='/api/pilot/action'){
+    const body=route.request().postDataJSON();
+    try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId});state=out.state;result=out.result;}
+    catch(e){status=e.status||400;result={ok:false,error:e.message};}
+    // The server accepted the count, but its response never reaches the PC.
+    if(body.route===`/api/demo/${action}`){actions++;return;}
+   }else{status=404;result={ok:false,error:'Unexpected test route'};}
+   await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
+  });
+  await page.goto('http://127.0.0.1:4354/pilot/cashier');
+  await page.getByLabel('Six-digit branch PIN').fill('000000');await page.getByRole('button',{name:'Proceed',exact:true}).click();
+  await page.locator('.cashier-shift-card').first().click();
+  await page.getByRole('button',{name:'Open Review and Submit',exact:true}).click();
+  if(action==='cash-recount')await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).fill('2');
+  const button=page.getByRole('button',{name:action==='cash-check'?'Check my cash count':'Confirm final recount',exact:true});
+  const sent=page.waitForRequest(r=>r.url().endsWith('/api/pilot/action')&&r.postDataJSON()?.route===`/api/demo/${action}`);
+  await button.click();await sent;
+  await page.getByText('Waiting for the station server to verify the saved shift…',{exact:true}).waitFor();
+  await page.clock.fastForward(30001);
+  await page.getByRole('alert').filter({hasText:'The station server took too long to respond.'}).waitFor();
+  const refresh=page.getByRole('button',{name:'Refresh saved shift',exact:true});
+  assert.equal(await refresh.isEnabled(),true);
+  await refresh.click();
+  const expected=action==='cash-recount'?2000:1000;
+  if(action==='cash-recount')await page.getByText('✓ Final recount recorded. Admin will review the submitted result.',{exact:true}).waitFor();
+  else await page.getByRole('button',{name:'Confirm final recount',exact:true}).waitFor();
+  assert.equal(state.reports[key].actualCashCounted,expected);
+  assert.equal(state.reports[key].cashCountConfirmed,true);
+  assert.equal(state.reports[key].confirmed,false);
+  assert.equal(actions,1);assert.deepEqual(errors,[]);
+ }finally{await browser.close();await new Promise(r=>server.httpServer.close(r));}
+});
+
 test('Submit explains unfinished cash reconciliation, focuses the next action, and completes after a recount',async()=>{
  const server=await preview({preview:{host:'127.0.0.1',port:4354,strictPort:true}});
  const browser=await chromium.launch({channel:'msedge',headless:true});
