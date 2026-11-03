@@ -41,10 +41,16 @@ test('All station photos auto-fill through the phone camera flow',{skip:!process
     assert.equal(await page.locator('input[type=file]').count(),0);
     await capturePumpCamera(page,card);
     await card.getByText('Saving photo or reading…',{exact:true}).waitFor({state:'hidden',timeout:30000});
-    const input=card.locator('input[inputmode=decimal]');await input.waitFor();
-    const reading=(await input.inputValue())===''?null:Number(await input.inputValue());
-    results.push({sample:i+1,file:sample.file,reading,expected:sample.expected});
-    assert.equal(reading,sample.expected,`Phone upload photo ${i+1}`);
+    const input=card.locator('input[inputmode=decimal]');
+    const reading=await input.count()&&((await input.inputValue())!=='')?Number(await input.inputValue()):null;
+    const savedRow=state.reports[key].pumpRows[0];
+    results.push({sample:i+1,file:sample.file,reading,expected:sample.expected,attempt:savedRow.ocr_result});
+    if(reading===null){
+      console.log('Automatic capture did not produce a number',JSON.stringify({sample:i+1,attempt:savedRow.ocr_result,card:await card.innerText()}));
+      fs.mkdirSync('../ocr-camera-debug',{recursive:true});await card.screenshot({path:`../ocr-camera-debug/sample-${i+1}.png`});
+      const uploaded=uploads.get(new URL('http://fixture'+savedRow.photo_path).searchParams.get('id'));if(uploaded)fs.writeFileSync(`../ocr-camera-debug/sample-${i+1}.jpg`,uploaded);
+    }
+    if(process.env.TOTALIZER_UPLOAD_RESULTS)fs.writeFileSync(process.env.TOTALIZER_UPLOAD_RESULTS,JSON.stringify(results,null,2));
     if(reading!==null){
      assert.notEqual(await input.getAttribute('readonly'),null,'No manual input is needed');
      assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,reading);
@@ -56,5 +62,6 @@ test('All station photos auto-fill through the phone camera flow',{skip:!process
   }
   console.log('Phone upload OCR validation:',JSON.stringify(results));
   if(process.env.TOTALIZER_UPLOAD_RESULTS)fs.writeFileSync(process.env.TOTALIZER_UPLOAD_RESULTS,JSON.stringify(results,null,2));
+  for(const r of results)assert.equal(r.reading,r.expected,`Phone upload photo ${r.sample}`);
  }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}
 });

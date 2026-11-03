@@ -1,5 +1,5 @@
 import { pilotPost } from './pilot-client.js';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect, prepareTotalizer } from './totalizer-ocr.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
@@ -37,6 +37,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
+  const captureInFlight=useRef(false);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
   useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
@@ -53,13 +54,13 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   }
   const warning=readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
-  async function processPhoto(data) {
+  async function processPhoto(data,recognitionImage=data) {
     setBusy(true);setError('');setDraft('');setDetected(null);setOcrResult(undefined);setEditing(false);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
-      const recognition=detect(data);
+      const recognition=detect(recognitionImage);
       await onPrepare?.();
       const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,replaceReading:true,revision:revision.current,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
       if(!active.current)return;setPhoto(saved.photo_path);
@@ -69,7 +70,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
       const {reading:value,attempt}=await recognition;
       if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
       await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt});
-      if(value===null)setEditing(true);
+      if(value===null)setEditing(false);
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }
   async function openCamera() {
@@ -87,10 +88,27 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     }catch{if(active.current)setError(phoneView?'Camera access is unavailable. Allow camera access in your phone browser settings, then tap Open camera again.':'Camera access is unavailable. Use the photo picker below.');}
     finally{if(active.current)setOpeningCamera(false);}
   }
-  function capture() {
-    const canvas=document.createElement('canvas');const v=video.current;if(!v?.videoWidth)return;
-    const scale=Math.min(1,1800/Math.max(v.videoWidth,v.videoHeight));canvas.width=v.videoWidth*scale;canvas.height=v.videoHeight*scale;canvas.getContext('2d').drawImage(v,0,0,canvas.width,canvas.height);
-    stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);processPhoto(canvas.toDataURL('image/jpeg',.9));
+  async function capture() {
+    const v=video.current;if(!v?.videoWidth||captureInFlight.current)return;
+    captureInFlight.current=true;setBusy(true);
+    try{
+      // Dimensions can be available before the first camera image is presented.
+      // Wait for real frames and encode them while the source track is alive.
+      if(v.requestVideoFrameCallback)await new Promise(resolve=>{
+        let frames=0,frame;
+        const finish=()=>{window.clearTimeout(timer);if(frame!==undefined)v.cancelVideoFrameCallback?.(frame);resolve();};
+        const next=()=>{if(++frames>=2)finish();else frame=v.requestVideoFrameCallback(next);};
+        const timer=window.setTimeout(finish,500);frame=v.requestVideoFrameCallback(next);
+      });
+      if(!active.current||!v.srcObject?.active)return;
+      const canvas=document.createElement('canvas'),scale=Math.min(1,1800/Math.max(v.videoWidth,v.videoHeight));
+      canvas.width=Math.round(v.videoWidth*scale);canvas.height=Math.round(v.videoHeight*scale);const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(v,0,0,canvas.width,canvas.height);
+      const recognitionImage=context.getImageData(0,0,canvas.width,canvas.height);
+      let data;
+      for(const quality of[.95,.9,.85,.8]){data=canvas.toDataURL('image/jpeg',quality);if(data.length<=2700000)break;}
+      stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);await processPhoto(data,recognitionImage);
+    }catch{if(active.current)setError('The camera frame was not ready. Please capture the photo again.');}
+    finally{captureInFlight.current=false;if(active.current)setBusy(false);}
   }
   async function selectPhoto(event) {
     if(phoneView)return;
@@ -115,26 +133,29 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</small></div><b>{readingComplete(row)?'✓ Complete':'Photo required'}</b></header>
     {photo&&<img src={photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
-    {camera&&<div><video ref={video} autoPlay playsInline muted/><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
+    {camera&&<div><p>Fill the guide with all eight digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo?'Retake photo':'Open camera'}</button>{!phoneView&&<label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label>}</div>
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
-    {photo&&!busy&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?'Automatic reader failed. The photo is saved; enter the visible number below.':ocrResult.status==='pending'?'The photo was saved, but its automatic reading did not finish. Enter the visible number below.':'Automatic reader could not verify every digit. Enter the visible number below.'}</p>}
-    {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>
+    {photo&&!busy&&!row.readingConfirmed&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?'Automatic reader failed to load. The photo is saved. Reconnect and retake to retry.':ocrResult.status==='pending'?'The automatic reading did not finish. Retake the photo to try again.':'Automatic reader could not verify every digit. Retake a closer photo without reflections.'}</p>}
+    {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&editing&&<p className="neutral">Check every digit in the saved photo before entering a number. Retake if any digit is covered or unclear.</p>}{(detected!==null||editing)&&<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>}
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/>{warning.message}</p>}
-      <div className="demo-actions"><button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>
+      <div className="demo-actions">{(detected!==null||editing)&&<button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button>}<button type="button" className="secondary" onClick={editReading}>{detected===null&&!editing?'Enter number manually':'Edit number'}</button></div>
     </div>}</>}
     {!change&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
   </article>;
 }
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {
   const groups=[...new Set(report.pumpRows.map(r=>r.pump))];const [pump,setPump]=useState(groups[0]);
+  const [busyRows,setBusyRows]=useState({});
+  const onPumpBusy=useCallback((id,busy)=>{setBusyRows(previous=>({...previous,[id]:busy}));onBusy?.(id,busy);},[onBusy]);
+  const readingBusy=Object.values(busyRows).some(Boolean);
   const done=report.pumpRows.filter(readingComplete).length;
   const sales=report.pumpRows.filter(readingComplete).map(row=>pumpSalesBreakdown(report,row));
   const total=key=>sales.reduce((sum,row)=>sum+row[key],0);
   return <section className="section"><div className="section-heading"><h2>Closing pump readings</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each totalizer, check the detected number, then confirm. All readings and photos are required to continue.</p>
     {done>0&&<div className="pump-sales-summary" aria-label="Confirmed pump sales totals"><p>Metered liters: <b>{total('meteredLiters').toFixed(2)} L</b> · Leak loss: <b>{total('lossLiters').toFixed(2)} L</b></p><p>Total metered sales: <b>{php(total('grossSales'))}</b> · Paid pump sales: <b>{sales.some(row=>row.excessLoss)?'Check leak loss entries':php(total('paidSales'))}</b></p><small>Totals use confirmed pump readings. Tank calibration and other report adjustments are shown in the final report.</small></div>}
-    <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} locked={report.confirmed} onConfirm={onReading} onBusy={onBusy}/>)}</div></section>;
+    <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" disabled={readingBusy} className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} locked={report.confirmed} onConfirm={onReading} onBusy={onPumpBusy}/>)}</div></section>;
 }
 export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}) {
   const rows=report.pumpRows.filter(row=>row.product===change.product);

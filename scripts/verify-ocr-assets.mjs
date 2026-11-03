@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+const read=file=>fs.readFileSync(new URL('../'+file,import.meta.url));
+const sha=file=>crypto.createHash('sha256').update(read(file)).digest('hex');
+assert.equal(sha('public/ocr/neural/english-mobile.onnx'),'c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8');
+assert.equal(JSON.parse(read('public/ocr/neural/characters.json')).length,438);
+assert.equal(JSON.parse(read('node_modules/onnxruntime-web/package.json')).version,'1.31.1');
+assert.ok(read('public/ocr/neural/LICENSE').length>1000);assert.ok(read('public/ocr/neural/PADDLE-LICENSE').length>1000);
+assert.ok(read('public/ocr/ort/LICENSE').length>1000);
+assert.equal(sha('public/ocr/ort/ort-wasm-simd-threaded.wasm'),sha('node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm'));
+console.log('OCR model, vocabulary, runtime and license checks passed.');

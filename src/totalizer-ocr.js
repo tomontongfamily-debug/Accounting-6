@@ -1,10 +1,14 @@
 import { createWorker } from 'tesseract.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
+import { prepareNeuralTotalizer, neuralTotalizerCandidates } from './totalizer-neural.js';
+import { readTotalizerGrid } from './totalizer-grid.js';
+import { chooseTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
 export function prepareTotalizer(){
+  prepareNeuralTotalizer().catch(()=>{});
   workerPromise ||= createWorker('ssd_int',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false})
     .then(async worker=>{await worker.setParameters({tessedit_char_whitelist:'0123456789.',user_defined_dpi:'150'});return worker;})
     .catch(error=>{workerPromise=undefined;throw error;});
@@ -28,7 +32,14 @@ async function recognizePhoto(data){
   const ready=prepareTotalizer();
   // Attach a rejection handler while image preparation runs.
   ready.catch(()=>{});
-  const image=new Image();image.src=data;await image.decode();
+  let image;
+  if(typeof data==='string'){image=new Image();image.src=data;await image.decode();}
+  else{
+    // Camera recognition uses a snapshot of the original pixels, before JPEG
+    // compression can erase a narrow segment or turn a reflection into one.
+    image=document.createElement('canvas');image.width=data.width;image.height=data.height;
+    image.getContext('2d').putImageData(data,0,0);
+  }
   const scale=Math.min(1,1280/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
@@ -38,7 +49,7 @@ async function recognizePhoto(data){
   let worker;
   try{
     worker=await ready;
-    const readings=new Set(),evidence=new Map();
+    const readings=new Set(),evidence=new Map(),glyphs=[];
     let sensitiveMask;
     for(const primary of analysis.regions){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
@@ -65,6 +76,7 @@ async function recognizePhoto(data){
             const leading=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
+            glyphs.push(...digits.filter(s=>s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
             let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components,{integerDigits:6,decimalPlaces:2}):null;
             // The supported station LCD has six integer and two decimal cells.
@@ -81,12 +93,18 @@ async function recognizePhoto(data){
         // Agreement across layouts or stroke widths is required. The visible
         // decimal is checked separately; a tighter crop cannot omit a digit.
         if(agreed.size===1){readings.add([...agreed][0]);break;}
-        if(agreed.size>1)return null;
+        if(agreed.size>1){readings.add(null);break;}
       }
     }
-    if(readings.size!==1)return null;
-    const value=[...readings][0];
-    const candidate=evidence.get(value);
-    return verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
+    const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
+    const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
+    if(verified!==null)return verified;
+    // A neural model reads the original color row at several resolutions;
+    // physical cell fitting independently checks the shape and decimal layout.
+    // Model-loading failure retains the previously verified reader's behavior.
+    let neural;
+    try{neural=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+    const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
+    return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }
