@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
 import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
 import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
-import { refreshManagerReconciliation } from '../src/manager-reconciliation.js';
+import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
 
@@ -36,7 +36,7 @@ function branchAccess(session,branch) {
   if(['Cashier','Manager'].includes(session.role)&&branch!==session.branch) reject('This report belongs to another station.',403);
 }
 function authoritative(r) {
-  r=refreshFuelCVReview(refreshManagerReconciliation(r),compute(r));
+  r=refreshFuelCVReview(refreshManagerReconciliation(r,database),compute(r));
   if(r.date<database.startDate) return refreshPosReport(r,database.posRedemptionSync);
   const pay=automaticTransactions(database.pay,r), po=automaticTransactions(database.po,r);
   const pricing=getEffectivePricing(database.priceBook,r.branch,r.date,r.shiftId);
@@ -152,6 +152,7 @@ function exposeReport(report,session) {
       if(d.status!=='rejected'&&d.unexplainedDifference!==0) r.checkDetails.push({category:'BANK_DEPOSIT',detail:`Deposit ${d.reference}: unexplained difference ${d.unexplainedDifference.toFixed(2)}.`});
       if(d.status==='rejected') r.checkDetails.push({category:'BANK_VERIFIER',detail:`Deposit ${d.reference} rejected: ${d.rejectionReason}.`});
     }
+    r.checkDetails.push(...managerDepositCoverageIssues(r,database));
     r.checkCategories=[...new Set(r.checkDetails.map(i=>i.category))];r.checkRequired=!!r.checkDetails.length;
   }
   if(session.role==='Cashier') {

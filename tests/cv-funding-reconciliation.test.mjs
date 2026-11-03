@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createReport, compute, reportKey } from '../src/accounting-engine.js';
 import { accountingCashVouchers, accountingFuelVouchers } from '../pilot/cv-allocations.mjs';
-import { managerReconciliationAdjustments, managerReconciliationIssues } from '../src/manager-reconciliation.js';
+import { managerReconciliationAdjustments, managerReconciliationIssues, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import {runAction} from '../pilot/service.mjs';
 import {fixture} from './pilot-fixture.mjs';
@@ -53,4 +53,14 @@ test('cashier reads use approved totals while original review evidence remains a
  assert.equal(cashier.managerReconciliation.original,undefined);assert.equal(cashier.managerReconciliation.manualVariance,undefined);assert.equal(compute(cashier).cashVariance,0);
  const admin=(await runAction(state,{role:'Admin'},'/api/store/load')).result.reportRows.find(r=>r.report_key===key).data;
  assert.equal(admin.managerReconciliation.original.privateReview,'Retained Admin evidence');assert.deepEqual(state.reports[key],a);
+});
+
+test('corrected cash counts flag retained deposit coverage without changing bank records',()=>{
+ const a=createReport('Liloan','2026-10-19',{Premium:90,Regular:89,Diesel:100},'shift-1');a.actualCashCounted=900;
+ a.managerReconciliation={version:1,approvedBy:'Owner',approvedAt:'2026-11-03T00:00:00Z',sourceSha256:'a'.repeat(64),grossFuelSales:1000,calibrationCash:0,cashVoucherTotal:100,otherCashOutlays:0,cashCount:900};
+ const key=reportKey(a.branch,a.date,a.shiftId),deposit={id:'saved',reference:'receipt',status:'pending',anchorKey:key,coveredReportKeys:[key],coveredCash:1000,amount:1000},original=structuredClone(deposit),state={reports:{[key]:a},deposits:[deposit]};
+ const issues=managerDepositCoverageIssues(a,state);assert.equal(issues[0].category,'BANK_DEPOSIT');assert.match(issues[0].detail,/-100.00/);assert.deepEqual(deposit,original);
+ state.deposits[0]={...deposit,coveredCash:900};assert.deepEqual(managerDepositCoverageIssues(a,state),[]);
+ state.deposits[0]={...deposit,status:'rejected'};assert.deepEqual(managerDepositCoverageIssues(a,state),[]);
+ delete a.managerReconciliation;state.deposits[0]=deposit;assert.deepEqual(managerDepositCoverageIssues(a,state),[]);
 });
