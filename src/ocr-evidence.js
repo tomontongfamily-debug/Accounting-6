@@ -1,4 +1,4 @@
-export const TOTALIZER_VERSION='lcd-frame-check-2';
+export const TOTALIZER_VERSION='lcd-neural-3';
 
 // An OCR attempt belongs to one photo, independently of the cashier's number.
 // A confirmation/edit from an older client must not erase that evidence.

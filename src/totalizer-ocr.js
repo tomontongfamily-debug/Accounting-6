@@ -1,10 +1,14 @@
 import { createWorker } from 'tesseract.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
+import { prepareNeuralTotalizer, neuralTotalizerCandidates } from './totalizer-neural.js';
+import { readTotalizerGrid } from './totalizer-grid.js';
+import { chooseTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
 export function prepareTotalizer(){
+  prepareNeuralTotalizer().catch(()=>{});
   workerPromise ||= createWorker('ssd_int',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false})
     .then(async worker=>{await worker.setParameters({tessedit_char_whitelist:'0123456789.',user_defined_dpi:'150'});return worker;})
     .catch(error=>{workerPromise=undefined;throw error;});
@@ -81,12 +85,18 @@ async function recognizePhoto(data){
         // Agreement across layouts or stroke widths is required. The visible
         // decimal is checked separately; a tighter crop cannot omit a digit.
         if(agreed.size===1){readings.add([...agreed][0]);break;}
-        if(agreed.size>1)return null;
+        if(agreed.size>1){readings.add(null);break;}
       }
     }
-    if(readings.size!==1)return null;
-    const value=[...readings][0];
-    const candidate=evidence.get(value);
-    return verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
+    const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
+    const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
+    if(verified!==null)return verified;
+    // A neural model reads the original color row at several resolutions;
+    // physical cell fitting independently checks the shape and decimal layout.
+    // Model-loading failure retains the previously verified reader's behavior.
+    let neural;
+    try{neural=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+    const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
+    return chooseTotalizerReading({tesseract:value,grid,neural});
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }
