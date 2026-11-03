@@ -28,6 +28,8 @@ test('incremental storage preserves migration, every revision, audit order, POS 
   await db.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
   await db.exec(sql('20261016072516_pilot_incremental_storage.sql'));
   await db.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  await db.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
+  await db.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
   assert.deepEqual((await db.query('select data from fueltech_pilot_state')).rows[0].data,state);
   assert.deepEqual((await db.query('select data from fueltech_pilot_state_legacy')).rows[0].data,state);
   const load=(limit=0,before=null)=>db.query('select fueltech_pilot_load_v2($1,$2,$3) as v',['shadow',limit,before]).then(r=>r.rows[0].v);
@@ -82,6 +84,8 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
   await pg.query('insert into fueltech_pilot_state values($1,1,$2,now())',['shadow',JSON.stringify(state)]);
   await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
   await pg.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  await pg.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
+  await pg.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
   let conflict=true;
   const db={from(table){
    const filters=[];let single=false,cols='*';
@@ -119,6 +123,11 @@ test('bulk POS reconstruction preserves all 7000 records through the set-based r
   await db.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
   const optimizedStart=performance.now();const next=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;const newMs=performance.now()-optimizedStart;
   assert.deepEqual(next,old);assert.deepEqual(next.data.posRedemptionSync,state.posRedemptionSync);
+  await db.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
+  await db.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
+  const indexedStart=performance.now();const indexed=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;
+  assert.deepEqual(indexed,old);
+  console.info('Indexed document reconstruction',JSON.stringify({milliseconds:Math.round(performance.now()-indexedStart)}));
   console.info('7000-record POS read comparison',JSON.stringify({beforeMs:Math.round(oldMs),afterMs:Math.round(newMs)}));
   const compactStart=performance.now();const compact=(await db.query("select fueltech_pilot_load_compact('shadow',0,null) v")).rows[0].v;
   assert.equal(compact.data.posRedemptionSync._deferred,true);assert.equal(compact.data.posRedemptionSync.points,undefined);
@@ -127,4 +136,44 @@ test('bulk POS reconstruction preserves all 7000 records through the set-based r
   assert.equal(statePatch(compact.data,compact.data).upserts.length,0);
   console.info('Compact POS read',JSON.stringify({milliseconds:Math.round(performance.now()-compactStart),bytes:JSON.stringify(compact).length,fullBytes:JSON.stringify(next).length}));
  }finally{await db.close();}
+});
+
+test('large station history preserves every ordered POS record, report, photo and audit page for all reporting roles',async()=>{
+ const pg=await prepared();
+ try {
+  const {state,cashier}=fixture();ensureCurrentReports(state);ensureCurrentReports(state);
+  await pg.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
+  await pg.query('insert into fueltech_pilot_state values($1,1,$2,now())',['shadow',JSON.stringify(state)]);
+  await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await pg.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  await pg.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
+  await pg.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
+  state.posRedemptionSync={status:'disabled',attemptedAt:new Date().toISOString(),rows:[{id:'withdrawal',voided:false}],points:Array.from({length:16000},(_,i)=>({id:String(16000-i).padStart(36,'0'),at:'2026-10-16T01:00:00.123456Z',date:'2026-10-16',shiftId:'shift-1',points:i/100,voided:i%17===0}))};
+  const docs=documents(state);
+  await pg.query(`insert into fueltech_pilot_documents(mode,section,item_key,data,changed_revision)
+   select 'shadow',section,key,data,1 from jsonb_to_recordset($1) as d(section text,key text,data jsonb)
+   on conflict(mode,section,item_key) do update set data=excluded.data`,[JSON.stringify(docs)]);
+  const start=performance.now();
+  const full=(await pg.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;
+  assert.deepEqual(full.data,{...state,audit:[]});
+  assert.deepEqual((await pg.query("select data from fueltech_pilot_state where mode='shadow'")).rows[0].data,state);
+  assert.equal((await pg.query("select fueltech_pilot_load_v2('missing',0,null) v")).rows[0].v,null);
+  console.info('16000-record complete read',JSON.stringify({milliseconds:Math.round(performance.now()-start),points:full.data.posRedemptionSync.points.length}));
+  const db={from(table){
+   let cols='*',single=false;const filters=[];
+   const query={select(value){cols=value;return query;},eq(key,value){filters.push([key,value]);return query;},single(){single=true;return query;},maybeSingle(){single=true;return query;},async then(resolve,reject){
+    try{const rows=(await pg.query('select '+cols+' from '+table+(filters.length?' where '+filters.map(([k],i)=>k+'=$'+(i+1)).join(' and '):''),filters.map(([,v])=>v))).rows;
+     for(const row of rows)if(row.start_date instanceof Date)row.start_date=row.start_date.toISOString().slice(0,10);
+     resolve({data:single?rows[0]||null:rows,error:null});}catch(error){reject(error);}
+   }};return query;
+  },async rpc(name,params){try{return{data:(await pg.query('select '+name+'('+Object.keys(params).map((_,i)=>'$'+(i+1)).join(',')+') v',Object.values(params).map(v=>v&&typeof v==='object'?JSON.stringify(v):v))).rows[0].v,error:null};}catch(error){return{error};}}};
+  for(const role of ['Admin','Cashier','Manager']){
+   const session={...cashier,role,branch:role==='Admin'?'':'Liloan'};
+   const result=await execute(session,{mode:'shadow',startDate:state.startDate,route:'/api/store/load',input:{paged:true},mutationId:randomUUID()},{db,posEnv:{}});
+   assert.equal(result.ok,true);assert.ok(result.reportRows.length>0,role);
+   assert.equal(result.reportRows.every(r=>r.branch==='Liloan'),true);
+  }
+  await pg.exec('set role service_role');assert.equal((await pg.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v.data.posRedemptionSync.points.length,16000);await pg.exec('reset role');
+  await pg.exec('set role authenticated');await assert.rejects(pg.query("select fueltech_pilot_assemble('shadow')"),/permission denied/);await pg.exec('reset role');
+ }finally{await pg.close();}
 });
