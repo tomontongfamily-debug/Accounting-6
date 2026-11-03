@@ -36,11 +36,14 @@ test('First unreadable photo can be transcribed and confirmed on phone; no force
   await capturePumpCamera(page,card);
   await card.getByText('Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.',{exact:true}).waitFor({timeout:30000});
   const input=card.locator('input[inputmode=decimal]');assert.equal(await input.getAttribute('readonly'),null);
+  assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'error');
+  await card.getByText('Automatic reader failed. The photo is saved; enter the visible number below.',{exact:true}).waitFor();
   assert.equal(photoCount,1);assert.equal(await card.getByText(/Retake once more/).count(),0);
   await input.fill('9999');assert.equal(await card.getByRole('button',{name:'Yes, confirm reading'}).isEnabled(),false);
   await input.fill('10010');await card.getByRole('button',{name:'Yes, confirm reading'}).click();await card.getByText('✓ Complete',{exact:true}).waitFor();
   assert.equal(state.reports[key].pumpRows[0].closing,10010);assert.equal(state.reports[key].pumpRows[0].readingConfirmed,true);assert.ok(state.reports[key].pumpRows[0].photo_path);
   assert.equal(state.reports[key].confirmed,false);assert.equal(photoCount,1);
+  assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'error');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);assert.deepEqual(errors,[]);
   fs.mkdirSync('../../work/liloan-photo-cash-review',{recursive:true});await card.screenshot({path:'../../work/liloan-photo-cash-review/phone-reading-confirmed.png'});
  }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}

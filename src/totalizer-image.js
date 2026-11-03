@@ -113,7 +113,7 @@ function rowComponents(mask,width,left,right,top,bottom){
   }return parts;
 }
 
-export function readingWithVisibleDecimal(symbols,components){
+export function readingWithVisibleDecimal(symbols,components,format){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   if(digits.length<4||digits.length>12||digits.some(s=>s.confidence<70))return null;
   const heights=digits.map(s=>s.bbox.y1-s.bbox.y0).sort((a,b)=>a-b),h=heights[Math.floor(heights.length/2)];
@@ -129,7 +129,89 @@ export function readingWithVisibleDecimal(symbols,components){
   const positions=new Set(points.map(p=>({x:p.x+p.width/2,i:centers.filter(x=>x<p.x+p.width/2).length})).filter(({x,i})=>digits.length-i>=1&&digits.length-i<=3&&x>=digits[i-1].bbox.x1-h*.12&&x<=digits[i].bbox.x0+h*.12).map(p=>p.i));
   if(positions.size!==1)return null;
   const decimal=[...positions][0],places=digits.length-decimal;if(places<1||places>3)return null;
+  if(format&&(decimal!==format.integerDigits||places!==format.decimalPlaces))return null;
   const text=digits.map(s=>s.text).join('');return Number(text.slice(0,decimal)+'.'+text.slice(decimal));
+}
+
+// OCR confidence is not independent evidence: multiple passes can confidently
+// agree on a frame edge or a damaged LCD digit. Corroborate every suggested
+// digit against the seven physical strokes, otherwise request human review.
+export function verifyLcdDigits(symbols,gray,width,height,segments=[]){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  const body=digits.filter(s=>s.text!=='1');
+  if(body.length<3)return false;
+  const median=a=>a.sort((a,b)=>a-b)[Math.floor(a.length/2)];
+  const w=median(body.map(s=>s.bbox.x1-s.bbox.x0)),h=median(body.map(s=>s.bbox.y1-s.bbox.y0));
+  if(w<h*.35||w>h*.8)return false;
+  for(const [index,symbol]of digits.entries()){
+    const box=symbol.bbox,sw=symbol.text==='1'?w:box.x1-box.x0,sh=box.y1-box.y0;
+    if(sw<w*.65||sw>w*1.3||sh<h*.8||sh>h*1.2)return false;
+    const votes=new Map();
+    for(const dx of[-.03,0,.03])for(const dy of[-.03,0,.03]){
+      const left=box.x1-sw+dx*sw,top=box.y0+dy*sh;
+      const positions=[[.5,.06,0],[.85,.25,1],[.85,.75,1],[.5,.94,0],[.15,.75,1],[.15,.25,1],[.5,.5,0]];
+      const contrast=positions.map(([x,y,vertical])=>{
+        const cx=left+x*sw,cy=top+y*sh,span=Math.max(2,Math.round(vertical?sh*.07:sw*.12)),radius=Math.round(vertical?sw*.24:sh*.14),samples=[];
+        for(let t=-span;t<=span;t++){
+          let sum=0;
+          for(let n=-2;n<=2;n++){
+            const ix=Math.round(cx+(vertical?n:t)),iy=Math.round(cy+(vertical?t:n));
+            if(ix-radius<0||ix+radius>=width||iy-radius<0||iy+radius>=height)return NaN;
+            const offset=vertical?radius:radius*width;
+            sum+=(gray[iy*width+ix-offset]+gray[iy*width+ix+offset])/2-gray[iy*width+ix];
+          }
+          samples.push(sum/5);
+        }
+        return median(samples);
+      });
+      for(const [digit,pattern]of lcdPatterns.entries())if([...pattern].every((on,i)=>on==='1'?contrast[i]>=7:contrast[i]<=3))votes.set(String(digit),(votes.get(String(digit))||0)+1);
+    }
+    if(votes.size>1||votes.size===1&&!votes.has(symbol.text))return false;
+    const independentlyRead=segments.some(s=>s.text===symbol.text&&Math.abs((s.bbox.x0+s.bbox.x1-box.x0-box.x1)/2)<h*.25&&Math.abs(s.bbox.y1-box.y1)<h*.15);
+    if((index===0||symbol.text==='1'||index>=digits.length-2)&&(votes.get(symbol.text)||0)<2&&!independentlyRead)return false;
+  }
+  return true;
+}
+
+export function segmentDisplaySymbols(mask,width,region){
+  const h=region.bandHeight;
+  const parts=rowComponents(mask,width,region.x,region.x+region.width,region.y,region.y+region.height)
+    .filter(c=>c.area>=h*.6&&c.height>=h*.12&&c.width<h*.9&&c.height<h*1.15&&!(c.width<h*.22&&c.height>h*.8))
+    .sort((a,b)=>a.x-b.x);
+  const groups=[];
+  for(const c of parts){
+    const last=groups.at(-1);
+    if(!last||c.x>last.right+h*.09)groups.push({left:c.x,right:c.x+c.width,top:c.y,bottom:c.y+c.height});
+    else{last.right=Math.max(last.right,c.x+c.width);last.top=Math.min(last.top,c.y);last.bottom=Math.max(last.bottom,c.y+c.height);}
+  }
+  const cells=groups.filter(g=>g.bottom-g.top>=h*.7);
+  if(cells.length<4)return [];
+  const widths=cells.filter(g=>g.right-g.left>h*.35).map(g=>g.right-g.left).sort((a,b)=>a-b),w=widths[Math.floor(widths.length/2)];
+  if(!w)return [];
+  const positions=[[.5,.06],[.85,.25],[.85,.75],[.5,.94],[.15,.75],[.15,.25],[.5,.5]];
+  return cells.map(g=>{
+    const gh=g.bottom-g.top,gw=g.right-g.left,left=gw<h*.3?g.right-w:g.left,cw=gw<h*.3?w:gw;
+    const coverage=positions.map(([x,y])=>{
+      let count=0,total=0;
+      for(let dy=-.035;dy<=.035;dy+=.0175)for(let dx=-.06;dx<=.06;dx+=.03){
+        const ix=Math.round(left+(x+dx)*cw),iy=Math.round(g.top+(y+dy)*gh);
+        if(ix>=0&&ix<width){count+=mask[iy*width+ix]||0;total++;}
+      }
+      return count/total;
+    });
+    const matches=lcdPatterns.map((pattern,digit)=>({pattern,digit})).filter(({pattern})=>[...pattern].every((on,i)=>on==='1'?coverage[i]>=.6:coverage[i]<=.15));
+    return {text:matches.length===1?String(matches[0].digit):'?',confidence:99,bbox:{x0:g.left,x1:g.right,y0:g.top,y1:g.bottom},coverage};
+  });
+}
+
+export function withoutDisplayFrame(mask,width,region){
+  const clean=mask.slice();
+  const parts=rowComponents(mask,width,region.x,region.x+region.width,region.y,region.y+region.height);
+  for(const c of parts){
+    if(c.y!==region.y||c.y+c.height!==region.y+region.height||c.width>region.bandHeight*.5)continue;
+    for(let y=c.y;y<c.y+c.height;y++)for(let x=c.x;x<c.x+c.width;x++)clean[y*width+x]=0;
+  }
+  return clean;
 }
 
 // The first LCD digit often falls under the bright edge of a reflection. Check

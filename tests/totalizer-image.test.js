@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readingWithVisibleDecimal,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop} from '../src/totalizer-image.js';
+import {readingWithVisibleDecimal,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
 
 const symbols=text=>[...text].map((text,i)=>({text,confidence:95,bbox:{x0:20+i*60,x1:60+i*60,y0:20,y1:120}}));
 const dot=index=>({x:20+index*60-15,y:110,width:8,height:9,area:65});
@@ -130,4 +130,25 @@ test('A faint top reflection cannot turn a strongly visible one into a seven',()
   assert.equal(refined[0].text,'1');
   assert.equal(refined[0].lcdVerified,undefined);
   assert.equal(refined[0].lcdAmbiguous,undefined);
+});
+
+test('The station format rejects extra integer and decimal cells instead of rounding a guess',()=>{
+  const format={integerDigits:6,decimalPlaces:2};
+  assert.equal(readingWithVisibleDecimal(symbols('12345678'),[dot(6)],format),123456.78);
+  assert.equal(readingWithVisibleDecimal(symbols('123456781'),[dot(6)],format),null);
+  assert.equal(readingWithVisibleDecimal(symbols('123456780'),[dot(6)],format),null,'A trailing zero cannot hide a third decimal cell');
+  assert.equal(readingWithVisibleDecimal(symbols('112345678'),[dot(7)],format),null);
+});
+
+test('Continuous frame strokes are removed without changing disconnected LCD strokes or the original image',()=>{
+  const width=150,height=120,mask=new Uint8Array(width*height),region={x:0,y:10,width,height:100,bandHeight:86};
+  for(let y=10;y<110;y++)for(let x=140;x<145;x++)mask[y*width+x]=1;
+  for(const [top,bottom]of [[18,48],[68,99]])for(let y=top;y<bottom;y++)for(let x=65;x<72;x++)mask[y*width+x]=1;
+  const clean=withoutDisplayFrame(mask,width,region);
+  assert.equal(clean[60*width+142],0);assert.equal(mask[60*width+142],1);
+  assert.equal(clean[30*width+68],1);assert.equal(clean[80*width+68],1);
+});
+
+test('A high-confidence OCR number without physical LCD evidence cannot pass corroboration',()=>{
+  assert.equal(verifyLcdDigits(symbols('12345678'),new Uint8Array(600*180).fill(220),600,180),false);
 });
