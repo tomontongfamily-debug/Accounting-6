@@ -87,7 +87,7 @@ function occupancy(integral,width,height,x,y,dx,dy){
 }
 
 function classify(coverage){
-  let sum=0,worst=0,margin=Infinity,text='';
+  let sum=0,worst=0,margin=Infinity,text='';const digitMargins=[];
   for(let cell=0;cell<8;cell++){
     let first=Infinity,second=Infinity,digit=-1;
     for(let d=0;d<10;d++){
@@ -96,9 +96,9 @@ function classify(coverage){
       cost/=7;
       if(cost<first){second=first;first=cost;digit=d;}else if(cost<second)second=cost;
     }
-    sum+=first;worst=Math.max(worst,first);margin=Math.min(margin,second-first);text+=digit;
+    sum+=first;worst=Math.max(worst,first);margin=Math.min(margin,second-first);digitMargins.push(second-first);text+=digit;
   }
-  return {text,value:Number(text)/100,score:sum/8+worst*.5,margin};
+  return {text,value:Number(text)/100,score:sum/8+worst*.5,margin,digitMargins};
 }
 
 function sampleLayout(integral,width,height,layout,refine=false){

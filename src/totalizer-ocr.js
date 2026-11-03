@@ -32,7 +32,14 @@ async function recognizePhoto(data){
   const ready=prepareTotalizer();
   // Attach a rejection handler while image preparation runs.
   ready.catch(()=>{});
-  const image=new Image();image.src=data;await image.decode();
+  let image;
+  if(typeof data==='string'){image=new Image();image.src=data;await image.decode();}
+  else{
+    // Camera recognition uses a snapshot of the original pixels, before JPEG
+    // compression can erase a narrow segment or turn a reflection into one.
+    image=document.createElement('canvas');image.width=data.width;image.height=data.height;
+    image.getContext('2d').putImageData(data,0,0);
+  }
   const scale=Math.min(1,1280/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
@@ -42,7 +49,7 @@ async function recognizePhoto(data){
   let worker;
   try{
     worker=await ready;
-    const readings=new Set(),evidence=new Map();
+    const readings=new Set(),evidence=new Map(),glyphs=[];
     let sensitiveMask;
     for(const primary of analysis.regions){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
@@ -69,6 +76,7 @@ async function recognizePhoto(data){
             const leading=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
+            glyphs.push(...digits.filter(s=>s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
             let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components,{integerDigits:6,decimalPlaces:2}):null;
             // The supported station LCD has six integer and two decimal cells.
@@ -97,6 +105,6 @@ async function recognizePhoto(data){
     let neural;
     try{neural=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
     const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
-    return chooseTotalizerReading({tesseract:value,grid,neural});
+    return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }

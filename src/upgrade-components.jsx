@@ -37,6 +37,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
+  const captureInFlight=useRef(false);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
   useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
@@ -53,13 +54,13 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
   }
   const warning=readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
-  async function processPhoto(data) {
+  async function processPhoto(data,recognitionImage=data) {
     setBusy(true);setError('');setDraft('');setDetected(null);setOcrResult(undefined);setEditing(false);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
-      const recognition=detect(data);
+      const recognition=detect(recognitionImage);
       await onPrepare?.();
       const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,replaceReading:true,revision:revision.current,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
       if(!active.current)return;setPhoto(saved.photo_path);
@@ -87,10 +88,27 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     }catch{if(active.current)setError(phoneView?'Camera access is unavailable. Allow camera access in your phone browser settings, then tap Open camera again.':'Camera access is unavailable. Use the photo picker below.');}
     finally{if(active.current)setOpeningCamera(false);}
   }
-  function capture() {
-    const canvas=document.createElement('canvas');const v=video.current;if(!v?.videoWidth)return;
-    const scale=Math.min(1,1800/Math.max(v.videoWidth,v.videoHeight));canvas.width=v.videoWidth*scale;canvas.height=v.videoHeight*scale;canvas.getContext('2d').drawImage(v,0,0,canvas.width,canvas.height);
-    stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);processPhoto(canvas.toDataURL('image/jpeg',.9));
+  async function capture() {
+    const v=video.current;if(!v?.videoWidth||captureInFlight.current)return;
+    captureInFlight.current=true;setBusy(true);
+    try{
+      // Dimensions can be available before the first camera image is presented.
+      // Wait for real frames and encode them while the source track is alive.
+      if(v.requestVideoFrameCallback)await new Promise(resolve=>{
+        let frames=0,frame;
+        const finish=()=>{window.clearTimeout(timer);if(frame!==undefined)v.cancelVideoFrameCallback?.(frame);resolve();};
+        const next=()=>{if(++frames>=2)finish();else frame=v.requestVideoFrameCallback(next);};
+        const timer=window.setTimeout(finish,500);frame=v.requestVideoFrameCallback(next);
+      });
+      if(!active.current||!v.srcObject?.active)return;
+      const canvas=document.createElement('canvas'),scale=Math.min(1,1800/Math.max(v.videoWidth,v.videoHeight));
+      canvas.width=Math.round(v.videoWidth*scale);canvas.height=Math.round(v.videoHeight*scale);const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(v,0,0,canvas.width,canvas.height);
+      const recognitionImage=context.getImageData(0,0,canvas.width,canvas.height);
+      let data;
+      for(const quality of[.95,.9,.85,.8]){data=canvas.toDataURL('image/jpeg',quality);if(data.length<=2700000)break;}
+      stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);await processPhoto(data,recognitionImage);
+    }catch{if(active.current)setError('The camera frame was not ready. Please capture the photo again.');}
+    finally{captureInFlight.current=false;if(active.current)setBusy(false);}
   }
   async function selectPhoto(event) {
     if(phoneView)return;

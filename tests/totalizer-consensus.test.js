@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {chooseTotalizerReading} from '../src/totalizer-consensus.js';
 import {decodeTotalizerTokens} from '../src/totalizer-neural.js';
 const nn=(value,extra={})=>({value,score:.99,integerConfidence:.99,fractionConfidence:.99,inputHeight:48,...extra});
-const grid=(value,extra={})=>[{value,score:.005,margin:.14,...extra}];
+const grid=(value,extra={})=>[{value,score:.005,margin:.14,digitMargins:Array(8).fill(.14),...extra}];
 
 test('A high neural average cannot hide an uncertain integer digit',()=>{
  const characters=['blank',...'0123456789.'],text='12345678',steps=text.length*2,classes=characters.length,data=new Float32Array(steps*classes);
@@ -34,10 +34,19 @@ test('An independently fitted cell can corroborate a low-confidence narrow one b
  const digitConfidences=[.99,.99,.99,.99,.99,.67,.99,.99];
  assert.equal(chooseTotalizerReading({neural:[nn(234561.23,{integerConfidence:.67,digitConfidences})],grid:grid(234561.23)}),234561.23);
  assert.equal(chooseTotalizerReading({neural:[nn(234562.23,{integerConfidence:.67,digitConfidences})],grid:grid(234562.23)}),null);
+ assert.equal(chooseTotalizerReading({neural:[nn(234561.23,{integerConfidence:.67,digitConfidences})],grid:grid(234561.23,{digitMargins:Array(8).fill(.02)})}),null);
 });
 
 test('A dominant reading across resolutions can resolve a fractional disagreement without altering agreed integer cells',()=>{
  const neural=[32,48,64].map(inputHeight=>nn(123456.1,{inputHeight}));neural.push(nn(123456.7));
  assert.equal(chooseTotalizerReading({neural,grid:grid(123456.7),tesseract:123456.3}),123456.1);
  assert.equal(chooseTotalizerReading({neural:[nn(123456.1)],grid:grid(123456.7),tesseract:123456.3}),null);
+});
+
+test('A narrow one can use an independently recognized glyph in its physical cell, while a neighboring frame cannot corroborate it',()=>{
+ const neural=[nn(234561.23,{integerConfidence:.67,digitConfidences:[.99,.99,.99,.99,.99,.67,.99,.99]})];
+ const physical=grid(234561.23,{margin:.08,digitMargins:Array(8).fill(.08),layout:{left:100,pitch:50,glyphWidth:40,height:80,base:200,slope:0,dotx:160}});
+ const glyph={text:'1',confidence:99,bbox:{x0:116,x1:124,y0:120,y1:200}};
+ assert.equal(chooseTotalizerReading({neural,grid:physical,glyphs:[glyph]}),234561.23);
+ assert.equal(chooseTotalizerReading({neural,grid:physical,glyphs:[{...glyph,bbox:{...glyph.bbox,x0:46,x1:54}}]}),null);
 });
