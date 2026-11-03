@@ -5,11 +5,13 @@ import {preview} from 'vite';
 import fs from 'node:fs';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
+import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
 test('First unreadable photo can be transcribed and confirmed on phone; no forced retake',async()=>{
  const server=await preview({preview:{host:'127.0.0.1',port:4333,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
+  await page.addInitScript(pumpCameraBootstrap);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));let {state,key,report,cashier}=fixture();const uploads=new Map();let photoCount=0;
   await page.route('**/ocr/**',r=>r.abort());
   await page.route('**/api/**',async request=>{
@@ -30,8 +32,8 @@ test('First unreadable photo can be transcribed and confirmed on phone; no force
   await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
   await page.getByLabel('Shift to photograph').selectOption(key);
   const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
-  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=500;c.height=300;const ctx=c.getContext('2d');ctx.fillStyle='#82958b';ctx.fillRect(0,0,500,300);ctx.font='65px monospace';ctx.fillStyle='#172922';ctx.fillText('10010.00',65,180);return c.toDataURL('image/jpeg').split(',')[1];});
-  await card.locator('input[type=file]').setInputFiles({name:'test-pump.jpg',mimeType:'image/jpeg',buffer:Buffer.from(image,'base64')});
+  assert.equal(await page.locator('input[type=file]').count(),0,'Phone pump photos must come from the live camera');
+  await capturePumpCamera(page,card);
   await card.getByText('Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.',{exact:true}).waitFor({timeout:30000});
   const input=card.locator('input[inputmode=decimal]');assert.equal(await input.getAttribute('readonly'),null);
   assert.equal(photoCount,1);assert.equal(await card.getByText(/Retake once more/).count(),0);

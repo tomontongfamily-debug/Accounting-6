@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { demoApi, PumpPhotoWorkflow, savePumpReading } from './upgrade-components.jsx';
 import { readingComplete } from './error-reduction.ts';
+export { usePhoneView } from './phone-view.js';
 
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
-export function usePhoneView() {
-  const [phone,setPhone]=useState(()=>window.matchMedia('(max-width: 767px)').matches);
-  useEffect(()=>{
-    const query=window.matchMedia('(max-width: 767px)');
-    const change=()=>setPhone(query.matches);
-    query.addEventListener('change',change);
-    return()=>query.removeEventListener('change',change);
-  },[]);
-  return phone;
-}
 
 export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   const choices=Object.values(reports).filter(r=>r.branch===branch&&r.date>=window.__fueltechPilotConfig.start_date&&!r.baselineReport&&!r.baselineMissing).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));

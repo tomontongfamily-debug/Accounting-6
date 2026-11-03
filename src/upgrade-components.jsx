@@ -12,6 +12,7 @@ import { depositCoverage, depositDayLabel } from './deposit-coverage.js';
 import { DepositCoverageLines } from './deposit-coverage.jsx';
 import { pumpSalesBreakdown } from './fuel-leak-loss.js';
 import { compute } from './accounting-engine.js';
+import { usePhoneView } from './phone-view.js';
 const php=n=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(n||0));
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 function PumpSales({report,row}) {
@@ -30,15 +31,16 @@ export async function savePumpReading(report,row) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0});
 }
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
+  const phoneView=usePhoneView();
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
-  const [camera,setCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
+  const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
   useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
   const revision=useRef(row.readingRevision||0);
-  useEffect(()=>{onBusy?.(row.id,busy);return()=>onBusy?.(row.id,false);},[busy,onBusy,row.id]);
+  useEffect(()=>{onBusy?.(row.id,busy||camera||openingCamera);return()=>onBusy?.(row.id,false);},[busy,camera,openingCamera,onBusy,row.id]);
   useEffect(()=>{
     if(busy || Number(row.readingRevision||0)===revision.current)return;
     revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
@@ -70,7 +72,19 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
   }
   async function openCamera() {
-    setError('');if(!navigator.mediaDevices?.getUserMedia){fileInput.current?.click();return;}try {stream.current=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});setCamera(true);}catch{setError('Camera access is unavailable. Use the photo picker below.');}
+    setError('');
+    if(!navigator.mediaDevices?.getUserMedia){
+      if(phoneView)setError('Live camera is unavailable. Open this page in your phone browser and allow camera access.');
+      else fileInput.current?.click();
+      return;
+    }
+    setOpeningCamera(true);
+    try {
+      const opened=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+      if(!active.current){opened.getTracks().forEach(t=>t.stop());return;}
+      stream.current=opened;setCamera(true);
+    }catch{if(active.current)setError(phoneView?'Camera access is unavailable. Allow camera access in your phone browser settings, then tap Open camera again.':'Camera access is unavailable. Use the photo picker below.');}
+    finally{if(active.current)setOpeningCamera(false);}
   }
   function capture() {
     const canvas=document.createElement('canvas');const v=video.current;if(!v?.videoWidth)return;
@@ -78,6 +92,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);processPhoto(canvas.toDataURL('image/jpeg',.9));
   }
   async function selectPhoto(event) {
+    if(phoneView)return;
     const file=event.target.files?.[0];if(!file)return;
     try {
       const bitmap=await createImageBitmap(file);const scale=Math.min(1,1800/Math.max(bitmap.width,bitmap.height));
@@ -100,7 +115,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {photo&&<img src={photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><video ref={video} autoPlay playsInline muted/><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
-    {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy} onClick={openCamera}>{photo?'Retake photo':'Open camera'}</button><label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label></div>
+    {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo?'Retake photo':'Open camera'}</button>{!phoneView&&<label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label>}</div>
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&<p className="neutral">Photo saved. If you can read all the digits, enter the number below and confirm it. Retake only if the digits are covered or unclear.</p>}<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>

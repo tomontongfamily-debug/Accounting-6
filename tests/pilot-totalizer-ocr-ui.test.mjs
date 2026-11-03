@@ -5,11 +5,13 @@ import {preview} from 'vite';
 import fs from 'node:fs';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
+import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-test('Real seven-segment OCR reads the supplied glare photo through the phone upload flow',{skip:!process.env.TOTALIZER_TEST_PHOTO},async()=>{
+test('Real seven-segment OCR reads the supplied glare photo through the phone camera flow',{skip:!process.env.TOTALIZER_TEST_PHOTO},async()=>{
  const server=await preview({preview:{host:'127.0.0.1',port:4335,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
+  await page.addInitScript(pumpCameraBootstrap,{imageDataUrl:'data:image/jpeg;base64,'+fs.readFileSync(process.env.TOTALIZER_TEST_PHOTO).toString('base64')});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));let {state,key,report,cashier}=fixture();const uploads=new Map();let photoCount=0;
   // Only fixture data is changed. The recognizer never receives an opening value.
   for(const r of Object.values(state.reports)){
@@ -33,7 +35,8 @@ test('Real seven-segment OCR reads the supplied glare photo through the phone up
   await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
   await page.getByLabel('Shift to photograph').selectOption(key);
   const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
-  await card.locator('input[type=file]').setInputFiles(process.env.TOTALIZER_TEST_PHOTO);
+  assert.equal(await page.locator('input[type=file]').count(),0);
+  await capturePumpCamera(page,card);
   const input=card.locator('input[inputmode=decimal]');
   await page.waitForFunction(()=>[...document.querySelectorAll('input[inputmode=decimal]')].some(i=>i.value==='439931.31'),{},{timeout:120000});
   assert.equal(await input.inputValue(),'439931.31');assert.notEqual(await input.getAttribute('readonly'),null);

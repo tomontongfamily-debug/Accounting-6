@@ -5,10 +5,11 @@ import {chromium} from '@playwright/test';
 import {preview} from 'vite';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
+import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-// Opt-in private photos remain outside Git. This checks actual file selection,
-// JPEG compression, OCR auto-fill and persistence using fixture reports only.
-test('All station photos auto-fill through the phone upload flow',{skip:!process.env.TOTALIZER_STATION_MANIFEST},async()=>{
+// Opt-in private photos remain outside Git and supply test camera frames.
+// This checks camera capture, compression, OCR and fixture-only persistence.
+test('All station photos auto-fill through the phone camera flow',{skip:!process.env.TOTALIZER_STATION_MANIFEST},async()=>{
  const samples=JSON.parse(fs.readFileSync(process.env.TOTALIZER_STATION_MANIFEST,'utf8'));
  const server=await preview({preview:{host:'127.0.0.1',port:4341,strictPort:true}});
  const browser=await chromium.launch({channel:'msedge',headless:true});const results=[];
@@ -17,6 +18,7 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
    const context=await browser.newContext({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
    try{
     const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.addInitScript(pumpCameraBootstrap,{imageDataUrl:'data:image/jpeg;base64,'+fs.readFileSync(sample.file).toString('base64')});
     let {state,key,report,cashier}=fixture();const uploads=new Map(),writes=[];
     await page.route('**/api/**',async route=>{
      const url=new URL(route.request().url());let result,status=200;
@@ -36,7 +38,8 @@ test('All station photos auto-fill through the phone upload flow',{skip:!process
     await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
     await page.getByLabel('Shift to photograph').selectOption(key);
     const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
-    await card.locator('input[type=file]').setInputFiles(sample.file);
+    assert.equal(await page.locator('input[type=file]').count(),0);
+    await capturePumpCamera(page,card);
     await card.getByText('Saving photo or reading…',{exact:true}).waitFor({state:'hidden',timeout:30000});
     const input=card.locator('input[inputmode=decimal]');await input.waitFor();
     const reading=(await input.inputValue())===''?null:Number(await input.inputValue());
