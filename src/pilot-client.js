@@ -1,5 +1,28 @@
 const savedRevisions=new Map();
 const pendingReports=new Map();
+const REQUEST_TIMEOUT_MS=30000;
+
+async function request(options) {
+  const controller=new AbortController();
+  let timer;
+  try {
+    // Bound both the connection and the response body. A hung fetch must not
+    // leave the report's save queue (and every later cash action) blocked.
+    return await Promise.race([
+      (async()=>{
+        const response=await fetch('/api/pilot/action',{...options,signal:controller.signal});
+        return {response,result:await response.json()};
+      })(),
+      new Promise((_,reject)=>{
+        timer=setTimeout(()=>{
+          reject(Object.assign(new Error('The station server took too long to respond. Your save may have completed. Refresh the saved shift before trying again.'),{code:'PILOT_REQUEST_TIMEOUT',status:408,saveUncertain:true}));
+          controller.abort();
+        },REQUEST_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {clearTimeout(timer);}
+}
+
 export function pilotPost(route,input={},sessionToken='') {
   const cfg=window.__fueltechPilotConfig;
   const reportKey=input.report?`${input.report.branch}__${input.report.date}__${input.report.shiftId}`:input.reportKey;
@@ -22,13 +45,17 @@ async function post(route,input,sessionToken,key) {
   const envelope={route,input,mode:cfg.mode,startDate:cfg.start_date,mutationId:crypto.randomUUID()};
   // The identical request ID is reused after an interrupted response.
   const options={method:'POST',headers:{'Content-Type':'application/json',...(sessionToken&&sessionToken!=='cookie'?{'x-fueltech-session':sessionToken}:{})},body:JSON.stringify(envelope)};
-  let response;
+  let response,result;
   for(let attempt=0;attempt<2;attempt++) {
-    try {response=await fetch('/api/pilot/action',options);}
-    catch(error){if(attempt===1)throw error;continue;}
+    try {({response,result}=await request(options));}
+    catch(error){
+      // A timed-out mutation may still be running. Reload authoritative state
+      // before another attempt instead of launching a second expensive check.
+      if(error.code==='PILOT_REQUEST_TIMEOUT'||attempt===1)throw error;
+      continue;
+    }
     if(response.status!==503||attempt===1) break;
   }
-  const result=await response.json();
   if(!response.ok||result.ok===false) throw Object.assign(new Error(result.error||'Save could not be verified.'),{...result,status:response.status});
   if(route==='/api/demo/cash-confirm') {
     // Cash confirmation can read a newer shift without accepting this full draft.

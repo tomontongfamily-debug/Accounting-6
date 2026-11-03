@@ -1,6 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('a stalled request releases the cash queue and requires refreshing the saved result',{timeout:1000},async t=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
+ t.mock.timers.enable({apis:['setTimeout']});
+ const {pilotPost}=await import('../src/pilot-client.js?stalled-request');
+ const calls=[];
+ globalThis.fetch=async(url,options)=>{
+  calls.push(options);
+  if(calls.length===1)return new Promise(()=>{});
+  return {ok:true,status:200,json:async()=>({ok:true,report:{pilotRevision:8,cashCountConfirmed:true,actualCashCounted:2500}})};
+ };
+ try{
+  const report={branch:'Liloan',date:'2026-10-03',shiftId:'shift-1',pilotRevision:7};
+  const stalled=pilotPost('/api/demo/cash-check',{report});
+  const rejected=assert.rejects(stalled,error=>error.code==='PILOT_REQUEST_TIMEOUT'&&error.saveUncertain===true&&/Refresh/.test(error.message));
+  const queued=pilotPost('/api/demo/pump-report',{reportKey:'Liloan__2026-10-03__shift-1'});
+  await new Promise(r=>setImmediate(r));assert.equal(calls.length,1);
+  t.mock.timers.tick(30000);
+  await rejected;
+  const saved=await queued;
+  assert.equal(calls[0].signal.aborted,true);assert.equal(calls.length,2);
+  assert.equal(saved.report.actualCashCounted,2500);assert.equal(saved.report.cashCountConfirmed,true);
+ }finally{t.mock.timers.reset();globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
+test('a stalled response body is bounded even after the response headers arrive',{timeout:1000},async t=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
+ t.mock.timers.enable({apis:['setTimeout']});
+ const {pilotPost}=await import('../src/pilot-client.js?stalled-response-body');
+ let signal;
+ globalThis.fetch=async(url,options)=>{signal=options.signal;return {ok:true,status:200,json:()=>new Promise(()=>{})};};
+ try{
+  const report={branch:'Liloan',date:'2026-10-03',shiftId:'shift-1'};
+  const rejected=assert.rejects(pilotPost('/api/demo/cash-recount',{report,denominations:{500:5}}),error=>error.code==='PILOT_REQUEST_TIMEOUT'&&error.saveUncertain===true);
+  await new Promise(r=>setImmediate(r));t.mock.timers.tick(30000);await rejected;
+  assert.equal(signal.aborted,true);
+ }finally{t.mock.timers.reset();globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('Cash and pending draft saves serialize with the latest successful revision',async()=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
