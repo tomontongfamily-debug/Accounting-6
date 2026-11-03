@@ -4,6 +4,8 @@ import { createReport, compute, reportKey } from '../src/accounting-engine.js';
 import { accountingCashVouchers, accountingFuelVouchers } from '../pilot/cv-allocations.mjs';
 import { managerReconciliationAdjustments, managerReconciliationIssues } from '../src/manager-reconciliation.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
+import {runAction} from '../pilot/service.mjs';
+import {fixture} from './pilot-fixture.mjs';
 const report=shiftId=>createReport('Liloan','2026-11-03',{Premium:90,Regular:89,Diesel:100},shiftId);
 test('cash allocations conserve one source voucher across two reports',()=>{
  const a=report('shift-1'),b=report('shift-2');
@@ -40,4 +42,15 @@ test('fuel allocated beyond metered sales remains a visible review issue',()=>{
  a.cvFuelRows=[{sourceVoucherId:'fuel',product:'Diesel',amount:100,liters:1}];a.confirmed=true;
  const r=refreshFuelCVReview(a,compute(a));assert.equal(r.checkRequired,true);assert.equal(r.checkDetails[0].category,'MANUAL_DEDUCTION');
  a.cvFuelRows=[];assert.equal(refreshFuelCVReview({...r,cvFuelRows:[]},compute(a)).checkRequired,false);
+});
+
+test('cashier reads use approved totals while original review evidence remains available to Admin',async()=>{
+ const {state}=fixture(),a=createReport('Liloan','2026-10-19',{Premium:90,Regular:89,Diesel:100},'shift-1');
+ a.confirmed=true;a.actualCashCounted=900;
+ a.managerReconciliation={version:1,approvedBy:'Owner',approvedAt:'2026-11-03T00:00:00Z',sourceSha256:'a'.repeat(64),grossFuelSales:1000,calibrationCash:0,cashVoucherTotal:100,otherCashOutlays:0,cashCount:900,original:{privateReview:'Retained Admin evidence'},manualVariance:0};
+ const key=reportKey(a.branch,a.date,a.shiftId);state.reports[key]=a;
+ const cashier=(await runAction(state,{role:'Cashier',branch:'Liloan'},'/api/store/load')).result.reportRows.find(r=>r.report_key===key).data;
+ assert.equal(cashier.managerReconciliation.original,undefined);assert.equal(cashier.managerReconciliation.manualVariance,undefined);assert.equal(compute(cashier).cashVariance,0);
+ const admin=(await runAction(state,{role:'Admin'},'/api/store/load')).result.reportRows.find(r=>r.report_key===key).data;
+ assert.equal(admin.managerReconciliation.original.privateReview,'Retained Admin evidence');assert.deepEqual(state.reports[key],a);
 });

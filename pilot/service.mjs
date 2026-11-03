@@ -156,6 +156,10 @@ function exposeReport(report,session) {
   }
   if(session.role==='Cashier') {
     delete r.checkDetails; delete r.cashVarianceReason;
+    if(r.managerReconciliation) {
+      r.managerReconciliation={...r.managerReconciliation};
+      for(const field of ['original','photoConflicts','cvMatchingNotes','manualVariance','manualCVDetails']) delete r.managerReconciliation[field];
+    }
     r.integrationIssues=(r.integrationIssues||[]).map(i=>({category:i.category,detail:'Issue reported for Admin review.'}));
   }
   return r;
