@@ -21,7 +21,7 @@ test('all-station PostgreSQL rollout preserves history, journals setup, guards o
   const {state}=fixture();state.mode='live';state.startDate='2026-10-03';
   await pg.exec("update fueltech_pilot_config set mode='live',start_date='2026-10-03'");
   await pg.query('insert into fueltech_pilot_state values($1,1,$2,now())',['live',JSON.stringify(state)]);
-  for(const name of ['20261016072516_pilot_incremental_storage.sql','20261016074116_optimize_pilot_document_reads.sql','20261103054839_optimize_liloan_report_reconstruction.sql','20261103055135_batch_liloan_pos_evidence_reads.sql','20261104055014_all_station_rollout.sql'])await pg.exec(sql(name));
+  for(const name of ['20261016072516_pilot_incremental_storage.sql','20261016074116_optimize_pilot_document_reads.sql','20261103054839_optimize_liloan_report_reconstruction.sql','20261103055135_batch_liloan_pos_evidence_reads.sql','20261104055302_all_station_rollout.sql'])await pg.exec(sql(name));
   const after=structuredClone(state);prepareStationRollout(after,withStationRollout({mode:'live',start_date:state.startDate}));
   const patch=statePatch(state,after),id=randomUUID();
   const commit=(revision,mutation,change)=>pg.query("select fueltech_pilot_commit_v2('live',$1,$2,'test',$3,'{}')",[revision,mutation,JSON.stringify(change)]);
