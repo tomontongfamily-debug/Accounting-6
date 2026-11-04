@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture } from './pilot-fixture.mjs';
+import { fixture, openingPhotos } from './pilot-fixture.mjs';
 import { prepareStationRollout } from '../pilot/station-rollout.mjs';
 import { ensureCurrentReports } from '../pilot/state.mjs';
 import { runAction } from '../pilot/service.mjs';
@@ -41,6 +41,7 @@ for(const branch of ALL_STATIONS.filter(b=>b!=='Liloan'))test(branch+': setup, s
   report.pumpRows=report.pumpRows.map((r,i)=>({...r,opening:10000+i*1000}));
   report.tankRows=report.tankRows.map(r=>({...r,opening:1500}));report.coke.beginning=30;report.baselineConfirmed=true;
   await assert.rejects(runAction(state,{role:'Cashier',branch:branch==='Arpili'?'Mabolo':'Arpili'},'/api/reports/save',{report}),/another station/);
+  state=await openingPhotos(state,report);
   const result=await runAction(state,{role:'Cashier',branch},'/api/reports/save',{report});
   state=result.state;assert.equal(openingReady(result.result.report,config),true);
   assert.equal(compute(result.result.report).grossSales,0);
@@ -74,6 +75,7 @@ test('a confirmed zero meter opening counts sales and manual redemptions persist
   const setup=structuredClone(state.reports['Mabolo__2026-11-04__shift-3']);
   setup.cashierName='Test';setup.pumpRows=setup.pumpRows.map(r=>({...r,opening:0}));
   setup.tankRows=setup.tankRows.map(r=>({...r,opening:0}));setup.coke.beginning=0;setup.baselineConfirmed=true;
+  state=await openingPhotos(state,setup);
   state=(await runAction(state,{role:'Cashier',branch:'Mabolo'},'/api/reports/save',{report:setup})).state;
   ensureCurrentReports(state);
   const key='Mabolo__2026-11-05__shift-1',report=structuredClone(state.reports[key]);

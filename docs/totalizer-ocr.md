@@ -1,5 +1,16 @@
 # Pump totalizer OCR
 
+## Opening Setup
+
+Opening Setup uses the daily report camera, photo storage and automatic reader
+for each starting nozzle reading. Staff check and confirm the detected number;
+an unclear photo can be retaken or reviewed before manual entry. Every nozzle
+requires a saved photo and confirmed reading before setup can be confirmed.
+The confirmed number supplies both opening and closing for this setup only,
+so it creates no sales and carries into the first regular shift. Tank stock and
+Coke inventory remain manually entered. Phone photos sync to the desktop,
+retakes invalidate the old confirmation, and submitted setups stay locked.
+
 ## Automatic-reading revision (`lcd-neural-3`)
 
 The browser now combines the existing seven-segment recognizer, a physical

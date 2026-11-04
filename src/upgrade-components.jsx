@@ -30,7 +30,7 @@ export async function demoApi(path,body={}) {
 export async function savePumpReading(report,row) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0});
 }
-function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
+function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false}) {
   const phoneView=usePhoneView();
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
   const [ocrResult,setOcrResult]=useState(row.ocr_result);
@@ -52,7 +52,9 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     revision.current=Number(saved.readingRevision||0);
     return saved;
   }
-  const warning=readingWarning({...row,closing:draft});
+  const warning=opening
+    ? {level:'NORMAL',liters:0,blocked:draft===''||!Number.isFinite(Number(draft))||Number(draft)<0||Number(draft)>1e12,message:'This confirmed number becomes the starting pump reading.'}
+    : readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
   async function processPhoto(data,recognitionImage=data) {
     setBusy(true);setError('');setDraft('');setDetected(null);setOcrResult(undefined);setEditing(false);
@@ -130,7 +132,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     setBusy(true);setError('');try{await saveReading({...row,readingConfirmed:false});setEditing(true);}catch(e){setError(e.message);}finally{setBusy(false);}
   }
   return <article className={`reading-card ${readingComplete(row)?'complete':''}`} data-pump-row-id={row.id}>
-    <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</small></div><b>{readingComplete(row)?'✓ Complete':'Photo required'}</b></header>
+    <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{opening?`${row.product} · Starting totalizer reading`:<>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</>}</small></div><b>{readingComplete(row)?'✓ Complete':'Photo required'}</b></header>
     {photo&&<img src={photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><p>Fill the guide with all eight digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
@@ -138,14 +140,15 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare}) {
     {busy&&<p role="status">Saving photo or reading…</p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {photo&&!busy&&!row.readingConfirmed&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?'Automatic reader failed to load. The photo is saved. Reconnect and retake to retry.':ocrResult.status==='pending'?'The automatic reading did not finish. Retake the photo to try again.':'Automatic reader could not verify every digit. Retake a closer photo without reflections.'}</p>}
-    {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&editing&&<p className="neutral">Check every digit in the saved photo before entering a number. Retake if any digit is covered or unclear.</p>}{(detected!==null||editing)&&<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>}
-      {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/>{warning.message}</p>}
+    {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&editing&&<p className="neutral">Check every digit in the saved photo before entering a number. Retake if any digit is covered or unclear.</p>}{(detected!==null||editing)&&<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${opening?'opening':change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>}
+      {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{!opening&&<>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/></>}{warning.message}</p>}
       <div className="demo-actions">{(detected!==null||editing)&&<button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>Yes, confirm reading</button>}<button type="button" className="secondary" onClick={editReading}>{detected===null&&!editing?'Enter number manually':'Edit number'}</button></div>
     </div>}</>}
-    {!change&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
+    {!change&&!opening&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
   </article>;
 }
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {
+  const opening=Boolean(report.baselineReport);
   const groups=[...new Set(report.pumpRows.map(r=>r.pump))];const [pump,setPump]=useState(groups[0]);
   const [busyRows,setBusyRows]=useState({});
   const onPumpBusy=useCallback((id,busy)=>{setBusyRows(previous=>({...previous,[id]:busy}));onBusy?.(id,busy);},[onBusy]);
@@ -153,9 +156,9 @@ export function PumpPhotoWorkflow({report,onReading,onBusy}) {
   const done=report.pumpRows.filter(readingComplete).length;
   const sales=report.pumpRows.filter(readingComplete).map(row=>pumpSalesBreakdown(report,row));
   const total=key=>sales.reduce((sum,row)=>sum+row[key],0);
-  return <section className="section"><div className="section-heading"><h2>Closing pump readings</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each totalizer, check the detected number, then confirm. All readings and photos are required to continue.</p>
-    {done>0&&<div className="pump-sales-summary" aria-label="Confirmed pump sales totals"><p>Metered liters: <b>{total('meteredLiters').toFixed(2)} L</b> · Leak loss: <b>{total('lossLiters').toFixed(2)} L</b></p><p>Total metered sales: <b>{php(total('grossSales'))}</b> · Paid pump sales: <b>{sales.some(row=>row.excessLoss)?'Check leak loss entries':php(total('paidSales'))}</b></p><small>Totals use confirmed pump readings. Tank calibration and other report adjustments are shown in the final report.</small></div>}
-    <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" disabled={readingBusy} className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} locked={report.confirmed} onConfirm={onReading} onBusy={onPumpBusy}/>)}</div></section>;
+  return <section className="section"><div className="section-heading"><h2>{opening?'Opening pump readings':'Closing pump readings'}</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each {opening?'starting totalizer':'totalizer'}, check the detected number, then confirm. All readings and photos are required to continue.</p>
+    {!opening&&done>0&&<div className="pump-sales-summary" aria-label="Confirmed pump sales totals"><p>Metered liters: <b>{total('meteredLiters').toFixed(2)} L</b> · Leak loss: <b>{total('lossLiters').toFixed(2)} L</b></p><p>Total metered sales: <b>{php(total('grossSales'))}</b> · Paid pump sales: <b>{sales.some(row=>row.excessLoss)?'Check leak loss entries':php(total('paidSales'))}</b></p><small>Totals use confirmed pump readings. Tank calibration and other report adjustments are shown in the final report.</small></div>}
+    <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" disabled={readingBusy} className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} opening={opening} locked={report.confirmed} onConfirm={onReading} onBusy={onPumpBusy}/>)}</div></section>;
 }
 export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}) {
   const rows=report.pumpRows.filter(row=>row.product===change.product);

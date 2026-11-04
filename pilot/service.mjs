@@ -131,6 +131,14 @@ function assertCorrectionWindow(report) {
   if(report.correctionRequest?.status==='approved'&&!(Date.parse(report.correctionRequest.expiresAt||'')>Date.now())) reject('This correction approval expired. Ask admin to approve it again.',423);
   if(report.correctionRequest?.status==='rejected'&&!report.confirmed) reject('This correction was rejected. Request a new admin approval before editing.',423);
 }
+function isBeginningSetup(report) {
+  return Boolean(report?.baselineReport&&report.branch!=='Liloan'&&isStationOpening(database,report));
+}
+function openingPhotoComplete(report,row) {
+  const photo=database.photos[row.photo_path];
+  return readingComplete(row)&&Number(row.opening)===Number(row.closing)
+    &&photo?.reportKey===keyOf(report)&&photo.rowId===row.id&&!photo.changeId;
+}
 function storeReport(r,session,action) {
   r=refreshPosReport(r,database.posRedemptionSync);
   if(r.date<stationStartDate(database,r.branch)&&!(r.baselineReport&&isStationOpening(database,r))) reject('Historical reports are read-only in the pilot.',423);
@@ -206,18 +214,19 @@ function validatePriceReadingOrder(report,change) {
     if(route==='/api/reports/save') {
       requireRole(session,'Cashier','Manager','Admin');
       let old=database.reports[keyOf(input.report||{})];
-      if(old?.baselineReport&&isStationOpening(database,old)&&old.branch!=='Liloan') {
+      if(isBeginningSetup(old)) {
         requireRole(session,'Cashier'); branchAccess(session,old.branch);
         if(old.confirmed) reject('Opening setup is already confirmed.',423);
         if(!cashierRevisionMatches(input.report,old)) reject('Opening setup changed on another device. Refresh before saving.',409);
         const r=structuredClone(old), source=input.report;
-        r.pumpRows=r.pumpRows.map(base=>{const row=(source.pumpRows||[]).find(v=>v.id===base.id);if(!row)reject('Every configured nozzle is required.');return {...base,opening:row.opening,closing:row.opening,closingEntered:row.opening!==''&&row.opening!=null,closingEntrySource:'baseline'};});
+        r.pumpRows=r.pumpRows.map(base=>{const row=(source.pumpRows||[]).find(v=>v.id===base.id);if(!row)reject('Every configured nozzle is required.');return base.readingRevision?base:{...base,opening:row.opening,closing:row.opening,closingEntered:row.opening!==''&&row.opening!=null,closingEntrySource:'baseline'};});
         r.tankRows=r.tankRows.map(base=>{const row=(source.tankRows||[]).find(v=>v.id===base.id);if(!row)reject('Every tank is required.');return {...base,opening:row.opening,actualDip:row.opening};});
         r.coke={...r.coke,beginning:source.coke?.beginning??'',ending:source.coke?.beginning??''};
         r.cashierName=String(source.cashierName||'').trim();
         if(source.baselineConfirmed){
           if(Date.now()<Date.parse(old.openingSetupRequiredAt))reject('Beginning Setup opens November 4 at 10:00 p.m. Manila time.',423);
           for(const row of r.pumpRows)amount(row.opening);
+          if(r.pumpRows.some(row=>!openingPhotoComplete(r,row)))reject('Photograph and confirm every starting pump reading before confirming Opening Setup.');
           for(const row of r.tankRows)amount(row.opening);
           if(!Number.isInteger(amount(r.coke.beginning)))reject('Enter a whole-number Coke count.');
           if(!r.cashierName)reject('Enter the cashier name.');
@@ -356,12 +365,26 @@ function validatePriceReadingOrder(report,change) {
     if(route==='/api/demo/pump-report' || route==='/api/demo/pump-reading') {
       requireRole(session,'Cashier');
       const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
-      if(route.endsWith('pump-report')) return send({ok:true,report:exposeReport(carryForwardOpenings(old,database.reports),session)});
+      if(route.endsWith('pump-report')) return send({ok:true,report:exposeReport(isBeginningSetup(old)?old:carryForwardOpenings(old,database.reports),session)});
       if(old.confirmed) reject('Submitted report is locked.',423);
-      if(old.baselineReport||old.baselineMissing) reject('Complete starting-opening setup on desktop first.');
       const base=old.pumpRows.find(row=>row.id===input.row?.id);
       if(!base) reject('Unknown nozzle.');
       if(Number(input.revision)!==Number(base.readingRevision||0)) reject('This nozzle changed on another device. Refresh the readings before trying again.',409);
+      if(isBeginningSetup(old)) {
+        const photo=database.photos[input.row.photo_path];
+        if(input.row.photo_path!==base.photo_path||!photo||photo.reportKey!==keyOf(old)||photo.rowId!==base.id||photo.changeId)reject('The photo does not belong to this starting reading.');
+        const r=structuredClone(old),row=r.pumpRows.find(p=>p.id===base.id);
+        const value=input.row.readingConfirmed?amount(input.row.closing):'';
+        const ocr=mergeOcrEvidence(base,input.row);
+        Object.assign(row,{opening:value,closing:value,closingEntered:!!input.row.readingConfirmed,closingEntrySource:'baseline',
+          photo_path:input.row.photo_path,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null&&value!==Number(ocr.ocr_detected_reading),
+          readingConfirmed:!!input.row.readingConfirmed,confirmed_closing_reading:input.row.readingConfirmed?value:null,
+          calculated_liters:input.row.readingConfirmed?0:null,readingRevision:Number(base.readingRevision||0)+1});
+        r.baselineReady=false;
+        audit('opening-reading-saved',session,{reportKey:keyOf(r),rowId:row.id,photo_path:row.photo_path,ocr:row.ocr_detected_reading,ocr_result:row.ocr_result,final:value,confirmed:row.readingConfirmed});
+        return send(storeReport(r,session,'pump-reading-saved'));
+      }
+      if(old.baselineReport||old.baselineMissing) reject('Complete starting-opening setup on desktop first.');
       const r=candidate({...old,pumpRows:old.pumpRows.map(row=>row.id===base.id?{...row,...input.row}:row)},session,base.id);
       const row=r.pumpRows.find(row=>row.id===base.id);
       if(row.readingConfirmed && (!readingComplete(row)||readingWarning(row).blocked)) reject('A valid photo and closing reading are required.');
@@ -418,7 +441,10 @@ function validatePriceReadingOrder(report,change) {
         if(change){
           const pumpKey=midShiftPumpKey(photoRow);
           change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;
-        }else Object.assign(photoRow,cleared,{calculated_liters:null});
+        }else {
+          Object.assign(photoRow,cleared,{calculated_liters:null});
+          if(isBeginningSetup(r)){photoRow.opening='';r.baselineReady=false;}
+        }
         r.cashReviewState='';r.recountRequired=false;
         storeReport(r,session,change?'price-change-photo-saved':'pump-reading-saved');
       }

@@ -2,6 +2,7 @@
 .env*
 node_modules/
 dist/
+test-output/
 pnpm-lock.yaml
 .codex-clone-path
 supabase/.temp/

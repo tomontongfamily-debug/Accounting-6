@@ -3200,7 +3200,7 @@ export default function App() {
       pricingEffectiveDate: activePricing.pricingEffectiveDate,
       pricingShiftId: activePricing.pricingShiftId,
     }, branch, activeDate, activeShiftId, activePricing.prices, activePricing);
-    return carryForwardOpenings(baseReport, store.reports);
+    return baseReport.baselineReport ? baseReport : carryForwardOpenings(baseReport, store.reports);
   }, [store.reports, branch, activeDate, activeShiftId, effectivePrices, activePricing]);
   const displayedManagerPrices = managerPrices;
 
@@ -3853,26 +3853,31 @@ export default function App() {
   }
 
   function confirmStartingOpening() {
-    if (!hasCompleteBaselineOpening(activeReport)) {
+    const current=latestActiveReportForEdit();
+    if(current.pumpRows.some(row=>!readingComplete(row))) {
+      setSyncMessage("Photograph and confirm every starting pump reading before confirming Opening Setup.");
+      return;
+    }
+    if (!current.tankRows.every(row=>row.opening!==''&&row.opening!=null&&Number.isFinite(Number(row.opening))&&Number(row.opening)>=0)) {
       setSyncMessage("Please complete all pump opening readings and underground tank opening inventory before confirming the starting opening.");
       return;
     }
 
     saveReport({
-      ...activeReport,
-      pumpRows: activeReport.pumpRows.map((row) => ({
+      ...current,
+      pumpRows: current.pumpRows.map((row) => ({
         ...row,
         closing: n(row.opening),
         closingEntered: true,
         closingEntrySource: "baseline",
       })),
-      tankRows: activeReport.tankRows.map((row) => ({
+      tankRows: current.tankRows.map((row) => ({
         ...row,
         actualDip: n(row.opening),
       })),
       coke: {
-        ...(activeReport.coke || {}),
-        ending: n(activeReport.coke?.beginning),
+        ...(current.coke || {}),
+        ending: n(current.coke?.beginning),
       },
       baselineConfirmed: true,
       baselineReport: true,
@@ -4403,23 +4408,18 @@ export default function App() {
   );
 }
 
-function BaselineOpeningSection({ report, patchReport, confirmStartingOpening }) {
+function BaselineOpeningSection({ report, patchReport, confirmStartingOpening, onReading }) {
   const waiting=report.openingSetupRequiredAt&&Date.now()<Date.parse(report.openingSetupRequiredAt);
+  const [busyRows,setBusyRows]=useState({});
+  const onBusy=useCallback((id,busy)=>setBusyRows(previous=>({...previous,[id]:busy})),[]);
+  const photosReady=report.pumpRows.every(readingComplete)&&!Object.values(busyRows).some(Boolean);
   return (
     <Section title="Opening Setup - Starting Readings">
       <div className="warning-box">
         Record the pump readings, tank stock and Coke inventory for this Beginning Setup. These become the opening balances for the first sales report.
-        If a pump or tank is genuinely at zero, type 0 so the system knows it was checked.
+        Photograph and confirm every pump reading. If a tank is genuinely at zero, type 0 so the system knows it was checked.
       </div>
-      <Table headers={["Pump", "Nozzle", "Starting Reading (becomes Previous Shift Closing)"]} minWidth="720px">
-        {report.pumpRows.map((row, index) => (
-          <tr key={row.id}>
-            <td>{row.pump}</td>
-            <td>{row.nozzle}</td>
-            <td><NumberInput ghostZero value={row.opening} onChange={(value) => patchReport(["pumpRows", index, "opening"], value)} /></td>
-          </tr>
-        ))}
-      </Table>
+      <PumpPhotoWorkflow report={report} onReading={onReading} onBusy={onBusy} />
       <Table headers={["Tank", "First Opening Underground Tank"]} minWidth="560px">
         {report.tankRows.map((row, index) => (
           <tr key={row.id}>
@@ -4433,7 +4433,7 @@ function BaselineOpeningSection({ report, patchReport, confirmStartingOpening })
         <Field label="Coke Beginning"><NumberInput ghostZero value={report.coke.beginning} onChange={(value) => patchReport(["coke", "beginning"], value)} /></Field>
       </div>
       {waiting&&<p role="status">Opening setup confirmation starts November 4 at 10:00 p.m. Manila time. You can prepare the values before then.</p>}
-      <button type="button" className="confirm-button" disabled={!!waiting} onClick={confirmStartingOpening}>Confirm Opening Setup</button>
+      <button type="button" className="confirm-button" disabled={!!waiting||!photosReady} onClick={confirmStartingOpening}>Confirm Opening Setup</button>
     </Section>
   );
 }
@@ -4775,10 +4775,11 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
       )}
 
       {wizardStep === 1 && <>
-        {report.baselineMissing && <BaselineOpeningSection report={report} patchReport={patchReport} confirmStartingOpening={confirmStartingOpening} />}
+        {report.baselineMissing && <BaselineOpeningSection report={report} patchReport={patchReport} confirmStartingOpening={confirmStartingOpening} onReading={onReading} />}
       {report.baselineReport && !report.baselineMissing && (
         <Section title="Opening Setup Complete">
           <p className="neutral">Starting readings are saved. The Official Pump Reading Register begins in the first regular shift and is not entered twice here.</p>
+          {report.pumpRows.some(row=>row.photo_path)&&<PumpPhotoWorkflow report={report} onReading={onReading} />}
           <button type="button" className="primary" onClick={onBackToShifts}>Back to Shifts</button>
         </Section>
       )}

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
 import {preview} from 'vite';
-import {fixture} from './pilot-fixture.mjs';
+import {fixture,openingPhotos} from './pilot-fixture.mjs';
 import {prepareStationRollout} from '../pilot/station-rollout.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {ALL_STATIONS,withStationRollout} from '../src/station-rollout.js';
@@ -16,6 +16,9 @@ test('all five new stations can open tonight’s setup on a phone; failed Admin 
    const f=fixture();let state=f.state;state.mode='live';state.startDate='2026-10-03';
    const config=withStationRollout({ok:true,mode:'live',start_date:state.startDate,launch:{ready:true}});
    prepareStationRollout(state,config);
+   const opening=structuredClone(state.reports[branch+'__2026-11-04__shift-3']);
+   opening.pumpRows=opening.pumpRows.map(r=>({...r,opening:0}));
+   state=await openingPhotos(state,opening);
    const context=await browser.newContext({viewport:{width:390,height:844},timezoneId:'Asia/Manila'});
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.clock.install({time:new Date('2026-11-04T05:00:00Z')});

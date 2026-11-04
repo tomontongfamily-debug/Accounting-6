@@ -6,10 +6,10 @@ export { usePhoneView } from './phone-view.js';
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 
 export function MobilePumpCapture({branch,reports,initialDate,logout}) {
-  const choices=Object.values(reports).filter(r=>r.branch===branch&&r.date>=window.__fueltechPilotConfig.start_date&&!r.baselineReport&&!r.baselineMissing).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));
+  const choices=Object.values(reports).filter(r=>r.branch===branch&&(r.baselineReport||r.date>=window.__fueltechPilotConfig.start_date)&&(!r.baselineMissing||r.baselineReport)).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));
   const approvedCorrections=choices.filter(r=>!r.confirmed&&r.correctionRequest?.status==='approved'&&Date.parse(r.correctionRequest.expiresAt||'')>Date.now());
   const [selected,setSelected]=useState(()=>{
-    const preferred=approvedCorrections[0]||choices.filter(r=>r.date===initialDate&&!r.confirmed).sort((a,b)=>a.shiftId.localeCompare(b.shiftId))[0]||choices.find(r=>!r.confirmed)||choices[0];
+    const preferred=choices.find(r=>r.baselineReport&&!r.confirmed)||approvedCorrections[0]||choices.filter(r=>r.date===initialDate&&!r.confirmed).sort((a,b)=>a.shiftId.localeCompare(b.shiftId))[0]||choices.find(r=>!r.confirmed)||choices[0];
     return preferred?keyOf(preferred):'';
   });
   const [report,setReport]=useState(null);
@@ -53,10 +53,10 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   return <main className="app mobile-pump-app"><div className="container">
     <header className="phone-pump-header"><div><small>FUELTECH · CASHIER</small><h1>Pump photos</h1><strong>{branch}</strong></div><button type="button" className="secondary" disabled={busy} onClick={logout}>Log out</button></header>
     {approvedCorrections.map(r=><div className="warning-box" key={keyOf(r)}><strong>Approved correction · {r.date} · {r.shiftId.replace('shift-','Shift ')}</strong><p>Replace the incorrect pump photo and confirm its reading. Finish the report on the desktop.</p><button type="button" className="secondary" disabled={busy} onClick={()=>setSelected(keyOf(r))}>Open approved correction</button></div>)}
-    <label className="phone-shift-picker">Shift to photograph<select aria-label="Shift to photograph" value={selected} disabled={busy} onChange={e=>setSelected(e.target.value)}>{choices.map(r=><option key={keyOf(r)} value={keyOf(r)}>{r.date} · {r.shiftId.replace('shift-','Shift ')}{r.confirmed?' · Submitted':approvedCorrections.includes(r)?' · Approved correction':''}</option>)}</select></label>
-    <p>Take the pump photos here. Finish cash count and the rest of the report on the desktop.</p>
+    <label className="phone-shift-picker">Shift to photograph<select aria-label="Shift to photograph" value={selected} disabled={busy} onChange={e=>setSelected(e.target.value)}>{choices.map(r=><option key={keyOf(r)} value={keyOf(r)}>{r.baselineReport?'Opening Setup · ':''}{r.date} · {r.shiftId.replace('shift-','Shift ')}{r.confirmed?' · Submitted':approvedCorrections.includes(r)?' · Approved correction':''}</option>)}</select></label>
+    <p>{report?.baselineReport?'Take the starting pump photos here. Enter tank stock and Coke inventory, then confirm Opening Setup on the desktop.':'Take the pump photos here. Finish cash count and the rest of the report on the desktop.'}</p>
     {error?<p className="error" role="alert">{error} Reconnect or refresh before continuing.</p>:<p role="status">{message}</p>}
-    {!choices.length&&<p>No shifts are available. Complete station opening setup on the desktop first.</p>}
+    {!choices.length&&<p>No opening setup or shifts are available. Open the station dashboard on the desktop, then refresh this page.</p>}
     {report&&<><PumpPhotoWorkflow key={selected} report={report} onReading={save} onBusy={onBusy}/>{report.confirmed?<p className="success-box">This report is submitted and locked.</p>:done===report.pumpRows.length&&<p className="success-box">All pump readings are confirmed and saved. Continue the report on the desktop.</p>}</>}
   </div></main>;
 }
