@@ -3,6 +3,7 @@ import { getRequestSession } from "../_shared/session.js";
 import { attachAuthoritativePoRows } from "../_shared/po.js";
 import { allPages } from "../_shared/pages.js";
 import { refreshLivePilotSources } from "../../pilot/repository.mjs";
+import { attachPosVerification } from "../../pilot/pos-redemptions.mjs";
 import { storePage, STORE_PAGE_ROWS, sendStoreJson } from "../_shared/store-page.js";
 
 const PUBLIC_PRICE_FIELDS = new Set(["Premium", "Regular", "Diesel", "confirmed", "confirmedAt"]);
@@ -80,7 +81,7 @@ export default async function handler(req, res) {
 
     const authoritativeReportRows = auth.session.role === "Approver"
       ? reportRows || []
-      : await attachAuthoritativePoRows(supabase, reportRows || [], auth.session.role === "Admin" ? "" : auth.session.branch);
+      : await attachPosVerification(supabase,await attachAuthoritativePoRows(supabase, reportRows || [], auth.session.role === "Admin" ? "" : auth.session.branch));
 
     const payload={
       ok: true,

@@ -5,6 +5,7 @@ import { accountingTiming, dateOffset } from './integrations.mjs';
 import { posRedemptionIssues } from '../src/pos-redemptions.js';
 import { compute, reportKey } from '../src/accounting-engine.js';
 import { reportIssues } from './domain.mjs';
+import { retainReviewOrder } from './review-issues.mjs';
 
 export const POS_PROJECT='zuhvemesqznmbbpzudib';
 export const POS_READER='fueltech_accounting_reader';
@@ -119,21 +120,30 @@ export function normalizePosPoints(rows,startDate,endDate) {
   }
   return [...byId.values()].sort((a,b)=>a.id.localeCompare(b.id));
 }
+export async function attachPosVerification(db,reportRows) {
+  if(!reportRows.some(row=>row.data?.posRedemptions?.automatic))return reportRows;
+  const {data,error}=await db.from('fueltech_pilot_documents').select('item_key,data').eq('mode','live').eq('section','pos').in('item_key',['status','startDate','verifiedAt','attemptedAt']);
+  if(error)throw Error('Unable to verify the current POS check time.');
+  const sync={...Object.fromEntries((data||[]).map(row=>[row.item_key,row.data])),_deferred:true};
+  if(!sync.status||!sync.startDate)return reportRows;
+  return reportRows.map(row=>({...row,data:refreshPosReport(row.data,sync)}));
+}
 export function refreshPosReport(report,sync) {
   if(report.branch!=='Liloan'||report.baselineReport||!sync||report.date<sync.startDate)return report;
   if(sync._deferred){
     // These summaries came from a committed, verified import. User input never
     // supplies them; keep enforcing imported totals without loading all points.
     if(!report.posRedemptions?.automatic)return report;
-    const next={...report},evidence=report.posRedemptions;
+    const evidence={...report.posRedemptions,status:sync.status,verifiedAt:sync.verifiedAt||'',attemptedAt:sync.attemptedAt};
+    const next={...report,posRedemptions:evidence};
     if(sync.status==='verified'&&sync.verifiedAt){
       next.deductions={...report.deductions,cashRedemption:0,fuelRedemption:0,posRedemption:evidence.cashTotal};
       next.pointsWithdrawn=evidence.cashTotal;
       if(evidence.pointsStatus==='verified')next.pointsIssued=evidence.pointsTotal;
     }
-    next.integrationIssues=[...(report.integrationIssues||[]).filter(i=>i.source!=='FuelTech POS'),...posRedemptionIssues(next)];
+    next.integrationIssues=retainReviewOrder(report.integrationIssues,[...(report.integrationIssues||[]).filter(i=>i.source!=='FuelTech POS'),...posRedemptionIssues(next)]);
     if(next.confirmed){
-      next.checkDetails=[...(report.checkDetails||[]).filter(i=>i.source!=='FuelTech POS'&&i.category!=='CASH_VARIANCE'),...posRedemptionIssues(next),...reportIssues({...next,integrationIssues:[],pumpRows:[]},compute(next).cashVariance)];
+      next.checkDetails=retainReviewOrder(report.checkDetails,[...(report.checkDetails||[]).filter(i=>i.source!=='FuelTech POS'&&i.category!=='CASH_VARIANCE'),...posRedemptionIssues(next),...reportIssues({...next,integrationIssues:[],pumpRows:[]},compute(next).cashVariance)]);
       next.checkCategories=[...new Set(next.checkDetails.map(i=>i.category))];next.checkRequired=!!next.checkDetails.length;
     }
     return next;
@@ -149,9 +159,9 @@ export function refreshPosReport(report,sync) {
     next.pointsWithdrawn=total(cashRows);
     if(pointsVerified)next.pointsIssued=next.posRedemptions.pointsTotal;
   }
-  next.integrationIssues=[...(report.integrationIssues||[]).filter(i=>i.source!=='FuelTech POS'),...posRedemptionIssues(next)];
+  next.integrationIssues=retainReviewOrder(report.integrationIssues,[...(report.integrationIssues||[]).filter(i=>i.source!=='FuelTech POS'),...posRedemptionIssues(next)]);
   if(next.confirmed) {
-    next.checkDetails=[...(report.checkDetails||[]).filter(i=>i.source!=='FuelTech POS'&&i.category!=='CASH_VARIANCE'),...posRedemptionIssues(next),...reportIssues({...next,integrationIssues:[],pumpRows:[]},compute(next).cashVariance)];
+    next.checkDetails=retainReviewOrder(report.checkDetails,[...(report.checkDetails||[]).filter(i=>i.source!=='FuelTech POS'&&i.category!=='CASH_VARIANCE'),...posRedemptionIssues(next),...reportIssues({...next,integrationIssues:[],pumpRows:[]},compute(next).cashVariance)]);
     next.checkCategories=[...new Set(next.checkDetails.map(i=>i.category))];next.checkRequired=!!next.checkDetails.length;
   }
   return next;
