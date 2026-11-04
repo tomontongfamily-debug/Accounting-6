@@ -1,6 +1,7 @@
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect, prepareTotalizer } from './totalizer-ocr.js';
+import {readerPreparation,subscribeReaderPreparation,prepareReaderFiles,hasPreparedReaderFiles,canPrepareReaderAutomatically} from './ocr-downloads.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
@@ -154,6 +155,34 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     {!change&&!opening&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
   </article>;
 }
+function ReaderPreparation(){
+  const [status,setStatus]=useState(readerPreparation);const [primaryReady,setPrimaryReady]=useState(false);
+  const [preparingPrimary,setPreparingPrimary]=useState(false);const [error,setError]=useState('');
+  useEffect(()=>{
+    let mounted=true,timer;const unsubscribe=subscribeReaderPreparation(setStatus);
+    prepareTotalizer().then(async()=>{
+      if(!mounted)return;setPrimaryReady(true);
+      if(await hasPreparedReaderFiles())return prepareReaderFiles();
+      if(mounted&&canPrepareReaderAutomatically())timer=window.setTimeout(()=>{prepareReaderFiles().catch(()=>{});},1500);
+    }).catch(()=>{});
+    return()=>{mounted=false;window.clearTimeout(timer);unsubscribe();};
+  },[]);
+  const ready=primaryReady&&status.status==='ready',preparing=preparingPrimary||status.status==='preparing';
+  async function prepare(){
+    setPreparingPrimary(true);setError('');
+    try{await Promise.all([prepareTotalizer().then(()=>setPrimaryReady(true)),prepareReaderFiles()]);}
+    catch{setError('Preparation could not finish. Check your connection and retry.');}
+    finally{setPreparingPrimary(false);}
+  }
+  return <aside className="neutral reader-preparation" aria-label="Automatic reader preparation">
+    {ready?<p role="status">{status.savedForReuse?'Reader ready for faster photos.':'Reader ready for this page. Keep it open for faster photos.'}</p>:<>
+      <p>Prepare the reader on Wi-Fi once for faster readings when the signal is weak. Photos still need a connection to save.</p>
+      <button type="button" className="secondary" disabled={preparing} onClick={prepare}>{preparing?'Preparing reader…':'Prepare faster readings'}</button>
+      {preparing&&<p role="status">Preparing reader: {status.percent}% <progress aria-label="Reader preparation progress" max="100" value={status.percent}/></p>}
+      {(error||status.status==='error')&&<p role="status">{error||'Preparation could not finish. Check your connection and retry.'}</p>}
+    </>}
+  </aside>;
+}
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {
   const opening=Boolean(report.baselineReport);
   const groups=[...new Set(report.pumpRows.map(r=>r.pump))];const [pump,setPump]=useState(groups[0]);
@@ -164,6 +193,7 @@ export function PumpPhotoWorkflow({report,onReading,onBusy}) {
   const sales=report.pumpRows.filter(readingComplete).map(row=>pumpSalesBreakdown(report,row));
   const total=key=>sales.reduce((sum,row)=>sum+row[key],0);
   return <section className="section"><div className="section-heading"><h2>{opening?'Opening pump readings':'Closing pump readings'}</h2><strong>{done} / {report.pumpRows.length} nozzles complete</strong></div><p>Photograph each {opening?'starting totalizer':'totalizer'}, check the detected number, then confirm. All readings and photos are required to continue.</p>
+    {!report.confirmed&&<ReaderPreparation/>}
     {!opening&&done>0&&<div className="pump-sales-summary" aria-label="Confirmed pump sales totals"><p>Metered liters: <b>{total('meteredLiters').toFixed(2)} L</b> · Leak loss: <b>{total('lossLiters').toFixed(2)} L</b></p><p>Total metered sales: <b>{php(total('grossSales'))}</b> · Paid pump sales: <b>{sales.some(row=>row.excessLoss)?'Check leak loss entries':php(total('paidSales'))}</b></p><small>Totals use confirmed pump readings. Tank calibration and other report adjustments are shown in the final report.</small></div>}
     <div className="pump-tabs" role="group" aria-label="Pumps">{groups.map(p=><button key={p} type="button" disabled={readingBusy} className={p===pump?'primary':'secondary'} onClick={()=>setPump(p)}>{p} · {report.pumpRows.filter(r=>r.pump===p&&readingComplete(r)).length}/{report.pumpRows.filter(r=>r.pump===p).length}</button>)}</div><div className="reading-grid">{report.pumpRows.filter(r=>r.pump===pump).map(row=><PhotoReading key={row.id} row={row} report={report} opening={opening} locked={report.confirmed} onConfirm={onReading} onBusy={onPumpBusy}/>)}</div></section>;
 }
@@ -174,7 +204,7 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
     return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:''};
   };
   const done=rows.filter(row=>readingComplete(photoRow(row))).length;
-  return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p><div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={next=>onReading(change,next)}/>)}</div></div>;
+  return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p>{!report.confirmed&&<ReaderPreparation/>}<div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={next=>onReading(change,next)}/>)}</div></div>;
 }
 export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);

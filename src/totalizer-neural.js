@@ -1,20 +1,20 @@
-import { ocrAsset } from './ocr-assets.js';
+import { prepareReaderFiles } from './ocr-downloads.js';
 let ready;
 export function prepareNeuralTotalizer(){
   ready ||= (async()=>{
-    const ort=await import('onnxruntime-web/wasm');
+    // Finish and verify downloads before starting the runtime's CPU-init clock.
+    // The same bytes are reused by preparation and recognition, even on 3G.
+    const [ort,files]=await Promise.all([import('onnxruntime-web/wasm'),prepareReaderFiles()]);
     ort.env.wasm.numThreads=1;
     ort.env.wasm.initTimeout=20000;
     ort.env.wasm.wasmPaths={
       mjs:new URL('../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',import.meta.url).href,
-      wasm:ocrAsset('ort/ort-wasm-simd-threaded.wasm'),
     };
-    const [session,charsResponse]=await Promise.all([
-      ort.InferenceSession.create(ocrAsset('neural/english-mobile.onnx'),{executionProviders:['wasm']}),
-      fetch(ocrAsset('neural/characters.json')),
-    ]);
-    if(!charsResponse.ok)throw Error('OCR character dictionary unavailable');
-    return {ort,session,characters:await charsResponse.json()};
+    ort.env.wasm.wasmBinary=files.wasm;
+    let session;
+    try{session=await ort.InferenceSession.create(new Uint8Array(files.model),{executionProviders:['wasm']});}
+    finally{ort.env.wasm.wasmBinary=undefined;}
+    return {ort,session,characters:JSON.parse(new TextDecoder().decode(files.characters))};
   })().catch(error=>{ready=undefined;throw error;});
   return ready;
 }

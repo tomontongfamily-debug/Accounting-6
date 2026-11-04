@@ -47,6 +47,27 @@ until the photo and unconfirmed reading have both been persisted. A failed
 upload discards the provisional display. Photo quality, recognition thresholds,
 fallback consensus, revision checks and cashier confirmation are unchanged.
 
+November 4 reader preparation: the pump workflow offers **Prepare faster
+readings** before capture. After the primary engine is ready, fast connections
+(reported downlink at least 8 Mbps, effective type 4G, data saving off) may
+prepare the larger files in the background. Slow/unknown connections keep an
+explicit preparation button. Preparation is shared across pump cards and shows
+download progress; it does not save or confirm a pump reading.
+
+The unchanged model, dictionary and WASM are verified against pinned byte lengths
+and SHA-256 digests before use. An OCR-only Cache Storage namespace retains
+them across refresh, including browsers whose HTTP cache skips large models.
+If storage is denied or full, the verified files remain usable for that page
+and the UI explains to keep it open. Cache eviction/clearing requires preparing
+again. No station photo or accounting response is stored in this file cache.
+
+Downloads finish before ONNX's existing 20-second initialization timer starts.
+The model is passed as bytes and WASM via the documented `wasmBinary` option,
+so a slow network download cannot consume the CPU-initialization timeout.
+First-use file size and recognition logic have not changed; first preparation
+still depends on connection speed. Photos and reading confirmation still need
+their existing server saves.
+
 The benchmark figures below describe the earlier restrictive revision. They
 must not be read as the automatic fill rate of this revision.
 
