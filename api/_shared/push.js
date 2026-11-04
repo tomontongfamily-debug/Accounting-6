@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { createHash, randomUUID } from 'node:crypto';
+import { notificationAudience, subscriptionMatchesAudience, receivesReportAlert } from './notification-access.js';
 
 const PUSH_STORE_DATE = "1900-01-01";
 const MAX_SUBSCRIPTIONS = 20;
@@ -53,26 +54,28 @@ export function vapidPublicKey() {
   return pushConfiguration().publicKey;
 }
 
-export async function savePushSubscription(supabase, subscription) {
+export async function savePushSubscription(supabase, subscription,session={role:'Admin'}) {
   if (!validSubscription(subscription)) throw new Error("Invalid notification subscription.");
+  const audience=notificationAudience(session);
+  if(!audience)throw new Error('Admin or Liloan manager login required.');
   const subscriptions = await loadSubscriptionStore(supabase);
   await saveSubscriptionStore(supabase, [
     ...subscriptions.filter((item) => item.endpoint !== subscription.endpoint),
-    { ...subscription, savedAt: new Date().toISOString() },
+    {endpoint:subscription.endpoint,expirationTime:subscription.expirationTime??null,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth},...audience,savedAt:new Date().toISOString()},
   ]);
 }
 
-export async function removePushSubscription(supabase, endpoint) {
+export async function removePushSubscription(supabase, endpoint,audience=null) {
   if (!endpoint) return;
   const subscriptions = await loadSubscriptionStore(supabase);
-  await saveSubscriptionStore(supabase, subscriptions.filter((item) => item.endpoint !== endpoint));
+  await saveSubscriptionStore(supabase, subscriptions.filter((item) => item.endpoint !== endpoint||audience&&!subscriptionMatchesAudience(item,audience)));
 }
 
 export async function sendCorrectionRequestNotification(supabase, report) {
   const config = pushConfig();
   if (!config.ready) return { sent: 0, disabled: true };
 
-  const subscriptions = await loadSubscriptionStore(supabase);
+  const subscriptions = (await loadSubscriptionStore(supabase)).filter(s=>subscriptionMatchesAudience(s,{role:'Admin',branch:''}));
   if (subscriptions.length === 0) return { sent: 0 };
 
   webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
@@ -93,17 +96,17 @@ export async function sendCorrectionRequestNotification(supabase, report) {
     return [];
   });
   if (expiredEndpoints.length) {
-    await saveSubscriptionStore(supabase, subscriptions.filter((item) => !expiredEndpoints.includes(item.endpoint)));
+    for(const endpoint of expiredEndpoints)await removePushSubscription(supabase,endpoint);
   }
   return { sent: results.filter((result) => result.status === "fulfilled").length };
 }
 
-export async function sendTestNotification(supabase,endpoint){
+export async function sendTestNotification(supabase,endpoint,audience={role:'Admin',branch:''}){
   const config=pushConfig();if(!config.ready)throw Error('Notification service is not configured yet.');
-  const subscription=(await loadSubscriptionStore(supabase)).find(s=>s.endpoint===endpoint);
+  const subscription=(await loadSubscriptionStore(supabase)).find(s=>s.endpoint===endpoint&&subscriptionMatchesAudience(s,audience));
   if(!subscription)throw Error('Enable alerts on this phone first.');
   webpush.setVapidDetails(config.subject,config.publicKey,config.privateKey);
-  try{await webpush.sendNotification(subscription,JSON.stringify({title:'FuelTech test alert',body:'This phone can receive missing-report and correction alerts.',tag:'fueltech-test',url:'/admin?view=alerts'}),{TTL:300,timeout:10000});}
+  try{await webpush.sendNotification(subscription,JSON.stringify({title:'FuelTech test alert',body:audience.role==='Manager'?'This phone can receive overdue Liloan report alerts.':'This phone can receive missing-report and correction alerts.',tag:'fueltech-test',url:audience.role==='Manager'?'/manager':'/admin?view=alerts'}),{TTL:300,timeout:10000});}
   catch(e){if([404,410].includes(e.statusCode))await removePushSubscription(supabase,endpoint);throw Error('The phone could not receive the test alert. Enable alerts again and check phone notification settings.');}
   return {sent:1};
 }
@@ -139,8 +142,8 @@ export async function sendMissingReportNotifications(supabase,alerts,{now=new Da
   try{
     for(const alert of alerts){
       if(Date.now()>Date.parse(ledger.lockedUntil)-15000)break;
-      const recipients=subscriptions.filter(s=>!ledger.delivered[alert.id]?.[endpointKey(s)]&&!expired.has(s.endpoint));
-      const results=await Promise.allSettled(recipients.map(s=>send(s,JSON.stringify({title:alert.message,body:alert.detail,tag:alert.id,url:'/admin?view=alerts'}),{TTL:3600,timeout:10000})));
+      const recipients=subscriptions.filter(s=>receivesReportAlert(s,alert)&&!ledger.delivered[alert.id]?.[endpointKey(s)]&&!expired.has(s.endpoint));
+      const results=await Promise.allSettled(recipients.map(s=>send(s,JSON.stringify({title:alert.message,body:alert.detail,tag:alert.id,url:(s.role||'Admin')==='Manager'?'/manager':'/admin?view=alerts'}),{TTL:3600,timeout:10000})));
       results.forEach((r,i)=>{if(r.status==='fulfilled'){ledger.delivered[alert.id]??={};ledger.delivered[alert.id][endpointKey(recipients[i])]=now.toISOString();sent++;}else{failed++;if([404,410].includes(r.reason?.statusCode))expired.add(recipients[i].endpoint);}});
       await saveDeliveries(supabase,ledger);
     }

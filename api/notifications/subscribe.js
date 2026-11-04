@@ -1,14 +1,16 @@
 import { getRequestSession } from "../_shared/session.js";
 import { readBody, supabaseAdmin } from "../_shared/supabase.js";
 import { removePushSubscription, savePushSubscription, sendTestNotification, vapidPublicKey } from "../_shared/push.js";
+import { notificationAudience } from '../_shared/notification-access.js';
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
   try {
     const auth = getRequestSession(req);
-    if (!auth.ok || auth.session.role !== "Admin") {
-      return res.status(401).json({ ok: false, error: "Admin login required." });
+    const audience=auth.ok&&notificationAudience(auth.session);
+    if (!audience) {
+      return res.status(401).json({ ok: false, error: "Admin or Liloan manager login required." });
     }
 
     const { action = "config", subscription, endpoint } = readBody(req);
@@ -17,13 +19,13 @@ export default async function handler(req, res) {
     if (action === "config") return res.status(200).json({ ok: true, publicKey });
 
     const supabase = supabaseAdmin();
-    if(action==='test')return res.status(200).json({ok:true,...await sendTestNotification(supabase,endpoint)});
+    if(action==='test')return res.status(200).json({ok:true,...await sendTestNotification(supabase,endpoint,audience)});
     if (action === "subscribe") {
-      await savePushSubscription(supabase, subscription);
+      await savePushSubscription(supabase, subscription,audience);
       return res.status(200).json({ ok: true, enabled: true });
     }
     if (action === "unsubscribe") {
-      await removePushSubscription(supabase, endpoint || subscription?.endpoint);
+      await removePushSubscription(supabase, endpoint || subscription?.endpoint,audience);
       return res.status(200).json({ ok: true, enabled: false });
     }
     return res.status(400).json({ ok: false, error: "Invalid notification action." });

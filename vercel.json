@@ -5,6 +5,10 @@
   "outputDirectory": "dist",
   "crons": [
     {
+      "path": "/api/cron/liloan-report-alerts",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/liloan-source-sync",
       "schedule": "* * * * *"
     },
