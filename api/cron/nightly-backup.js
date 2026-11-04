@@ -109,6 +109,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({ ok: true, backupDate, reportCount: payload.reports.length,offProjectBackup:offProject });
   } catch (error) {
+    console.error('Nightly backup failed',{code:error.code||'BACKUP_FAILED',message:error.message||'Backup failed'});
     res.status(500).json({ ok: false, error: error.message || "Nightly backup failed." });
     return;
   }
