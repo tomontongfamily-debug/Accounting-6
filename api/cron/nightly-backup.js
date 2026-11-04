@@ -5,6 +5,7 @@ import { archiveRecovery } from '../../pilot/recovery.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://chqinknijqtixeenhtvu.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+const logFailure=(phase,error)=>console.error('Nightly backup failed',{phase,code:error?.code||'BACKUP_FAILED',message:error?.message||'Backup failed'});
 
 export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "POST") {
@@ -20,6 +21,7 @@ export default async function handler(req, res) {
 
   try {
     if (!SUPABASE_KEY) {
+      logFailure('configuration',{message:'Missing SUPABASE_SERVICE_ROLE_KEY.'});
       res.status(500).json({ ok: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY." });
       return;
     }
@@ -41,20 +43,22 @@ export default async function handler(req, res) {
     ]);
 
     if (reportError) {
+      logFailure('reports',reportError);
       res.status(500).json({ ok: false, error: reportError.message });
       return;
     }
 
     if (priceError) {
+      logFailure('prices',priceError);
       res.status(500).json({ ok: false, error: priceError.message });
       return;
     }
 
     const pilotConfig=await supabase.from('fueltech_pilot_config').select('storage_version').eq('branch','Liloan').single();
-    if(pilotConfig.error)return res.status(500).json({ok:false,error:'Pilot backup configuration could not be verified.'});
+    if(pilotConfig.error){logFailure('pilot configuration',pilotConfig.error);return res.status(500).json({ok:false,error:'Pilot backup configuration could not be verified.'});}
     const recoveryArchives=pilotConfig.data.storage_version===2?await archiveRecovery(supabase,backupDate):[];
     const pilotSnapshot=await supabase.from('fueltech_pilot_state').select('mode,revision,data,updated_at');
-    if(pilotSnapshot.error) return res.status(500).json({ok:false,error:'Pilot state backup could not be verified.'});
+    if(pilotSnapshot.error){logFailure('pilot state',pilotSnapshot.error);return res.status(500).json({ok:false,error:'Pilot state backup could not be verified.'});}
     const payload = {
       backup_date: backupDate,
       generated_at: new Date().toISOString(),
@@ -80,6 +84,7 @@ export default async function handler(req, res) {
       .limit(1);
 
     if (existingError) {
+      logFailure('existing backup',existingError);
       const tableMissing = existingError.code === "PGRST205";
       res.status(tableMissing ? 200 : 500).json({
         ok: false,
@@ -97,6 +102,7 @@ export default async function handler(req, res) {
     const { error: backupError } = await saveQuery;
 
     if (backupError) {
+      logFailure('local success record',backupError);
       const tableMissing = backupError.code === "PGRST205";
       res.status(tableMissing ? 200 : 500).json({
         ok: false,
@@ -109,7 +115,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({ ok: true, backupDate, reportCount: payload.reports.length,offProjectBackup:offProject });
   } catch (error) {
-    console.error('Nightly backup failed',{code:error.code||'BACKUP_FAILED',message:error.message||'Backup failed'});
+    logFailure('archive',error);
     res.status(500).json({ ok: false, error: error.message || "Nightly backup failed." });
     return;
   }
