@@ -36,8 +36,10 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   const [ocrResult,setOcrResult]=useState(row.ocr_result);
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+  const [pendingPhoto,setPendingPhoto]=useState('');const [liveReading,setLiveReading]=useState(null);
   const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   const captureInFlight=useRef(false);
+  const recognitionRun=useRef(0);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
   useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
@@ -57,12 +59,17 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     : readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
   async function processPhoto(data,recognitionImage=data) {
+    const run=++recognitionRun.current;
     setBusy(true);setError('');setDraft('');setDetected(null);setOcrResult(undefined);setEditing(false);
+    setPendingPhoto(data);setLiveReading(null);
     try {
       if(data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
       const recognition=detect(recognitionImage);
+      recognition.then(({reading})=>{
+        if(active.current&&recognitionRun.current===run)setLiveReading(Number.isFinite(reading)?reading:null);
+      },()=>{});
       await onPrepare?.();
       const saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data,replaceReading:true,revision:revision.current,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
       if(!active.current)return;setPhoto(saved.photo_path);
@@ -73,7 +80,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
       await saveReading({...row,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt});
       if(value===null)setEditing(false);
-    } catch(e) {setError(e.message);}finally{if(active.current)setBusy(false);}
+    } catch(e) {setError(e.message);}finally{if(active.current&&recognitionRun.current===run){recognitionRun.current++;setBusy(false);setPendingPhoto('');setLiveReading(null);}}
   }
   async function openCamera() {
     setError('');
@@ -133,11 +140,11 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   }
   return <article className={`reading-card ${readingComplete(row)?'complete':''}`} data-pump-row-id={row.id}>
     <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{opening?`${row.product} · Starting totalizer reading`:<>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</>}</small></div><b>{readingComplete(row)?'✓ Complete':'Photo required'}</b></header>
-    {photo&&<img src={photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
+    {(pendingPhoto||photo)&&<img src={pendingPhoto||photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><p>Fill the guide with all eight digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo?'Retake photo':'Open camera'}</button>{!phoneView&&<label className="photo-picker">Take / choose photo<input ref={fileInput} type="file" accept="image/*" onChange={selectPhoto} disabled={busy}/></label>}</div>
-    {busy&&<p role="status">Saving photo or reading…</p>}
+    {busy&&<p role="status">{liveReading!==null?<>Reading found: <strong>{Number(liveReading).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. Saving photo and reading…</>:'Saving photo or reading…'}</p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {photo&&!busy&&!row.readingConfirmed&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?'Automatic reader failed to load. The photo is saved. Reconnect and retake to retry.':ocrResult.status==='pending'?'The automatic reading did not finish. Retake the photo to try again.':'Automatic reader could not verify every digit. Retake a closer photo without reflections.'}</p>}
     {photo&&!busy&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&<div className="reading-confirm">{detected===null&&editing&&<p className="neutral">Check every digit in the saved photo before entering a number. Retake if any digit is covered or unclear.</p>}{(detected!==null||editing)&&<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${opening?'opening':change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>}

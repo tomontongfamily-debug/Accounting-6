@@ -34,6 +34,19 @@ build time. See `public/ocr/neural/README.md` for source and license details.
 When updating cached model/runtime assets, change their URLs as well as their
 version and integrity checks.
 
+November 4 loading and feedback update: the primary seven-segment worker loads
+first. The unchanged neural fallback downloads when primary verification needs
+it, rather than competing with every clear photo's initial download. OCR assets
+use the versioned prefix in `src/ocr-assets.js` with immutable browser caching;
+update that prefix, the matching `vercel.json` rules and integrity checks when
+changing asset contents. Local Vite middleware mirrors the production rewrite.
+
+A detected number can appear beside the current camera image while uploading
+and saving continue. It is a provisional display: confirmation remains hidden
+until the photo and unconfirmed reading have both been persisted. A failed
+upload discards the provisional display. Photo quality, recognition thresholds,
+fallback consensus, revision checks and cashier confirmation are unchanged.
+
 The benchmark figures below describe the earlier restrictive revision. They
 must not be read as the automatic fill rate of this revision.
 

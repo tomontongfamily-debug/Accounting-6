@@ -1,3 +1,4 @@
+import { ocrAsset } from './ocr-assets.js';
 let ready;
 export function prepareNeuralTotalizer(){
   ready ||= (async()=>{
@@ -6,11 +7,11 @@ export function prepareNeuralTotalizer(){
     ort.env.wasm.initTimeout=20000;
     ort.env.wasm.wasmPaths={
       mjs:new URL('../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',import.meta.url).href,
-      wasm:'/ocr/ort/ort-wasm-simd-threaded.wasm',
+      wasm:ocrAsset('ort/ort-wasm-simd-threaded.wasm'),
     };
     const [session,charsResponse]=await Promise.all([
-      ort.InferenceSession.create('/ocr/neural/english-mobile.onnx',{executionProviders:['wasm']}),
-      fetch('/ocr/neural/characters.json'),
+      ort.InferenceSession.create(ocrAsset('neural/english-mobile.onnx'),{executionProviders:['wasm']}),
+      fetch(ocrAsset('neural/characters.json')),
     ]);
     if(!charsResponse.ok)throw Error('OCR character dictionary unavailable');
     return {ort,session,characters:await charsResponse.json()};

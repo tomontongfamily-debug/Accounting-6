@@ -1,6 +1,7 @@
 import { createWorker } from 'tesseract.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
-import { prepareNeuralTotalizer, neuralTotalizerCandidates } from './totalizer-neural.js';
+import { neuralTotalizerCandidates } from './totalizer-neural.js';
+import { OCR_ASSET_VERSION, ocrAsset } from './ocr-assets.js';
 import { readTotalizerGrid } from './totalizer-grid.js';
 import { chooseTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
@@ -8,8 +9,9 @@ import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits
 let workerPromise;
 let detectionQueue=Promise.resolve();
 export function prepareTotalizer(){
-  prepareNeuralTotalizer().catch(()=>{});
-  workerPromise ||= createWorker('ssd_int',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/core',langPath:'/ocr/lang',workerBlobURL:false})
+  // Keep the larger fallback available, but do not make every clear photo
+  // compete with its model/runtime download on a slow connection.
+  workerPromise ||= createWorker('ssd_int',1,{workerPath:ocrAsset('worker.min.js'),corePath:ocrAsset('core'),langPath:ocrAsset('lang'),cachePath:OCR_ASSET_VERSION,workerBlobURL:false})
     .then(async worker=>{await worker.setParameters({tessedit_char_whitelist:'0123456789.',user_defined_dpi:'150'});return worker;})
     .catch(error=>{workerPromise=undefined;throw error;});
   return workerPromise;
