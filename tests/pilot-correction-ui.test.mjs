@@ -27,8 +27,8 @@ test('Admin decisions show failed saves honestly, persist after reload, and open
       let result,status=200;
       if(pathname.startsWith('/api/auth/'))result={ok:true,role,branch:role==='Admin'?'':'Liloan',token:'cookie',expiresAt:Date.now()+3600000};
       else if(pathname==='/api/pilot/config')result={ok:true,mode:'live',start_date:f.state.startDate};
-      else if(pathname==='/api/reports/save') {
-        const input=route.request().postDataJSON();
+      else if(pathname==='/api/reports/save'||(pathname==='/api/pilot/action'&&route.request().postDataJSON().route==='/api/reports/save')) {
+        const body=route.request().postDataJSON(),input=pathname==='/api/pilot/action'?body.input:body;
         if(input.operation==='save') {
           staleAttempts++;
           try {result=await saveLivePilotCorrection(db,f.admin,input.report,input.operation);}
@@ -40,7 +40,7 @@ test('Admin decisions show failed saves honestly, persist after reload, and open
         }
       } else if(pathname==='/api/pilot/action') {
         const envelope=route.request().postDataJSON();
-        const out=await runAction(db.data,{role,branch:'Liloan'},envelope.route,envelope.input);result=out.result;
+        const out=await runAction(db.data,{role,branch:role==='Admin'?'':'Liloan'},envelope.route,envelope.input);result=out.result;
       } else if(pathname==='/api/store/load')result=(await runAction(db.data,f.admin,'/api/store/load')).result;
       else if(pathname==='/api/realtime/config')result={ok:true,enabled:false};
       else if(pathname==='/api/pilot/photo'){await route.fulfill({status:200,contentType:'image/jpeg',body:Buffer.from('/9j/2Q==','base64')});return;}
@@ -51,17 +51,18 @@ test('Admin decisions show failed saves honestly, persist after reload, and open
   try {
     const adminContext=await browser.newContext({viewport:{width:390,height:844},timezoneId:'Asia/Manila'});
     const obsoleteApproval={...f.report,confirmed:false,clientSave:{branchDataVersion:'2026-07-31-rewind-to-july-30-1'},correctionRequest:{...f.report.correctionRequest,id:'obsolete-request',status:'approved'}};
-    await adminContext.addInitScript(({key,report})=>{
+    const queueKey='fueltech-pilot-offline_queue_key:live:'+f.state.startDate,draftKey='fueltech-pilot-local_drafts_key:live:'+f.state.startDate;
+    await adminContext.addInitScript(({key,report,queueKey,draftKey})=>{
       if(localStorage.getItem('correction-queue-fixture'))return;
       localStorage.setItem('correction-queue-fixture','true');
-      for(const storageKey of ['fueltech-report-offline-queue-v2','fueltech-report-local-drafts-v1'])localStorage.setItem(storageKey,JSON.stringify({[key]:report}));
-    },{key:f.key,report:obsoleteApproval});
+      for(const storageKey of [queueKey,draftKey])localStorage.setItem(storageKey,JSON.stringify({[key]:report}));
+    },{key:f.key,report:obsoleteApproval,queueKey,draftKey});
     const admin=await setup(adminContext,'Admin');
     await admin.goto('http://127.0.0.1:4346/admin?view=corrections');
     await admin.getByRole('button',{name:'Approve',exact:true}).waitFor({timeout:15000});
     assert.equal(staleAttempts,1);
-    assert.equal(await admin.evaluate(()=>Object.keys(JSON.parse(localStorage.getItem('fueltech-report-offline-queue-v2'))).length),0);
-    assert.equal(await admin.evaluate(()=>Object.keys(JSON.parse(localStorage.getItem('fueltech-report-local-drafts-v1'))).length),0);
+    assert.equal(await admin.evaluate(k=>Object.keys(JSON.parse(localStorage.getItem(k))).length,queueKey),0);
+    assert.equal(await admin.evaluate(k=>Object.keys(JSON.parse(localStorage.getItem(k))).length,draftKey),0);
     await admin.getByRole('button',{name:'Approve',exact:true}).click();
     await admin.getByRole('alert').filter({hasText:'Test save conflict'}).waitFor();
     assert.equal(db.data.reports[f.key].correctionRequest.status,'pending');

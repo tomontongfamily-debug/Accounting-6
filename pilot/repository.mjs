@@ -1,3 +1,6 @@
+import { configuredStations, stationStartDate, withStationRollout } from '../src/station-rollout.js';
+import { prepareStationRollout } from './station-rollout.mjs';
+import { getEffectivePricing } from '../src/accounting-engine.js';
 import { createClient } from '@supabase/supabase-js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -19,22 +22,21 @@ export function pilotDatabase() {
 export async function configuration(db=pilotDatabase()) {
   const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date,storage_version').eq('branch','Liloan').single();
   if(error) throw fail('Pilot preparation is not installed. The existing app remains available.');
-  return data;
+  return withStationRollout(data);
 }
 // The all-stations Admin page uses the regular report endpoint. Liloan decisions
 // must update the live state and its canonical report together, or the next
 // station refresh overwrites the approval with the old pending request.
 export async function saveLivePilotCorrection(db,session,report,operation) {
-  if(session.role!=='Admin'||report.branch!=='Liloan'||!['save','correction-decision'].includes(operation)||!['approved','rejected'].includes(report.correctionRequest?.status))return null;
-  const config=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').maybeSingle();
-  if(config.error)throw fail('Unable to verify the Liloan correction workflow.');
-  if(config.data?.mode!=='live'||report.date<config.data.start_date)return null;
-  return execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/reports/save',input:{report,operation:'correction-decision'},mutationId:randomUUID()},{db});
+  if(session.role!=='Admin'||!['save','correction-decision'].includes(operation)||!['approved','rejected'].includes(report.correctionRequest?.status))return null;
+  const config=await configuration(db);
+  if(config.mode!=='live'||!configuredStations(config).includes(report.branch)||report.date<stationStartDate(config,report.branch))return null;
+  return execute(session,{mode:'live',startDate:config.start_date,route:'/api/reports/save',input:{report,operation:'correction-decision'},mutationId:randomUUID()},{db});
 }
 // The existing Admin screen must refresh approved vouchers and delayed payment
 // notifications too; importing cannot depend on a cashier opening the pilot.
 export async function refreshLivePilotSources(db,session,{forceSources=false}={}) {
-  if(!['Admin','Approver'].includes(session.role)&&session.branch!=='Liloan')return;
+  if(!['Admin','Approver'].includes(session.role)&&!configuredStations(withStationRollout({mode:'live',start_date:'2026-10-03'})).includes(session.branch))return;
   const config=await db.from('fueltech_pilot_config').select('mode,start_date').eq('branch','Liloan').maybeSingle();
   if(config.error)throw fail('Unable to verify Liloan source configuration.');
   if(config.data?.mode!=='live')return;
@@ -53,8 +55,9 @@ async function allRows(query) {
   }
 }
 export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,attempt=0}={}) {
-  if(!['Admin','Approver','Cashier','Manager'].includes(session.role)||(['Cashier','Manager'].includes(session.role)&&session.branch!=='Liloan')) throw fail('This pilot is restricted to Liloan.',403);
+  if(!['Admin','Approver','Cashier','Manager'].includes(session.role)) throw fail('Invalid station role.',403);
   const config=await configuration(db);
+  if(['Cashier','Manager'].includes(session.role)&&!configuredStations(config).includes(session.branch)) throw fail('This station is not enabled.',403);
   if(config.mode==='disabled') throw fail('The Liloan pilot has not been enabled.',423);
   if(process.env.VERCEL_ENV==='preview'&&config.mode!=='shadow') throw fail('Preview deployments may only use trial records.',423);
   if(envelope.mode!==config.mode||envelope.startDate!==config.start_date) throw fail('Pilot configuration changed. Reload the page.',409);
@@ -80,7 +83,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const missingShift=[dateOffset(today,-1),today].filter(date=>date>=state.startDate).some(date=>['shift-1','shift-2','shift-3'].some(shift=>!state.reports[`Liloan__${date}__${shift}`]));
     const needsEvidence=requiresFresh||(enabled&&(!sync.attemptedAt||Date.now()-Date.parse(sync.attemptedAt)>60000))
       ||enabled!==(sync.status!=='disabled')||missingShift
-      ||(enabled&&Object.values(state.reports).some(r=>!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic));
+      ||(enabled&&Object.values(state.reports).some(r=>r.branch==='Liloan'&&!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic));
     if(needsEvidence){loaded.data=await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,fullPos:true});state=loaded.data?.data;storeRevision=loaded.data?.revision||0;}
   }
   if(state&&(state.mode!==config.mode||state.startDate!==config.start_date)) throw fail('Cutover differs from saved pilot records. Restore or review configuration before continuing.');
@@ -96,13 +99,21 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     state=initialState(reports,prices,config);
   }
   const before=structuredClone(state);
+  const seedPrices={};
+  if(config.stationStarts&&!state.rolloutVersion){
+    const rows=await allRows(()=>db.from('fueltech_price_book').select('*').in('branch',configuredStations(config).filter(b=>b!=='Liloan')).order('branch').order('effective_date').order('coverage').order('shift_id'));
+    const books={};
+    for(const row of rows){books[row.branch]||={};books[row.branch][row.coverage==='Shift'?`${row.effective_date}__${row.shift_id}`:row.effective_date]=row.prices;}
+    for(const branch of configuredStations(config).filter(b=>b!=='Liloan'))seedPrices[branch]={[stationStartDate(config,branch)]:getEffectivePricing(books,branch,stationStartDate(config,branch),'shift-1').prices};
+  }
+  prepareStationRollout(state,config,seedPrices);
   ensureCurrentReports(state);
   if(forceSources||requiresFresh||!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
       cvClient=createClient(process.env.FUELTECH_CV_URL,process.env.FUELTECH_CV_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
     }
-    const sources=await loadSources(db,cvClient,state.startDate,accountingTiming(new Date().toISOString()).date);
+    const sources=await loadSources(db,cvClient,state.startDate,accountingTiming(new Date().toISOString()).date,{branches:configuredStations(state),stationStarts:state.stationStarts});
     reconcileSources(state,sources);
   }
   await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});

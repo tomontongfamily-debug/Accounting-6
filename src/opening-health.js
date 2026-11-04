@@ -1,3 +1,4 @@
+import { ALL_STATIONS } from './station-rollout.js';
 const MABOLO_OPENING_DATE = "2026-07-29";
 const MABOLO_OPENING_SHIFT_ID = "shift-3";
 const SHIFT_IDS = ["shift-1", "shift-2", "shift-3"];
@@ -5,7 +6,7 @@ const SHIFT_IDS = ["shift-1", "shift-2", "shift-3"];
 const LILOAN_OPENING_DATE = "2026-10-02";
 
 export function isLiloanOpeningSlot(branch, date, shiftId) {
-  return branch === "Liloan" && date === LILOAN_OPENING_DATE && shiftId === "shift-3";
+  return ((branch === "Liloan" && date === LILOAN_OPENING_DATE) || (branch !== "Liloan" && ALL_STATIONS.includes(branch) && date === "2026-11-04")) && shiftId === "shift-3";
 }
 
 export function isLiloanArchivedSlot(branch, date, shiftId) {
@@ -14,7 +15,8 @@ export function isLiloanArchivedSlot(branch, date, shiftId) {
 }
 
 export function isStationPreOpeningSlot(branch, date, shiftId) {
-  return isMaboloPreOpeningSlot(branch, date, shiftId)
+  return (branch !== "Liloan" && ALL_STATIONS.includes(branch) && (date < "2026-11-04" || (date === "2026-11-04" && shiftId !== "shift-3")))
+    || isMaboloPreOpeningSlot(branch, date, shiftId)
     || isLiloanArchivedSlot(branch, date, shiftId);
 }
 

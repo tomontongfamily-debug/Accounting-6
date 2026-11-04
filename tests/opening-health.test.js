@@ -9,7 +9,7 @@ test("Mabolo shifts before its July 29 Shift 3 opening setup are not required", 
   assert.equal(isMaboloPreOpeningSlot("Mabolo", "2026-07-29", "shift-3"), false);
 });
 
-test("Mabolo opening day health does not count pre-opening shifts as missing", () => {
+test("Mabolo archived opening day is no longer counted in the fresh operational health", () => {
   const health = buildDailyHealth({
     date: "2026-07-29",
     reportRows: [{
@@ -19,13 +19,13 @@ test("Mabolo opening day health does not count pre-opening shifts as missing", (
   });
   const mabolo = health.stations.find((station) => station.branch === "Mabolo");
 
-  assert.deepEqual(mabolo.shifts.map((shift) => shift.status), ["Not Required", "Not Required", "Submitted"]);
+  assert.deepEqual(mabolo.shifts.map((shift) => shift.status), ["Not Required", "Not Required", "Not Required"]);
   assert.deepEqual(mabolo.shifts.map((shift) => shift.depositStatus), ["Not Required", "Not Required", "Not Required"]);
   assert.equal(mabolo.missing, 0);
 });
 
-test("Mabolo reports after opening day are still required", () => {
-  const health = buildDailyHealth({ date: "2026-07-30", reportRows: [] });
+test("Mabolo reports after the November beginning setup are required", () => {
+  const health = buildDailyHealth({ date: "2026-11-05", reportRows: [] });
   const mabolo = health.stations.find((station) => station.branch === "Mabolo");
 
   assert.deepEqual(mabolo.shifts.map((shift) => shift.status), ["Missing", "Missing", "Missing"]);
@@ -56,7 +56,7 @@ test("All six Liloan shifts after the opening baseline remain required and confi
     assert.equal(health.missing,0);
     assert.equal(openingSlotHealth(reportRows[0].data,'Liloan',date,'shift-1'),null);
   }
-  assert.equal(isStationPreOpeningSlot('Arpili','2026-10-02','shift-1'),false);
+  assert.equal(isStationPreOpeningSlot('Arpili','2026-10-02','shift-1'),true);
   assert.equal(isStationPreOpeningSlot('Liloan','2026-10-01','shift-1'),true);
 });
 
@@ -68,5 +68,13 @@ test('Archived Liloan dates are not treated as missing reports or deposits', () 
     assert.equal(station.depositMissing, 0);
   }
   assert.equal(buildDailyHealth({date:'2026-10-03'}).stations.find(s => s.branch === 'Liloan').missing, 3);
-  assert.equal(buildDailyHealth({date:'2026-10-01'}).stations.find(s => s.branch === 'Arpili').missing, 3);
+  assert.equal(buildDailyHealth({date:'2026-10-01'}).stations.find(s => s.branch === 'Arpili').missing, 0);
+});
+
+test('all five fresh station setups are required only in November 4 Shift 3',()=>{
+ for(const branch of ['Mabolo','Arpili','Pondol','Barili','Moalboal']){
+  const station=buildDailyHealth({date:'2026-11-04'}).stations.find(s=>s.branch===branch);
+  assert.deepEqual(station.shifts.map(s=>s.status),['Not Required','Not Required','Missing']);
+  assert.equal(openingSlotHealth({confirmed:true},branch,'2026-11-04','shift-3').detail,'Beginning Setup');
+ }
 });

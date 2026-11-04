@@ -12,7 +12,7 @@ for (const role of ['Cashier', 'Manager']) test(role + ' opens the new Liloan wo
   assert.deepEqual(navigated, ['/pilot' + pathname]);
 });
 
-test('Other stations, all-station roles and existing pilot links do not redirect', async () => {
+test('Unconfigured stations, all-station roles and existing pilot links do not redirect', async () => {
   const cases = [
     ['Cashier', 'Mabolo', '/cashier'], ['Manager', 'Barili', '/manager'],
     ['Admin', 'Liloan', '/admin'], ['Approver', 'Liloan', '/approver'],
@@ -20,7 +20,7 @@ test('Other stations, all-station roles and existing pilot links do not redirect
   ];
   for (const [role, branch, pathname] of cases) {
     assert.equal(liloanWorkflowPath({role, branch, pathname, config: live}), null);
-    assert.equal(await redirectLiloanLogin(role, branch, {pathname, request: () => {throw Error('Must not fetch');}, navigate: () => {throw Error('Must not navigate');}}), false);
+    assert.equal(await redirectLiloanLogin(role, branch, {pathname, request: async () => new Response(JSON.stringify(live)), navigate: () => {throw Error('Must not navigate');}}), false);
   }
 });
 
@@ -30,7 +30,16 @@ test('Trial, disabled and unfinished opening setups preserve the existing workfl
 });
 
 test('A configuration failure is recoverable and cannot open unverified workflow data', async () => {
-  await assert.rejects(redirectLiloanLogin('Manager', 'Liloan', {pathname: '/manager', request: async () => new Response('{}', {status: 503}), navigate: () => {throw Error('Must not navigate');}}), /Unable to check the Liloan workflow/);
+  await assert.rejects(redirectLiloanLogin('Manager', 'Liloan', {pathname: '/manager', request: async () => new Response('{}', {status: 503}), navigate: () => {throw Error('Must not navigate');}}), /Unable to check the station workflow/);
+});
+
+test('configured rollout branches open the same new station workflow',async()=>{
+  for(const branch of ['Mabolo','Arpili','Liloan','Pondol','Barili','Moalboal']){
+    const config={...live,branches:['Mabolo','Arpili','Liloan','Pondol','Barili','Moalboal']};
+    const navigated=[];
+    assert.equal(await redirectLiloanLogin('Cashier',branch,{pathname:'/cashier',request:async()=>new Response(JSON.stringify(config)),navigate:p=>navigated.push(p)}),true);
+    assert.deepEqual(navigated,['/pilot/cashier']);
+  }
 });
 
 test('Session restoration accepts only the requested role with an unexpired verified session', async () => {

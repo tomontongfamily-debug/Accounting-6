@@ -75,7 +75,7 @@ function pumpRowSales(report, row) {
 }
 
 export function computeReportFuel(report = {}) {
-  if (report.branch === "Liloan") {
+  if (report.branch === "Liloan" || report.pilot === true) {
     const totals = reportTotals(report);
     return { liters: totals.totalLiters, sales: totals.fuelSales };
   }
@@ -102,7 +102,7 @@ export function computeReportFuel(report = {}) {
 }
 
 export function computeReportCash(report = {}) {
-  if (report.branch === "Liloan") {
+  if (report.branch === "Liloan" || report.pilot === true) {
     const { grossSales, bankDeposit, expectedCash, pendingCashOnHand, cashVariance } = reportTotals(report);
     return { grossSales, bankDeposit, expectedCash, pendingCashOnHand, cashVariance };
   }

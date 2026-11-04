@@ -26,5 +26,5 @@ test('An incomplete, duplicated or unsubmitted fresh-start opening cannot unlock
 
 test('Opening dates follow the configured start across month and year boundaries',()=>{
   assert.deepEqual(pilotOpeningSlot({start_date:'2027-01-01'}),{date:'2026-12-31',shiftId:'shift-3'});
-  for(const start_date of [undefined,'','2026-02-30','July 29'])assert.throws(()=>pilotOpeningSlot({start_date}),/Invalid pilot start date/);
+  for(const start_date of [undefined,'','2026-02-30','July 29'])assert.throws(()=>pilotOpeningSlot({start_date}),/Invalid station start date/);
 });

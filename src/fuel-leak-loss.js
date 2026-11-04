@@ -5,8 +5,12 @@ const products = ['Premium', 'Regular', 'Diesel'];
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const emptyTotals = () => Object.fromEntries(products.map(product => [product, 0]));
 
+export function hasPumpOpening(row) {
+  return row.opening!==''&&row.opening!=null&&Number.isFinite(Number(row.opening))&&Number(row.opening)>=0&&(Number(row.opening)>0||row.setupRequired===false);
+}
+
 export function pumpMeterLiters(row) {
-  return number(row.opening) > 0 ? Math.max(0, number(row.closing) - number(row.opening)) : 0;
+  return hasPumpOpening(row) ? Math.max(0, number(row.closing) - number(row.opening)) : 0;
 }
 
 export function pumpLeakLiters(report, row) {

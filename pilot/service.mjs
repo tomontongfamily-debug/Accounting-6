@@ -1,3 +1,4 @@
+import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
@@ -28,16 +29,17 @@ export async function runAction(state,session,route,input={},options={}) {
  const uploadPhoto=options.uploadPhoto||(()=>{throw Error('Photo storage unavailable');});
  const getCurrentShift=()=>accountingTiming(new Date().toISOString());
  function audit(action,actor,details={}) {database.audit.push({id:randomUUID(),at:stamp(),action,role:actor.role,branch:actor.branch,...details});}
- branchAccess(session,'Liloan');
+ if(['Cashier','Manager'].includes(session.role)&&!configuredStations(database).includes(session.branch))reject('This report belongs to another station.',403);
+ branchAccess(session,session.branch||'Liloan');
  if(!['Cashier','Manager','Admin','Approver'].includes(session.role)) reject('Invalid role.',403);
 function requireRole(session,...roles) { if(!roles.includes(session.role)) reject('This action is not available for your role.',403); }
 function branchAccess(session,branch) {
-  if(branch!=='Liloan') reject('Unknown station.');
+  if(!configuredStations(database).includes(branch)) reject('Unknown station.');
   if(['Cashier','Manager'].includes(session.role)&&branch!==session.branch) reject('This report belongs to another station.',403);
 }
 function authoritative(r) {
   r=refreshFuelCVReview(refreshManagerReconciliation(r,database),compute(r));
-  if(r.date<database.startDate) return refreshPosReport(r,database.posRedemptionSync);
+  if(r.date<stationStartDate(database,r.branch)) return refreshPosReport(r,database.posRedemptionSync);
   const pay=automaticTransactions(database.pay,r), po=automaticTransactions(database.po,r);
   const pricing=getEffectivePricing(database.priceBook,r.branch,r.date,r.shiftId);
   const active=database.deposits.filter(d=>d.status!=='rejected');
@@ -58,7 +60,8 @@ function candidate(input,session,readingId) {
   if(!old) reject('Refresh the shift dashboard first.');
   if(old.confirmed) reject('This report is locked. Use the existing Admin correction process.',423);
   assertCorrectionWindow(old);
-  if(old.date<database.startDate) reject('Historical reports are read-only.',423);
+  if(old.date<stationStartDate(database,old.branch)) reject('Historical reports are read-only.',423);
+  if(database.stationStarts&&Date.now()<Date.parse(stationStartDate(database,old.branch)+'T04:00:00+08:00'))reject('Sales reporting begins after the Beginning Setup shift, at 4:00 a.m. Manila time.',423);
   const preceding=old.shiftId==='shift-1'?reportKey(old.branch,dateOffset(old.date,-1),'shift-3'):reportKey(old.branch,old.date,old.shiftId==='shift-2'?'shift-1':'shift-2');
   if(!database.reports[preceding]?.confirmed) reject('Submit the preceding shift before recording this shift.');
   if(!readingId && !cashierRevisionMatches(input,old)) reject('This shift changed on another device. Refresh before saving.',409);
@@ -79,13 +82,17 @@ function candidate(input,session,readingId) {
   const incomingLeakLossError=validateFuelLeakLosses({...old,...allowed,pumpRows:rows});
   if(incomingLeakLossError) reject(incomingLeakLossError);
   const r=authoritative({...old,...allowed,purchaseRows:old.purchaseRows,pumpRows:rows,confirmed:false,confirmedAt:'',deposits:old.deposits,prices:old.prices,midShiftPriceChanges:old.midShiftPriceChanges,baselineConfirmed:old.baselineConfirmed,baselineMissing:old.baselineMissing,checkDetails:old.checkDetails,cashCountConfirmed:old.cashCountConfirmed,cashReviewState:old.cashReviewState,recountRequired:old.recountRequired,integrationIssues:old.integrationIssues});
+  if(!r.posRedemptions?.automatic){
+    r.deductions={...r.deductions,cashRedemption:input.deductions?.cashRedemption??r.deductions.cashRedemption,fuelRedemption:input.deductions?.fuelRedemption??r.deductions.fuelRedemption};
+    r.pointsWithdrawn=Number(r.deductions.cashRedemption||0)+Number(r.deductions.fuelRedemption||0);
+    if(r.cashReviewState&&r.reviewedExpectedCash!==compute(r).expectedCash){r.cashReviewState='';r.recountRequired=false;}
+  }
   if(old.cashCountConfirmed) {r.actualCashCounted=old.actualCashCounted;r.cashDenominations=old.cashDenominations;}
   else if(r.cashDenominations&&Object.values(r.cashDenominations).some(v=>v!==''&&v!=null)) r.actualCashCounted=denominationTotal(r.cashDenominations);
   else if(r.cashDenominations) r.actualCashCounted='';
   r.initialCashDenominations=old.initialCashDenominations;
   r.depositCoverage=old.depositCoverage;
   r.midShiftBasePrices=old.midShiftBasePrices;
-  if(!r.posRedemptions?.automatic)for(const key of ['cashRedemption','fuelRedemption']) r.deductions[key]=input.deductions?.[key]??old.deductions?.[key]??0;
   if(r.posRedemptions?.automatic&&r.posRedemptions.pointsStatus!=='verified')r.pointsIssued=old.pointsIssued;
   amount(r.oilSales||0);
   const deliveryKeys=new Set();
@@ -126,7 +133,7 @@ function assertCorrectionWindow(report) {
 }
 function storeReport(r,session,action) {
   r=refreshPosReport(r,database.posRedemptionSync);
-  if(r.date<database.startDate) reject('Historical reports are read-only in the pilot.',423);
+  if(r.date<stationStartDate(database,r.branch)&&!(r.baselineReport&&isStationOpening(database,r))) reject('Historical reports are read-only in the pilot.',423);
   r.pilot=true; r.pilotRevision=Number(database.reports[keyOf(r)]?.pilotRevision||0)+1;
   const previous=database.reports[keyOf(r)];
   r.pilotLastNonReadingRevision=action==='pump-reading-saved'
@@ -139,13 +146,13 @@ function storeReport(r,session,action) {
   return {ok:true,report:r,reportId:r.serverMeta.reportId};
 }
 function coverage(branch,date) {
-  return depositCoverage(Object.values(database.reports).filter(r=>r.date>=database.startDate).map(r=>({key:keyOf(r),branch:r.branch,date:r.date,shiftId:r.shiftId,cash:Number(r.actualCashCounted||0),confirmed:!!r.confirmed})),database.deposits,branch,date,database.noDepositDays);
+  return depositCoverage(Object.values(database.reports).filter(r=>r.date>=stationStartDate(database,r.branch)).map(r=>({key:keyOf(r),branch:r.branch,date:r.date,shiftId:r.shiftId,cash:Number(r.actualCashCounted||0),confirmed:!!r.confirmed})),database.deposits,branch,date,database.noDepositDays);
 }
 function exposeReport(report,session) {
   const r=structuredClone(authoritative(report));
   const sourceIssues=(database.sourceAlerts||[]).filter(a=>(a.reportKey===keyOf(r)||a.reportKeys?.includes(keyOf(r))));
   if(sourceIssues.length) r.checkDetails=[...(r.checkDetails||[]),...sourceIssues.filter(a=>!(r.checkDetails||[]).some(i=>i.id===a.id))];
-  if(r.date>=database.startDate) r.pilot=true;
+  if(r.date>=stationStartDate(database,r.branch)) r.pilot=true;
   if(r.confirmed) {
     r.checkDetails=(r.checkDetails||[]).filter(i=>!['BANK_DEPOSIT','BANK_VERIFIER'].includes(i.category));
     for(const d of database.deposits.filter(d=>d.anchorKey===keyOf(r))) {
@@ -199,7 +206,26 @@ function validatePriceReadingOrder(report,change) {
     if(route==='/api/reports/save') {
       requireRole(session,'Cashier','Manager','Admin');
       let old=database.reports[keyOf(input.report||{})];
-      if(input.report?.date<database.startDate) reject('Historical reports are read-only.',423);
+      if(old?.baselineReport&&isStationOpening(database,old)&&old.branch!=='Liloan') {
+        requireRole(session,'Cashier'); branchAccess(session,old.branch);
+        if(old.confirmed) reject('Opening setup is already confirmed.',423);
+        if(!cashierRevisionMatches(input.report,old)) reject('Opening setup changed on another device. Refresh before saving.',409);
+        const r=structuredClone(old), source=input.report;
+        r.pumpRows=r.pumpRows.map(base=>{const row=(source.pumpRows||[]).find(v=>v.id===base.id);if(!row)reject('Every configured nozzle is required.');return {...base,opening:row.opening,closing:row.opening,closingEntered:row.opening!==''&&row.opening!=null,closingEntrySource:'baseline'};});
+        r.tankRows=r.tankRows.map(base=>{const row=(source.tankRows||[]).find(v=>v.id===base.id);if(!row)reject('Every tank is required.');return {...base,opening:row.opening,actualDip:row.opening};});
+        r.coke={...r.coke,beginning:source.coke?.beginning??'',ending:source.coke?.beginning??''};
+        r.cashierName=String(source.cashierName||'').trim();
+        if(source.baselineConfirmed){
+          if(Date.now()<Date.parse(old.openingSetupRequiredAt))reject('Beginning Setup opens November 4 at 10:00 p.m. Manila time.',423);
+          for(const row of r.pumpRows)amount(row.opening);
+          for(const row of r.tankRows)amount(row.opening);
+          if(!Number.isInteger(amount(r.coke.beginning)))reject('Enter a whole-number Coke count.');
+          if(!r.cashierName)reject('Enter the cashier name.');
+          Object.assign(r,{confirmed:true,confirmedAt:stamp(),baselineConfirmed:true,baselineMissing:false,baselineReady:true,openingSetupComplete:true,baselineConfirmedAt:stamp()});
+        }
+        return send(storeReport(r,session,source.baselineConfirmed?'opening-setup-confirmed':'opening-setup-saved'));
+      }
+      if(input.report?.date<stationStartDate(database,input.report?.branch)) reject('Historical reports are read-only.',423);
       if(session.role==='Admin'&&input.report.correctionRequest?.status==='approved'
         &&old?.correctionRequest?.id===input.report.correctionRequest.id
         &&old.correctionRequest.status==='approved'&&Date.parse(old.correctionRequest.expiresAt||'')>Date.now()) return send({ok:true,alreadyApproved:true,report:exposeReport(old,session)});
@@ -382,7 +408,7 @@ function validatePriceReadingOrder(report,change) {
       const image=Buffer.from(input.data.split(',')[1],'base64');
       if(image.length>2*1024*1024 || image[0]!==255 || image[1]!==216) reject('Invalid or oversized photo.');
       const id=mutationId, photoPath='/api/pilot/photo?id='+id;
-      const objectPath=database.mode+'/Liloan/'+id+'.jpg';
+      const objectPath=database.mode+'/'+r.branch+'/'+id+'.jpg';
       await uploadPhoto(objectPath,image);
       database.photos[photoPath]={reportKey:input.reportKey,rowId:photoRow.id,branch:r.branch,file:objectPath,...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})};
       let readingRevision;
@@ -408,7 +434,7 @@ function validatePriceReadingOrder(report,change) {
       const old=database.reports[input.reportKey];
       if(!old)reject('Refresh the shift first.');
       branchAccess(session,old.branch);
-      if(old.confirmed||old.date<database.startDate)reject('Submitted or historical reports cannot be changed here.',423);
+      if(old.confirmed||old.date<stationStartDate(database,old.branch))reject('Submitted or historical reports cannot be changed here.',423);
       const change=old.midShiftPriceChanges?.find(c=>c.id===input.changeId);
       if(!change)reject('This price change no longer exists. Refresh first.',409);
       if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||amount(change.newPrice)<=0)reject('Enter the price-change time and new price.');
@@ -491,6 +517,6 @@ function validatePriceReadingOrder(report,change) {
     if(route==='/api/demo/audit') {requireRole(session,'Admin');return send({ok:true,events:database.audit.slice(-100).reverse()});}
     if(route==='/api/admin/system-health') {requireRole(session,'Admin');return send({ok:true,loading:false,backups:{status:'Pilot transaction snapshots retained; restore drill required'},checks:[],issues:database.sourceAlerts||[]});}
     // Every unknown original production API fails closed; no fallback to the live system.
-    reject('This action is unavailable in the Liloan pilot.',403);
+    reject('This action is unavailable in the station workflow.',403);
 
 }

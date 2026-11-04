@@ -11,12 +11,13 @@ import { fixture } from './pilot-fixture.mjs';
 import { authoritativePoRowsForReport } from '../api/_shared/po.js';
 import { runAction } from '../pilot/service.mjs';
 import { validateSubmission } from '../api/reports/save.js';
+import { hasPumpOpening } from '../src/fuel-leak-loss.js';
 
 function extracts(file, names, context) {
   const source=fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8').replaceAll('\r','');
   const bodies=names.map(name=>source.match(new RegExp('function '+name+'\\([^]*?\\n\\}'))?.[0]);
   assert(bodies.every(Boolean),file);
-  return vm.runInNewContext(bodies.join('\n')+'\n({'+names.join(',')+'})',context);
+  return vm.runInNewContext(bodies.join('\n')+'\n({'+names.join(',')+'})',{hasPumpOpening,...context});
 }
 
 test('empty optional price-change drafts do not block Pondol or change its sales price',()=>{

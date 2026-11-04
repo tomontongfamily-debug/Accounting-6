@@ -1,3 +1,6 @@
+import { hasPumpOpening } from './fuel-leak-loss.js';
+import AdminStoreGate from './admin-store-gate.jsx';
+import { configuredStations, stationStartDate, stationOpeningSlot } from './station-rollout.js';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
@@ -48,7 +51,7 @@ import { midShiftChangeOrder, midShiftReadingRows, midShiftSalesBreakdown } from
 import { applyEffectivePricing } from "./report-price-sync.js";
 import { subscribeToStoreChanges } from "./realtime-store.js";
 
-const BRANCHES = ["Liloan"];
+const BRANCHES = configuredStations(window.__fueltechPilotConfig);
 const HEALTH_BRANCH_OPTIONS = ["All Stations", ...BRANCHES];
 const FUEL_TYPES = ["Premium", "Regular", "Diesel"];
 const CASH_VOUCHER_CATEGORIES = ["OPEX", "Personal", "Construction", "Personnel"];
@@ -131,7 +134,7 @@ const PUMP_LAYOUTS = {
   ],
 };
 
-const OWNER_DISPLAY_BRANCHES = ["Liloan"];
+const OWNER_DISPLAY_BRANCHES = BRANCHES;
 const OWNER_ACCOUNTING_START_DATE = "2026-07-30";
 const DECIMAL_INPUT_PATTERN = /^-?\d*([.,]\d*)?$/;
 const DEVICE_CLIENT_ID_KEY = "fueltech-pilot-device_client_id_key" + ":" + window.__fueltechPilotConfig.mode + ":" + window.__fueltechPilotConfig.start_date;
@@ -242,14 +245,15 @@ function nextShiftFor(date, shiftId) {
 }
 
 function branchReportingDate(reports = {}, branch) {
-  const demoDates = Object.values(reports).filter(r => r.branch === branch && r.pilot && !r.baselineReport && r.date >= GLOBAL_REPORTING_START_DATE).map(r => r.date).sort();
-  let date = demoDates[0] || GLOBAL_REPORTING_START_DATE;
+  const startDate=stationStartDate(window.__fueltechPilotConfig,branch);
+  const demoDates = Object.values(reports).filter(r => r.branch === branch && r.pilot && !r.baselineReport && r.date >= startDate).map(r => r.date).sort();
+  let date = demoDates[0] || startDate;
   for (let checked = 0; checked < 3650; checked += 1) {
     const complete = SHIFT_OPTIONS.every((shift) => reportCompleted(reports[reportKey(branch, date, shift.id)]));
     if (!complete) return date;
     date = dateOffset(date, 1);
   }
-  return GLOBAL_REPORTING_START_DATE;
+  return startDate;
 }
 
 function displayShiftLabel(branch, date, shiftId) {
@@ -636,7 +640,7 @@ function tankCarryKey(row) {
 }
 
 function openingReadingEntered(value) {
-  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0;
   return value !== "" && value !== null && value !== undefined
     && Number.isFinite(Number(value))
     && Number(value) >= 0;
@@ -648,7 +652,8 @@ function hasCompleteBaselineOpening(report) {
   return pumpRows.length > 0
     && tankRows.length > 0
     && pumpRows.every((row) => openingReadingEntered(row.opening))
-    && tankRows.every((row) => openingReadingEntered(row.opening));
+    && tankRows.every((row) => openingReadingEntered(row.opening))
+    && (report.branch === "Liloan" || openingReadingEntered(report.coke?.beginning));
 }
 
 function baselineConfirmed(report) {
@@ -769,7 +774,7 @@ function reportWarnings(report, result) {
     const opening = n(row.opening);
     const closing = n(row.closing);
     const sold = closing - opening;
-    if (opening <= 0 && closing > 0) warnings.push(`${row.pump} ${row.nozzle}: opening is missing, so this reading is not counted yet.`);
+    if (!hasPumpOpening(row) && closing > 0) warnings.push(`${row.pump} ${row.nozzle}: opening is missing, so this reading is not counted yet.`);
     if (sold > 0 && n(report.prices[row.product]) <= 0) warnings.push(`${row.product}: pump price is missing or zero.`);
     if (sold > 10000) warnings.push(`${row.pump} ${row.nozzle}: liters sold is unusually high for one shift.`);
   });
@@ -965,7 +970,7 @@ function cacheCashierSession(branch, expiresAt = Date.now() + (12 * 60 * 60_000)
 function pumpLitersSold(row) {
   const opening = n(row.opening);
   const closing = n(row.closing);
-  if (opening <= 0 && closing > 0) return 0;
+  if (!hasPumpOpening(row) && closing > 0) return 0;
   return Math.max(0, closing - opening);
 }
 
@@ -996,7 +1001,7 @@ function validMidShiftChangeForRow(change, row) {
 function pumpRowSales(report, row) {
   const opening = n(row.opening);
   const closing = n(row.closing);
-  if (opening <= 0 || closing <= opening) return 0;
+  if (!hasPumpOpening(row) || closing <= opening) return 0;
 
   let currentReading = opening;
   let currentPrice = Math.max(0, n(reportStartingPrice(report, row.product)));
@@ -2907,7 +2912,7 @@ export default function App() {
     if (!["Cashier", "Manager"].includes(role)) return undefined;
     let mounted = true;
     readStationSession(role).then(session => {
-      if (!mounted || session?.branch !== "Liloan") return;
+      if (!mounted || !BRANCHES.includes(session?.branch)) return;
       setBranch(session.branch);
       setSessionToken("cookie");
       if (role === "Cashier") {
@@ -4250,7 +4255,7 @@ export default function App() {
     }
   }
 
-  if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError) {
+  if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError && (branch==='Liloan'||(Date.now()>=Date.parse(stationStartDate(window.__fueltechPilotConfig,branch)+'T04:00:00+08:00')&&openingReady(store.reports[reportKey(branch,stationOpeningSlot(window.__fueltechPilotConfig,branch).date,'shift-3')],window.__fueltechPilotConfig)))) {
     return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} />;
   }
 
@@ -4262,7 +4267,7 @@ export default function App() {
             <div>
               <div className="brand">FUELTECH ACCOUNTING</div>
               <h1>FuelTech Accounting</h1>
-              <p>Use the Liloan role links and your existing station credentials.</p>
+              <p>Use your station role link and existing station credentials.</p>
             </div>
             <div className="hero-card">
               <button type="button" className="primary" onClick={() => openRole("/cashier")}>Open Cashier</button>
@@ -4361,7 +4366,7 @@ export default function App() {
                 </Section>
               : cashierReportOpen
               ? <CashierPage onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
-              : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={GLOBAL_OPENING_DATE} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
+              : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
               ? <Section title="Loading Bank Verifications"><p className="neutral">Loading deposits from all stations...</p></Section>
@@ -4373,7 +4378,7 @@ export default function App() {
               : <ApproverPage allReports={store.reports} consolidatedDeposits={consolidatedDeposits} startDate={summaryStartDate} setStartDate={setSummaryStartDate} endDate={summaryEndDate} setEndDate={setSummaryEndDate} approveDepositVerification={approveDepositVerification} reviewDepositRemovalRequest={reviewDepositRemovalRequest} lastRefreshedAt={lastRefreshedAt} logout={logout} />)}
 
 
-            {role === "Admin" && <AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} />}
+            {role === "Admin" && <AdminStoreGate finished={initialLoadFinished} error={initialLoadError} loadedReportCount={Object.keys(store.reports).length} retry={()=>window.location.reload()} logout={logout}><AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} /></AdminStoreGate>}
             {showReportConfirm && (
               <ConfirmReportDialog
                 report={activeReport}
@@ -4398,10 +4403,11 @@ export default function App() {
 }
 
 function BaselineOpeningSection({ report, patchReport, confirmStartingOpening }) {
+  const waiting=report.openingSetupRequiredAt&&Date.now()<Date.parse(report.openingSetupRequiredAt);
   return (
     <Section title="Opening Setup - Starting Readings">
       <div className="warning-box">
-        Enter the readings at the start of today&apos;s current shift, before recording sales. These become Previous Shift Closing for this fresh shift. This is not a previous-day report.
+        Record the pump readings, tank stock and Coke inventory for this Beginning Setup. These become the opening balances for the first sales report.
         If a pump or tank is genuinely at zero, type 0 so the system knows it was checked.
       </div>
       <Table headers={["Pump", "Nozzle", "Starting Reading (becomes Previous Shift Closing)"]} minWidth="720px">
@@ -4422,9 +4428,11 @@ function BaselineOpeningSection({ report, patchReport, confirmStartingOpening })
         ))}
       </Table>
       <div className="grid four form-space">
+        <Field label="Setup Cashier Name"><TextInput value={report.cashierName||''} onChange={value=>patchReport(['root','cashierName'],value)} /></Field>
         <Field label="Coke Beginning"><NumberInput ghostZero value={report.coke.beginning} onChange={(value) => patchReport(["coke", "beginning"], value)} /></Field>
       </div>
-      <button type="button" className="confirm-button" onClick={confirmStartingOpening}>Confirm Opening Setup</button>
+      {waiting&&<p role="status">Opening setup confirmation starts November 4 at 10:00 p.m. Manila time. You can prepare the values before then.</p>}
+      <button type="button" className="confirm-button" disabled={!!waiting} onClick={confirmStartingOpening}>Confirm Opening Setup</button>
     </Section>
   );
 }
@@ -4488,6 +4496,7 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
   const shifts = SHIFT_OPTIONS.map((shift) => ({ shift, report: reports[reportKey(branch, date, shift.id)] }));
   const openingReport = reports[reportKey(branch, openingDate, openingShiftId)];
   const openingComplete = openingReady(openingReport, window.__fueltechPilotConfig);
+  const awaitingFirstSales=branch!=='Liloan'&&window.__fueltechPilotConfig.stationStarts&&Date.now()<Date.parse(stationStartDate(window.__fueltechPilotConfig,branch)+'T04:00:00+08:00');
   const nextShiftId = openingComplete ? shifts.find(({ report }) => !reportCompleted(report))?.shift.id : "";
   const submittedCount = shifts.filter(({ report }) => reportCompleted(report)).length;
   const correction = correctionRequest(correctionReport);
@@ -4511,12 +4520,13 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
         <span className={`cashier-shift-status ${openingComplete ? "submitted" : "missing"}`}>{openingComplete ? "Complete" : "Required"}</span>
         <strong>{openingComplete ? "Opening setup confirmed" : "Start opening setup"}</strong>
       </button>
+      {awaitingFirstSales&&<p role="status">First sales reporting begins November 5 at 4:00 a.m. Manila time, after tonight’s Beginning Setup.</p>}
       <div className="cashier-shift-grid">
         {shifts.map(({ shift, report }, index) => {
           const status = reportCompleted(report) ? "submitted" : hasMeaningfulDraftEntries(report) ? "draft" : "missing";
           const isNext = shift.id === nextShiftId;
           return (
-            <button type="button" className={`cashier-shift-card ${isNext ? "next" : ""}`} key={shift.id} onClick={() => onSelect(shift.id)} disabled={!openingComplete}>
+            <button type="button" className={`cashier-shift-card ${isNext ? "next" : ""}`} key={shift.id} onClick={() => onSelect(shift.id)} disabled={!openingComplete||!!awaitingFirstSales}>
               <span className="cashier-shift-index">0{index + 1}</span>
               <span className="cashier-shift-card-top">
                 <b>Shift {index + 1}</b>

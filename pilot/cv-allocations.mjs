@@ -1,3 +1,4 @@
+import { configuredStations, stationStartDate } from '../src/station-rollout.js';
 import { automaticCashVouchers } from './domain.mjs';
 import { dateOffset } from './integrations.mjs';
 import { reportKey } from '../src/accounting-engine.js';
@@ -13,7 +14,7 @@ function allocatedEvents(state,event) {
   const seen=new Set();let sum=0,usedLiters=0;
   const rows=allocations.map((part,index)=>{
     const date=dateOffset(part.date,0),shiftId=part.shiftId,key=reportKey(event.branch,date,shiftId),value=Number(part.amount);
-    if(event.branch!=='Liloan'||date<state.startDate||!state.reports[key]||state.reports[key].baselineReport||!['shift-1','shift-2','shift-3'].includes(shiftId)||(!override&&shiftId==='shift-3')||seen.has(key)||!Number.isFinite(value)||value<=0||Math.abs(value*100-cents(value))>0.000001)throw Error('Invalid approved Accounting CV allocation.');
+    if(!configuredStations(state).includes(event.branch)||date<stationStartDate(state,event.branch)||!state.reports[key]||state.reports[key].baselineReport||!['shift-1','shift-2','shift-3'].includes(shiftId)||(!override&&shiftId==='shift-3')||seen.has(key)||!Number.isFinite(value)||value<=0||Math.abs(value*100-cents(value))>0.000001)throw Error('Invalid approved Accounting CV allocation.');
     if(allocations.length>2&&(!override||date>'2026-10-31'))throw Error('Only the approved October legacy reconciliation can contain three allocations.');
     seen.add(key);sum+=cents(value);
     const liters=event.fundingSource==='STATION_FUEL'?(index===allocations.length-1?Number(event.liters)-usedLiters:Number(event.liters)*value/Number(event.amount)):undefined;

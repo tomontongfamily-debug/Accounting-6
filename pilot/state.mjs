@@ -1,3 +1,4 @@
+import { configuredStations, stationStartDate } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { refreshManagerReconciliation } from '../src/manager-reconciliation.js';
 import { createReport, normalizeReport, carryForwardOpenings, getEffectivePricing, reportKey, compute } from '../src/accounting-engine.js';
@@ -26,12 +27,12 @@ export function ensureCurrentReports(state, now=new Date().toISOString()) {
   const current=accountingTiming(now);
   if(current.date<state.startDate) return;
   // Only build the current day and the preceding day; no invented historical reports.
-  for(const date of [dateOffset(current.date,-1),current.date].filter(d=>d>=state.startDate)) {
+  for(const branch of configuredStations(state)) for(const date of [dateOffset(current.date,-1),current.date].filter(d=>d>=stationStartDate(state,branch))) {
     for(const shiftId of ['shift-1','shift-2','shift-3']) {
-      const key=reportKey('Liloan',date,shiftId);
+      const key=reportKey(branch,date,shiftId);
       if(!state.reports[key]) {
-        const prices=getEffectivePricing(state.priceBook,'Liloan',date,shiftId).prices;
-        state.reports[key]=carryForwardOpenings(createReport('Liloan',date,prices,shiftId),state.reports);
+        const prices=getEffectivePricing(state.priceBook,branch,date,shiftId).prices;
+        state.reports[key]=carryForwardOpenings(createReport(branch,date,prices,shiftId),state.reports);
       } else if(!state.reports[key].confirmed) {
         const r=state.reports[key];
         state.reports[key]=normalizeReport(r,r.branch,r.date,r.shiftId,r.prices);
@@ -53,7 +54,7 @@ export function reconcileSources(state,incoming) {
   const exclusions=new Map([...(incoming.cvExclusions||[]),...(incoming.cvOutOfScope||[])].map(row=>[row.id,row.status]));
   for(const [id] of exclusions) {alerts.delete(`CV:${id}`);alerts.delete(`cvCashEvents:${id}`);}
   for(const report of Object.values(state.reports)) {
-    if(report.date<state.startDate) continue;
+    if(report.date<stationStartDate(state,report.branch)) continue;
     const removed=(report.purchaseRows||[]).filter(row=>row.source==='FuelTech CV'&&exclusions.has(row.sourceVoucherId));
     if(!removed.length) continue;
     const beforeExpectedCash=compute(report).expectedCash;
@@ -65,7 +66,7 @@ export function reconcileSources(state,incoming) {
       report.checkDetails=reportIssues(report,compute(report).cashVariance);
       report.checkCategories=[...new Set(report.checkDetails.map(i=>i.category))];report.checkRequired=!!report.checkDetails.length;
     } else {report.cashReviewState='';report.recountRequired=false;}
-    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'cv-excluded-by-source-status',role:'System',branch:'Liloan',reportKey:keyOf(report),removed:removed.map(row=>({sourceVoucherId:row.sourceVoucherId,amount:row.amount,status:exclusions.get(row.sourceVoucherId)})),beforeExpectedCash,afterExpectedCash:compute(report).expectedCash});
+    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'cv-excluded-by-source-status',role:'System',branch:report.branch,reportKey:keyOf(report),removed:removed.map(row=>({sourceVoucherId:row.sourceVoucherId,amount:row.amount,status:exclusions.get(row.sourceVoucherId)})),beforeExpectedCash,afterExpectedCash:compute(report).expectedCash});
   }
   for(const old of state.cvCashEvents) {
     if(exclusions.has(old.id)) continue;
@@ -96,7 +97,7 @@ export function reconcileSources(state,incoming) {
   }
   Object.assign(state,incoming,{sourceAlerts:[...alerts.values()],sourcesVerifiedAt:new Date().toISOString()});
   for(const report of Object.values(state.reports)) {
-    if(!report.confirmed||report.baselineReport||report.date<state.startDate)continue;
+    if(!report.confirmed||report.baselineReport||report.date<stationStartDate(state,report.branch))continue;
     const pay=automaticTransactions(state.pay,report),po=automaticTransactions(state.po,report);
     const before={cvFuelRows:report.cvFuelRows||[],purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],onlinePay:report.onlinePay,deductions:report.deductions};
     const after=JSON.parse(JSON.stringify({
@@ -116,12 +117,12 @@ export function reconcileSources(state,incoming) {
     report.serverMeta={...report.serverMeta,savedAt:new Date().toISOString()};
     report.checkDetails=reportIssues(report,compute(report).cashVariance);
     report.checkCategories=[...new Set(report.checkDetails.map(i=>i.category))];report.checkRequired=!!report.checkDetails.length;
-    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-shift-reconciled',role:'System',branch:'Liloan',reportKey:keyOf(report),before,after,beforeExpectedCash,afterExpectedCash:compute(report).expectedCash,assignment:'Explicit CV funding or approved historical allocation; legacy CV creation time; Pay paid time; PO transaction time'});
+    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-shift-reconciled',role:'System',branch:report.branch,reportKey:keyOf(report),before,after,beforeExpectedCash,afterExpectedCash:compute(report).expectedCash,assignment:'Explicit CV funding or approved historical allocation; legacy CV creation time; Pay paid time; PO transaction time'});
   }
   // Persist review evidence with the canonical report as well as pilot state.
   // Admin's general report endpoint cannot see state-only source alerts.
   for(const report of Object.values(state.reports)) {
-    if(report.date<state.startDate||report.baselineReport)continue;
+    if(report.date<stationStartDate(state,report.branch)||report.baselineReport)continue;
     const issues=[...(refreshManagerReconciliation(report,state).integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
       ...state.sourceAlerts.filter(a=>(a.reportKey===keyOf(report)||a.reportKeys?.includes(keyOf(report)))).map(a=>({...a,source:'Source reconciliation'}))];
     if(isDeepStrictEqual(report.integrationIssues||[],issues))continue;
@@ -133,6 +134,6 @@ export function reconcileSources(state,incoming) {
     report.pilotRevision=Number(report.pilotRevision||0)+1;
     report.pilotLastNonReadingRevision=report.pilotRevision;
     report.serverMeta={...report.serverMeta,savedAt:new Date().toISOString()};
-    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-review-status-changed',role:'System',branch:'Liloan',reportKey:keyOf(report),issues});
+    state.audit.push({id:randomUUID(),at:new Date().toISOString(),action:'source-review-status-changed',role:'System',branch:report.branch,reportKey:keyOf(report),issues});
   }
 }

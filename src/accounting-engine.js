@@ -1,3 +1,4 @@
+import { hasPumpOpening } from './fuel-leak-loss.js';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
 import { additionalReviewFlags } from './accounting-review.js';
@@ -760,7 +761,7 @@ function reportWarnings(report, result) {
     const opening = n(row.opening);
     const closing = n(row.closing);
     const sold = closing - opening;
-    if (opening <= 0 && closing > 0) warnings.push(`${row.pump} ${row.nozzle}: opening is missing, so this reading is not counted yet.`);
+    if (!hasPumpOpening(row) && closing > 0) warnings.push(`${row.pump} ${row.nozzle}: opening is missing, so this reading is not counted yet.`);
     if (sold > 0 && n(report.prices[row.product]) <= 0) warnings.push(`${row.product}: pump price is missing or zero.`);
     if (sold > 10000) warnings.push(`${row.pump} ${row.nozzle}: liters sold is unusually high for one shift.`);
   });
@@ -928,7 +929,7 @@ function cacheCashierSession(branch) {
 function pumpLitersSold(row) {
   const opening = n(row.opening);
   const closing = n(row.closing);
-  if (opening <= 0 && closing > 0) return 0;
+  if (!hasPumpOpening(row) && closing > 0) return 0;
   return Math.max(0, closing - opening);
 }
 
@@ -959,7 +960,7 @@ function validMidShiftChangeForRow(change, row) {
 function pumpRowSales(report, row) {
   const opening = n(row.opening);
   const closing = n(row.closing);
-  if (opening <= 0 || closing <= opening) return 0;
+  if (!hasPumpOpening(row) || closing <= opening) return 0;
 
   let currentReading = opening;
   let currentPrice = Math.max(0, n(reportStartingPrice(report, row.product)));

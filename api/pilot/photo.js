@@ -1,3 +1,4 @@
+import { configuredStations } from '../../src/station-rollout.js';
 import { getRequestSession } from '../_shared/session.js';
 import { BUCKET, configuration, pilotDatabase } from '../../pilot/repository.mjs';
 export default async function handler(req,res) {
@@ -7,7 +8,7 @@ export default async function handler(req,res) {
   const auth=getRequestSession(req);
   if(!auth.ok) return res.status(401).end();
   const s=auth.session;
-  if(!['Admin','Approver','Cashier','Manager'].includes(s.role)||(['Cashier','Manager'].includes(s.role)&&s.branch!=='Liloan')) return res.status(403).end();
+  if(!['Admin','Approver','Cashier','Manager'].includes(s.role)) return res.status(403).end();
   try {
     const id=String(req.query.id||'');
     if(!/^[a-f0-9-]{36}$/i.test(id)) return res.status(404).end();
@@ -19,7 +20,7 @@ export default async function handler(req,res) {
       :await db.from('fueltech_pilot_state').select('data').eq('mode',cfg.mode).single();
     if(state.error) return res.status(503).end();
     const photo=cfg.storage_version===2?state.data?.data:state.data.data.photos['/api/pilot/photo?id='+id];
-    if(!photo||photo.branch!=='Liloan'||!photo.file.startsWith(cfg.mode+'/Liloan/')) return res.status(404).end();
+    if(!photo||!configuredStations(cfg).includes(photo.branch)||(['Cashier','Manager'].includes(s.role)&&s.branch!==photo.branch)||!photo.file.startsWith(cfg.mode+'/'+photo.branch+'/')) return res.status(404).end();
     const file=await db.storage.from(BUCKET).download(photo.file);
     if(file.error) return res.status(503).end();
     res.setHeader('Content-Type','image/jpeg');

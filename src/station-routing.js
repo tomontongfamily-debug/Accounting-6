@@ -1,3 +1,4 @@
+import { configuredStations } from './station-rollout.js';
 const stationRoles = {Cashier: 'cashier', Manager: 'manager'};
 
 export function stationRoleFromPath(pathname) {
@@ -6,7 +7,7 @@ export function stationRoleFromPath(pathname) {
 
 export function liloanWorkflowPath({role, branch, pathname, config}) {
   const name = stationRoles[role];
-  if (!name || branch !== 'Liloan' || pathname !== '/' + name) return null;
+  if (!name || !configuredStations(config).includes(branch) || pathname !== '/' + name) return null;
   if (config?.mode !== 'live' || config.launch?.ready === false) return null;
   return '/pilot/' + name;
 }
@@ -45,9 +46,9 @@ export async function readStationSession(role, request = fetch) {
 }
 
 export async function redirectLiloanLogin(role, branch, {pathname = window.location.pathname, request = fetch, navigate = path => window.location.replace(path)} = {}) {
-  if (!stationRoles[role] || branch !== 'Liloan' || stationRoleFromPath(pathname) !== role) return false;
+  if (!stationRoles[role] || stationRoleFromPath(pathname) !== role) return false;
   const response = await routingRequest(request, '/api/pilot/config');
-  if (!response.ok) throw new Error('Unable to check the Liloan workflow. Please try again.');
+  if (!response.ok) throw new Error('Unable to check the station workflow. Please try again.');
   const path = liloanWorkflowPath({role, branch, pathname, config: await response.json()});
   if (!path) return false;
   navigate(path);
