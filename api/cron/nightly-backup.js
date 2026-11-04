@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { manilaDateOffset } from "../_shared/health.js";
-import { backupImmutable } from '../../pilot/backup.mjs';
+import { backupJson } from '../../pilot/backup.mjs';
 import { archiveRecovery } from '../../pilot/recovery.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://chqinknijqtixeenhtvu.supabase.co";
@@ -64,6 +64,8 @@ export default async function handler(req, res) {
       pilot_state_snapshot: pilotSnapshot.data || [],
       recovery_journal_archives: recoveryArchives,
     };
+    // Record success locally only after the independent copy is verified.
+    const offProject=await backupJson(`snapshots/${backupDate}/${Date.now()}.json`,{schemaVersion:1,...payload});
 
     const backupRecord = {
       backup_date: backupDate,
@@ -105,8 +107,6 @@ export default async function handler(req, res) {
       return;
     }
 
-    const snapshot=Buffer.from(JSON.stringify({schemaVersion:1,...payload}));
-    const offProject=await backupImmutable(`snapshots/${backupDate}/${Date.now()}.json`,snapshot,'application/json');
     res.status(200).json({ ok: true, backupDate, reportCount: payload.reports.length,offProjectBackup:offProject });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "Nightly backup failed." });

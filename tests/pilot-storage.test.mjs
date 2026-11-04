@@ -8,6 +8,34 @@ import { documents, statePatch } from '../pilot/storage.mjs';
 import { execute } from '../pilot/repository.mjs';
 import { ensureCurrentReports } from '../pilot/state.mjs';
 
+test('retained checkpoints restore the current state and expired client cursors reload safely',async()=>{
+ const db=await prepared();
+ try {
+  const {state,key}=fixture();
+  await db.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
+  await db.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
+  await db.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await db.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  await db.exec(sql('20261104064248_guard_pilot_changefeed_after_retention.sql'));
+  const next=structuredClone(state);next.reports[key].notes='retained checkpoint';
+  const commit=async(revision,before,after)=>db.query('select fueltech_pilot_commit_v2($1,$2,$3,$4,$5,$6)',['shadow',revision,randomUUID(),'hash',JSON.stringify(statePatch(before,after)),JSON.stringify({ok:true})]);
+  await commit(7,state,next);
+  await db.query("insert into fueltech_pilot_checkpoints values('shadow',8,$1,now())",[JSON.stringify(next)]);
+  const latest=structuredClone(next);latest.reports[key].notes='retained tail';
+  await commit(8,next,latest);
+  await db.exec('begin;create temporary table retained_journal as select * from fueltech_pilot_journal where revision>8;truncate fueltech_pilot_journal;insert into fueltech_pilot_journal select * from retained_journal;commit;');
+  assert.deepEqual((await db.query("select fueltech_pilot_restore_revision('shadow',8) data")).rows[0].data,next);
+  assert.deepEqual((await db.query("select fueltech_pilot_restore_revision('shadow',9) data")).rows[0].data,latest);
+  assert.equal((await db.query("select fueltech_pilot_changes_v2('shadow',7,9) data")).rows[0].data.full,true);
+  assert.deepEqual((await db.query("select fueltech_pilot_changes_v2('shadow',8,9) data")).rows[0].data,{full:false,keys:[key]});
+  await db.query("insert into fueltech_pilot_checkpoints values('shadow',9,$1,now())",[JSON.stringify(latest)]);
+  await db.exec('truncate fueltech_pilot_journal;');
+  assert.deepEqual((await db.query("select fueltech_pilot_restore_revision('shadow',9) data")).rows[0].data,latest);
+  assert.equal((await db.query("select fueltech_pilot_changes_v2('shadow',8,9) data")).rows[0].data.full,true);
+  assert.deepEqual((await db.query("select fueltech_pilot_changes_v2('shadow',9,9) data")).rows[0].data,{full:false,keys:[]});
+ }finally{await db.close();}
+});
+
 const sql=name=>fs.readFileSync(new URL('../supabase/migrations/'+name,import.meta.url),'utf8');
 async function prepared(){
  const db=new PGlite();
