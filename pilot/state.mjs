@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { automaticTransactions, reportIssues } from './domain.mjs';
 import { accountingCashVouchers, accountingFuelVouchers, cvAllocationReportKey, cvAllocationReportKeys } from './cv-allocations.mjs';
 import { accountingTiming, dateOffset } from './integrations.mjs';
+import { sameReviewIssues } from './review-issues.mjs';
 
 export function initialState(reportRows, priceRows, config) {
   const state={mode:config.mode,startDate:config.start_date,reports:{},priceBook:{Liloan:{}},photos:{},deposits:[],audit:[],noDepositDays:[0],pay:[],po:[],cvCashEvents:[],sourceAlerts:[]};
@@ -125,7 +126,7 @@ export function reconcileSources(state,incoming) {
     if(report.date<stationStartDate(state,report.branch)||report.baselineReport)continue;
     const issues=[...(refreshManagerReconciliation(report,state).integrationIssues||[]).filter(i=>i.source!=='Source reconciliation'),
       ...state.sourceAlerts.filter(a=>(a.reportKey===keyOf(report)||a.reportKeys?.includes(keyOf(report)))).map(a=>({...a,source:'Source reconciliation'}))];
-    if(isDeepStrictEqual(report.integrationIssues||[],issues))continue;
+    if(sameReviewIssues(report.integrationIssues||[],issues))continue;
     report.integrationIssues=issues;
     if(report.confirmed) {
       report.checkDetails=reportIssues(report,compute(report).cashVariance);

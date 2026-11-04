@@ -28,12 +28,24 @@ export function documents(state) {
   return rows;
 }
 const identity=row=>JSON.stringify([row.section,row.key]);
+function persistedDocument(old, row) {
+  if (row.section !== 'reports' || !old?.data?.posRedemptions || !row.data?.posRedemptions) return row.data;
+  // Successful polling times live once in POS sync metadata. Read projections
+  // apply them to each report; journal a report only when its content changes.
+  const evidence={...row.data.posRedemptions};
+  for (const key of ['attemptedAt','verifiedAt']) {
+    if (Object.hasOwn(old.data.posRedemptions,key)) evidence[key]=old.data.posRedemptions[key];
+    else delete evidence[key];
+  }
+  const withoutPollingTimes={...row.data,posRedemptions:evidence};
+  return isDeepStrictEqual(old.data,withoutPollingTimes) ? old.data : row.data;
+}
 export function statePatch(before,after) {
   const prior=new Map(documents(before).map(row=>[identity(row),row]));
   const next=documents(after),upserts=[];
   for(const row of next) {
     const id=identity(row),old=prior.get(id);
-    if(!old||!isDeepStrictEqual(old.data,row.data))upserts.push(row);
+    if(!old||!isDeepStrictEqual(old.data,persistedDocument(old,row)))upserts.push(row);
     prior.delete(id);
   }
   const oldAudit=before.audit||[],newAudit=after.audit||[];
