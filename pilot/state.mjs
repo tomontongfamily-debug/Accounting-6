@@ -1,4 +1,5 @@
-import { configuredStations, stationStartDate } from '../src/station-rollout.js';
+import { configuredStations, stationOpeningSlot, stationStartDate } from '../src/station-rollout.js';
+import { openingReady } from '../src/pilot-opening.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { refreshManagerReconciliation } from '../src/manager-reconciliation.js';
 import { createReport, normalizeReport, carryForwardOpenings, getEffectivePricing, reportKey, compute } from '../src/accounting-engine.js';
@@ -43,6 +44,19 @@ export function ensureCurrentReports(state, now=new Date().toISOString()) {
       }
       state.reports[key].pilot=true;
     }
+  }
+  // The day can be created before the station finishes its opening setup.
+  // Reconcile those waiting drafts when the saved setup becomes complete;
+  // otherwise the phone keeps hiding them behind stale baselineMissing flags.
+  const ready=new Map();
+  for(const [key,report] of Object.entries(state.reports)) {
+    if(report.branch==='Liloan'||report.confirmed||report.baselineReport||!report.baselineMissing
+      ||!configuredStations(state).includes(report.branch)||report.date<stationStartDate(state,report.branch))continue;
+    if(!ready.has(report.branch)) {
+      const slot=stationOpeningSlot(state,report.branch);
+      ready.set(report.branch,openingReady(state.reports[reportKey(report.branch,slot.date,slot.shiftId)],state));
+    }
+    if(ready.get(report.branch))state.reports[key]=carryForwardOpenings(report,state.reports);
   }
 }
 
