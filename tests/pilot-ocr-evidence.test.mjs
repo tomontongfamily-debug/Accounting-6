@@ -14,12 +14,13 @@ test('OCR outcomes survive manual confirmation and stale null fields; retakes re
  assert.equal(upload.report.pumpRows[0].readingRevision,upload.readingRevision);
  assert.equal(upload.report.pumpRows[0].readingConfirmed,false);
  assert.equal(upload.report.pumpRows[0].ocr_result.status,'pending');
- const attempt={status:'detected',version:'test-model',completedAt:'2026-11-03T09:00:00Z'};
+ const attempt={status:'detected',version:'test-model',completedAt:'2026-11-03T09:00:00Z',durationMs:1234};
  await act('/api/demo/pump-reading',{reportKey:key,revision:row.readingRevision,row:{...row,ocr_detected_reading:10010.12,ocr_result:attempt}});
  row=state.reports[key].pumpRows[0];
  const confirmation={...row,closing:10010.13,closingEntered:true,readingConfirmed:true,ocr_detected_reading:null};delete confirmation.ocr_result;
  await act('/api/demo/pump-reading',{reportKey:key,revision:row.readingRevision,row:confirmation});
  row=state.reports[key].pumpRows[0];assert.equal(row.ocr_detected_reading,10010.12);assert.equal(row.ocr_result.status,'detected');assert.equal(row.ocr_was_edited,true);
+ assert.equal(row.ocr_result.durationMs,1234,'Recognition timing survives confirmation without including upload/save time');
  assert.equal(state.audit.findLast(e=>e.rowId===row.id&&e.ocr_result).photo_path,upload.photo_path);
  await act('/api/demo/photo',{reportKey:key,rowId:row.id,revision:row.readingRevision,replaceReading:true,data:'data:image/jpeg;base64,/9j/2Q=='},{mutationId:'replacement-photo',uploadPhoto:async()=>{}});
  row=state.reports[key].pumpRows[0];assert.equal(row.ocr_detected_reading,null);assert.equal(row.ocr_result.status,'pending');assert.equal(row.readingConfirmed,false);

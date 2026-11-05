@@ -1,9 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readingWithVisibleDecimal,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
+import {readingWithVisibleDecimal,supportedTotalizerReading,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
 
 const symbols=text=>[...text].map((text,i)=>({text,confidence:95,bbox:{x0:20+i*60,x1:60+i*60,y0:20,y1:120}}));
 const dot=index=>({x:20+index*60-15,y:110,width:8,height:9,area:65});
+
+test('seven integer digits require all nine independent cells and the visible two-place decimal',()=>{
+ const nine=symbols('123456789');
+ assert.equal(supportedTotalizerReading(nine,[dot(7)],structuredClone(nine)),1234567.89);
+ assert.equal(supportedTotalizerReading(nine,[dot(7)],nine.slice(1)),null,'A frame must not supply an uncorroborated ninth digit');
+ assert.equal(supportedTotalizerReading(nine,[dot(7)],symbols('723456789')),null);
+ const unclear=structuredClone(nine);unclear[0].text='?';
+ assert.equal(supportedTotalizerReading(nine,[dot(7)],unclear),null);
+ assert.equal(supportedTotalizerReading(nine,[dot(6)],nine),null,'Never round a three-place decimal');
+ assert.equal(supportedTotalizerReading(nine.slice(1),[dot(7)],nine),null,'Never drop a leading physical cell');
+ assert.equal(supportedTotalizerReading(symbols('23456789'),[dot(6)],symbols('23456789')),234567.89);
+});
 test('The physical decimal distinguishes readings independently of the opening value',()=>{
   assert.equal(readingWithVisibleDecimal(symbols('12345678'),[dot(6)]),123456.78);
   assert.equal(readingWithVisibleDecimal(symbols('875421'),[dot(3)]),875.421);

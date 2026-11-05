@@ -4,7 +4,7 @@ import { neuralTotalizerCandidates } from './totalizer-neural.js';
 import { OCR_ASSET_VERSION, ocrAsset } from './ocr-assets.js';
 import { readTotalizerGrid } from './totalizer-grid.js';
 import { chooseTotalizerReading } from './totalizer-consensus.js';
-import { readingWithVisibleDecimal, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
+import { readingWithVisibleDecimal, supportedTotalizerReading, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
 let detectionQueue=Promise.resolve();
@@ -22,18 +22,16 @@ export function detectTotalizer(data){
 }
 
 export async function detectTotalizerResult(data){
+  const started=performance.now();
   try{
     const reading=await detectTotalizer(data);
-    return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,completedAt:new Date().toISOString()}};
+    return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
   }catch{
-    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason:'recognition-failed',completedAt:new Date().toISOString()}};
+    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason:'recognition-failed',completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
   }
 }
 
 async function recognizePhoto(data){
-  const ready=prepareTotalizer();
-  // Attach a rejection handler while image preparation runs.
-  ready.catch(()=>{});
   let image;
   if(typeof data==='string'){image=new Image();image.src=data;await image.decode();}
   else{
@@ -48,16 +46,22 @@ async function recognizePhoto(data){
   const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data,gray=new Uint8Array(canvas.width*canvas.height);
   for(let i=0;i<gray.length;i++)gray[i]=Math.round(.2126*pixels[i*4]+.7152*pixels[i*4+1]+.0722*pixels[i*4+2]);
   const analysis=totalizerRegions(gray,canvas.width,canvas.height);
+  // Neither fallback can read a missing number row. Do not download a neural
+  // runtime/model only to return an empty list of candidates.
+  if(!analysis.regions.length)return null;
+  const ready=prepareTotalizer();
   let worker;
   try{
     worker=await ready;
     const readings=new Set(),evidence=new Map(),glyphs=[];
-    let sensitiveMask;
+    let sensitiveMask,longDisplay=false;
     for(const primary of analysis.regions){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
       for(const region of layouts){
         const clean=withoutDisplayFrame(analysis.mask,canvas.width,region);
+        const segments=segmentDisplaySymbols(clean,canvas.width,region);
+        if(segments.length===9)longDisplay=true;
         const votes=new Map(),agreed=new Set();
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
           // Retain the original row boundaries. Re-detecting them on a more
@@ -80,10 +84,11 @@ async function recognizePhoto(data){
             const digits=translated.filter(s=>/^\d$/.test(s.text));
             glyphs.push(...digits.filter(s=>s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
-            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?readingWithVisibleDecimal(translated,analysis.components,{integerDigits:6,decimalPlaces:2}):null;
-            // The supported station LCD has six integer and two decimal cells.
-            // A frame recognized as a ninth digit must not become a suggestion.
-            if(value!==null&&!evidence.has(value))evidence.set(value,{symbols:translated,segments:segmentDisplaySymbols(clean,canvas.width,region)});
+            if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)longDisplay=true;
+            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?supportedTotalizerReading(translated,analysis.components,segments):null;
+            // Keep a physically verified alignment of the same numeric value.
+            // An early crop with poor boxes must not hide a later verified pass.
+            if(value!==null&&(!evidence.has(value)||verifyLcdDigits(translated,gray,canvas.width,canvas.height,segments)))evidence.set(value,{symbols:translated,segments});
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
             passes.push({value,confidence:result.confidence});
@@ -101,12 +106,16 @@ async function recognizePhoto(data){
     const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
     const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
     if(verified!==null)return verified;
+    // The existing neural/grid fallback fits eight cells. It cannot establish
+    // a nine-cell reading and must not silently drop its leading digit.
+    if(longDisplay)return null;
+    const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
+    if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04))return null;
     // A neural model reads the original color row at several resolutions;
     // physical cell fitting independently checks the shape and decimal layout.
     // Model-loading failure retains the previously verified reader's behavior.
     let neural;
     try{neural=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
-    const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
     return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }

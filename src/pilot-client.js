@@ -58,7 +58,9 @@ async function post(route,input,sessionToken,key) {
       if(error.code==='PILOT_REQUEST_TIMEOUT'||attempt===1)throw error;
       continue;
     }
-    if(response.status!==503||attempt===1) break;
+    // A failed state reconstruction happened before the action ran. Retrying
+    // it immediately adds another expensive query to an overloaded database.
+    if(response.status!==503||result.code==='STATION_RECORDS_UNAVAILABLE'||attempt===1) break;
   }
   if(!response.ok||result.ok===false) throw Object.assign(new Error(result.error||'Save could not be verified.'),{...result,status:response.status});
   if(route==='/api/demo/cash-confirm') {
