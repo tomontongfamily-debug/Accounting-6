@@ -5,7 +5,7 @@ import {chromium} from '@playwright/test';
 import {totalizerDisplayFixture} from './totalizer-display-fixture.mjs';
 
 test('the real reader verifies seven integer digits without neural downloads and retains decimal/frame guards',async()=>{
- const server=await createServer({cacheDir:'node_modules/.vite/totalizer-format-test',server:{host:'127.0.0.1',port:0,strictPort:true}});await server.listen();
+ const server=await createServer({cacheDir:'node_modules/.vite/totalizer-format-test',server:{host:'127.0.0.1',port:0,strictPort:false}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage(),requests=[];

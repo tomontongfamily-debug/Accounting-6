@@ -7,7 +7,7 @@ import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
 for(const failedReader of [false,true])test(`photos save and pumps remain available while serialized OCR is held (reader failure=${failedReader})`,async()=>{
- const server=await createServer({cacheDir:'node_modules/.vite/ocr-background-test',server:{host:'127.0.0.1',port:0,strictPort:true}});await server.listen();
+ const server=await createServer({cacheDir:'node_modules/.vite/ocr-background-test',server:{host:'127.0.0.1',port:0,strictPort:false}});await server.listen();
  const port=server.httpServer.address().port;
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let {state,key,report,cashier}=fixture();
