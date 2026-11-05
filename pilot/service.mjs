@@ -11,6 +11,7 @@ import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
 import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
+import {tankDeliveryError,sameTankDelivery,newTankDelivery} from '../src/tank-deliveries.js';
 import { refreshPosReport } from './pos-redemptions.mjs';
 import { SELLING_PRODUCTS, carryMidShiftPrices, confirmedDailyPricePatch, syncUnsubmittedPrices } from './prices.mjs';
 const stamp=()=>new Date().toISOString();
@@ -79,6 +80,9 @@ function candidate(input,session,readingId) {
     return {...base,closing:row.closing,closingEntered:row.closingEntered,closingEntrySource:row.closingEntrySource,photo_path:row.photo_path,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null && Number(row.closing)!==Number(ocr.ocr_detected_reading),readingConfirmed:row.readingConfirmed,calculated_liters:row.closing===''?null:money(Number(row.closing)-Number(base.opening))};
   });
   const allowed=Object.fromEntries(['cashierName','tankRows','fuelLeakLosses','deliveries','oilSales','actualCashCounted','cashDenominations','notes','coke','pointsIssued','pointsWithdrawn','clientSave'].filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]));
+  // Saved deliveries are append-only here. An older desktop draft must not
+  // remove stock already recorded by the dedicated delivery action.
+  allowed.deliveries=[...(old.deliveries||[]),...(allowed.deliveries||[]).filter(d=>!(old.deliveries||[]).some(saved=>saved.id===d.id))];
   const incomingLeakLossError=validateFuelLeakLosses({...old,...allowed,pumpRows:rows});
   if(incomingLeakLossError) reject(incomingLeakLossError);
   const r=authoritative({...old,...allowed,purchaseRows:old.purchaseRows,pumpRows:rows,confirmed:false,confirmedAt:'',deposits:old.deposits,prices:old.prices,midShiftPriceChanges:old.midShiftPriceChanges,baselineConfirmed:old.baselineConfirmed,baselineMissing:old.baselineMissing,checkDetails:old.checkDetails,cashCountConfirmed:old.cashCountConfirmed,cashReviewState:old.cashReviewState,recountRequired:old.recountRequired,integrationIssues:old.integrationIssues});
@@ -95,13 +99,12 @@ function candidate(input,session,readingId) {
   r.midShiftBasePrices=old.midShiftBasePrices;
   if(r.posRedemptions?.automatic&&r.posRedemptions.pointsStatus!=='verified')r.pointsIssued=old.pointsIssued;
   amount(r.oilSales||0);
-  const deliveryKeys=new Set();
+  const deliveries=[];
   for(const delivery of r.deliveries||[]) {
-    if(!['Premium','Regular','Diesel'].includes(delivery.product)||amount(delivery.liters)<=0||!/^([01]\d|2[0-3]):[0-5]\d$/.test(delivery.time)||!String(delivery.reference||'').trim()) reject('Complete product, liters, time and reference for each tank delivery.');
-    const deliveryKey=`${delivery.product}|${delivery.reference.trim().toLowerCase()}`;
-    if(deliveryKeys.has(deliveryKey)) reject('Duplicate tank delivery reference.');
-    deliveryKeys.add(deliveryKey);
-    if(Object.values(database.reports).some(other=>other.branch===r.branch&&keyOf(other)!==keyOf(r)&&(other.deliveries||[]).some(d=>`${d.product}|${String(d.reference).trim().toLowerCase()}`===deliveryKey))) reject('This delivery is already recorded in another shift.');
+    const issue=tankDeliveryError(delivery);if(issue)reject(issue);
+    if(deliveries.some(d=>sameTankDelivery(d,delivery)))reject('This delivery is already listed.');
+    deliveries.push(delivery);
+    if(Object.values(database.reports).some(other=>other.branch===r.branch&&keyOf(other)!==keyOf(r)&&(other.deliveries||[]).some(d=>sameTankDelivery(d,delivery,{sameDate:other.date===r.date})))) reject('This delivery is already recorded in another shift.');
   }
   r.tankRows=template.tankRows.map(base=>{
     const row=(r.tankRows||[]).find(t=>t.id===base.id)||base;
@@ -139,7 +142,7 @@ function openingPhotoComplete(report,row) {
   return readingComplete(row)&&Number(row.opening)===Number(row.closing)
     &&photo?.reportKey===keyOf(report)&&photo.rowId===row.id&&!photo.changeId;
 }
-function storeReport(r,session,action) {
+function storeReport(r,session,action,details={}) {
   r=refreshPosReport(r,database.posRedemptionSync);
   if(r.date<stationStartDate(database,r.branch)&&!(r.baselineReport&&isStationOpening(database,r))) reject('Historical reports are read-only in the pilot.',423);
   r.pilot=true; r.pilotRevision=Number(database.reports[keyOf(r)]?.pilotRevision||0)+1;
@@ -150,7 +153,7 @@ function storeReport(r,session,action) {
   r.pilotCashRevision=Number(previous?.pilotCashRevision||0)+(['cash-confirm','cash-recount','correction-approved'].includes(action)?1:0);
   r.serverMeta={...r.serverMeta,reportId:r.serverMeta?.reportId||(r.confirmed?randomUUID():''),savedAt:stamp()};
   database.reports[keyOf(r)]=r;
-  audit(action,session,{reportKey:keyOf(r)}); save();
+  audit(action,session,{...details,reportKey:keyOf(r)}); save();
   return {ok:true,report:r,reportId:r.serverMeta.reportId};
 }
 function coverage(branch,date) {
@@ -210,6 +213,24 @@ function validatePriceReadingOrder(report,change) {
         return send(storePage(sorted,input.after?[]:priceRows));
       }
       return send({ok:true,priceRows,reportRows});
+    }
+    if(route==='/api/demo/delivery-save'){
+      requireRole(session,'Cashier');
+      const old=database.reports[input.reportKey];if(!old)reject('Open the saved shift before recording a delivery.');
+      branchAccess(session,old.branch);assertCorrectionWindow(old);
+      if(old.confirmed||old.baselineReport||old.baselineMissing||old.date<stationStartDate(database,old.branch))reject('This shift is locked. Open the current shift to record a delivery.',423);
+      const delivery=newTankDelivery(input.delivery||{},input.delivery?.id),issue=tankDeliveryError(delivery);if(issue)reject(issue);
+      const previousNonReadingRevision=Number(old.pilotLastNonReadingRevision??old.pilotRevision??0);
+      const existing=(old.deliveries||[]).find(d=>d.id===delivery.id);
+      if(existing){
+        if(['driverName','product','liters','time'].some(k=>String(existing[k])!==String(delivery[k])))reject('This saved delivery changed. Refresh before trying again.',409);
+        return send({ok:true,alreadyRecorded:true,report:exposeReport(old,session),previousNonReadingRevision});
+      }
+      if(Object.values(database.reports).some(other=>other.branch===old.branch&&(other.deliveries||[]).some(d=>sameTankDelivery(d,delivery,{sameDate:other.date===old.date}))))reject('This delivery is already recorded. Check the saved deliveries before adding it again.',409);
+      const r={...old,deliveries:[...(old.deliveries||[]),delivery]};
+      r.tankRows=old.tankRows.map(row=>({...row,delivery:r.deliveries.filter(d=>d.product===row.product).reduce((sum,d)=>sum+Number(d.liters),0)}));
+      const saved=storeReport(r,session,'tank-delivery-saved',{delivery});
+      return send({...saved,report:exposeReport(saved.report,session),previousNonReadingRevision});
     }
     if(route==='/api/reports/save') {
       requireRole(session,'Cashier','Manager','Admin');

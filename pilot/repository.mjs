@@ -71,14 +71,14 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   if(envelope.mode!==config.mode||envelope.startDate!==config.start_date) throw fail('Pilot configuration changed. Reload the page.',409);
   const {route,input={},mutationId}=envelope;
   const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
-  // A pump photo/reading changes physical evidence, not payment, voucher or
+  // Pump evidence and delivered stock do not depend on payment, voucher or
   // POS records. Keep these actions independent of unrelated source imports;
   // cash checks and submission still verify the current financial sources.
-  const pumpEvidenceOnly=['/api/demo/photo','/api/demo/pump-reading','/api/demo/midshift-reading','/api/demo/pump-report'].includes(route);
+  const physicalEntryOnly=['/api/demo/photo','/api/demo/pump-reading','/api/demo/midshift-reading','/api/demo/pump-report','/api/demo/delivery-save'].includes(route);
   // Only Liloan imports POS redemptions. A different station must not wait for
   // its full evidence/history import just to load, photograph or save a shift.
   // Admin and Approver still need the complete, current all-station view.
-  const usesPos=(!pumpEvidenceOnly||forceSources)&&(['Admin','Approver'].includes(session.role)||session.branch==='Liloan');
+  const usesPos=(!physicalEntryOnly||forceSources)&&(['Admin','Approver'].includes(session.role)||session.branch==='Liloan');
   const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
@@ -124,7 +124,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   }
   prepareStationRollout(state,config,seedPrices);
   ensureCurrentReports(state);
-  if(forceSources||requiresFresh||(!pumpEvidenceOnly&&(!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000))) {
+  if(forceSources||requiresFresh||(!physicalEntryOnly&&(!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000))) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
       cvClient=createClient(process.env.FUELTECH_CV_URL,process.env.FUELTECH_CV_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
