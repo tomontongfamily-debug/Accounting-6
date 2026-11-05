@@ -15,6 +15,13 @@ export const readerPreparation=()=>snapshot;
 export function subscribeReaderPreparation(listener){listeners.add(listener);return()=>listeners.delete(listener);}
 function publish(next){snapshot={...snapshot,...next};for(const listener of listeners)listener(snapshot);}
 async function fileCache(){try{return await globalThis.caches?.open(OCR_FILE_CACHE);}catch{return null;}}
+function downloadError(){return Object.assign(Error('Reader preparation timed out. Please retry on a stronger connection.'),{code:'reader-download-timeout'});}
+function untilAborted(promise,signal){
+ if(signal.aborted)return Promise.reject(signal.reason||downloadError());
+ let aborted;
+ const stop=new Promise((_,reject)=>{aborted=()=>reject(signal.reason||downloadError());signal.addEventListener('abort',aborted,{once:true});});
+ return Promise.race([promise,stop]).finally(()=>signal.removeEventListener('abort',aborted));
+}
 async function checked(bytes,file){
  if(bytes.byteLength!==file.bytes)throw Error('Reader file size did not match.');
  const hash=await crypto.subtle.digest('SHA-256',bytes);
@@ -30,12 +37,12 @@ async function readFile(file,cache,onProgress,signal){
   try{const bytes=await checked(await cached.arrayBuffer(),file);onProgress(file.bytes);return{bytes,stored:true};}
   catch{try{await cache.delete(url);}catch{ /* Refetch only this public file. */ }}
  }
- const response=await fetch(url,{cache:'force-cache',signal});
+ const response=await untilAborted(fetch(url,{cache:'force-cache',signal}),signal);
  if(!response.ok)throw Error('Reader download could not finish.');
  let bytes;
  if(response.body){
   const reader=response.body.getReader(),parts=[];let size=0;
-  for(;;){const{done,value}=await reader.read();if(done)break;size+=value.length;
+  for(;;){const{done,value}=await untilAborted(reader.read(),signal);if(done)break;size+=value.length;
    if(size>file.bytes){await reader.cancel();throw Error('Reader file size did not match.');}
    parts.push(value);onProgress(size);
   }
@@ -48,25 +55,27 @@ async function readFile(file,cache,onProgress,signal){
  return{bytes,stored};
 }
 
-export function prepareReaderFiles(){
+export function prepareReaderFiles({timeoutMs=90000}={}){
  if(preparation)return preparation;
  publish({status:'preparing',percent:0});
- preparation=(async()=>{
-  const cache=await fileCache(),downloaded={},controller=new AbortController();let previous=-1;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(downloadError()),timeoutMs);
+ preparation=untilAborted((async()=>{
+  const cache=await untilAborted(fileCache(),controller.signal),downloaded={};let previous=-1;
   const settled=await Promise.allSettled(files.map(async([key,file])=>{
    try{
     const result=await readFile(file,cache,bytes=>{
-     downloaded[key]=bytes;
+     if(controller.signal.aborted)return;downloaded[key]=bytes;
      const percent=Math.min(99,Math.floor(Object.values(downloaded).reduce((sum,n)=>sum+n,0)/totalBytes*100));
      if(percent!==previous){previous=percent;publish({percent});}
     },controller.signal);return[key,result];
-   }catch(error){controller.abort();throw error;}
+   }catch(error){controller.abort(error);throw error;}
   }));
   const failed=settled.find(result=>result.status==='rejected');if(failed)throw failed.reason;
   const results=settled.map(result=>result.value);
+  if(controller.signal.aborted)throw controller.signal.reason||downloadError();
   publish({status:'ready',percent:100,savedForReuse:results.every(([,result])=>result.stored)});
   return Object.fromEntries(results.map(([key,result])=>[key,result.bytes]));
- })().catch(error=>{publish({status:'error'});throw error;}).finally(()=>{preparation=undefined;});
+ })(),controller.signal).catch(error=>{publish({status:'error'});throw error;}).finally(()=>{clearTimeout(timer);preparation=undefined;});
  return preparation;
 }
 

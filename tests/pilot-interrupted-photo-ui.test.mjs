@@ -7,7 +7,7 @@ import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
 for(const failure of ['upload-before-commit','lost-photo-response','lost-reading-response','invalid-photo-response'])test(`${failure}: kept phone capture retries the same request and reaches a desktop that began without photos`,async t=>{
- const server=await createServer({cacheDir:'node_modules/.vite/interrupted-photo-test',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});t.after(()=>server.close());await server.listen();
+ const server=await createServer({cacheDir:'node_modules/.vite/interrupted-photo-test',server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false}});t.after(()=>server.close());await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let {state,key,cashier}=fixture();const report=state.reports[key];report.cashCountConfirmed=true;report.actualCashCounted=200;report.cashDenominations={200:1};report.pilotRevision=1;report.pilotLastNonReadingRevision=1;report.pilotCashRevision=1;
  const uploads=new Map(),receipts=new Map(),requests=[],errors=[];let failing=true;

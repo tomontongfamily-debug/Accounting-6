@@ -38,6 +38,12 @@ export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.rand
   // Cash buttons and draft autosaves must observe each other's completed save.
   // Separate reports remain independent; failed requests do not stall the queue.
   if(!key)return post(route,snapshot,sessionToken,key,mutationId);
+  if(route==='/api/demo/pump-report'){
+    // Observe writes already queued when this poll began, but do not put a
+    // slow read ahead of the next photo/confirmation. Callers reject results
+    // overtaken by their local mutations; reads never advance savedRevisions.
+    return (pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
+  }
   const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
   pendingReports.set(key,request);
   request.finally(()=>{if(pendingReports.get(key)===request)pendingReports.delete(key);}).catch(()=>{});

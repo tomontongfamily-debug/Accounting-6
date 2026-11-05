@@ -1,38 +1,90 @@
-import { createWorker } from 'tesseract.js';
+import {createPrimaryTotalizer,boundedReaderTimeout,PRIMARY_INITIALIZATION_TIMEOUT_MS} from './totalizer-primary-client.js';
+import {analyzeTotalizerFrame,cancelTotalizerFrame} from './totalizer-frame-client.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
-import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync } from './totalizer-reader-client.js';
-import { OCR_ASSET_VERSION, ocrAsset } from './ocr-assets.js';
+import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
 import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
-import { readingWithVisibleDecimal, supportedTotalizerReading, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
+import { readingWithVisibleDecimal, supportedTotalizerReading, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
 
-let workerPromise;
-let detectionQueue=Promise.resolve();
-export function prepareTotalizer(){
-  // Keep the larger fallback available, but do not make every clear photo
-  // compete with its model/runtime download on a slow connection.
-  workerPromise ||= createWorker('ssd_int',1,{workerPath:ocrAsset('worker.min.js'),corePath:ocrAsset('core'),langPath:ocrAsset('lang'),cachePath:OCR_ASSET_VERSION,workerBlobURL:false})
-    .then(async worker=>{await worker.setParameters({tessedit_char_whitelist:'0123456789.',user_defined_dpi:'150'});return worker;})
-    .catch(error=>{workerPromise=undefined;throw error;});
-  return workerPromise;
+export const TOTALIZER_TIMEOUT_MS=15000;
+export const BACKGROUND_PRIMARY_TIMEOUT_MS=60000;
+let workerPromise,primarySession;
+const detectionQueue=[];
+let activeDetection;
+function resetPrimary(session,error){
+  if(!session)return;
+  if(primarySession===session){primarySession=undefined;workerPromise=undefined;}
+  session.terminate(error);
 }
-export function detectTotalizer(data){
-  const request=detectionQueue.catch(()=>{}).then(()=>recognizePhoto(data));
-  detectionQueue=request;return request;
+function acquirePrimary({initializationTimeoutMs,background=false}={}){
+  if(!primarySession||primarySession.closed){
+    const session=createPrimaryTotalizer({timeoutMs:boundedReaderTimeout(initializationTimeoutMs,PRIMARY_INITIALIZATION_TIMEOUT_MS)});
+    session.background=background;
+    primarySession=session;
+    workerPromise=session.ready.catch(error=>{resetPrimary(session,error);throw error;});
+  }
+  return {session:primarySession,ready:workerPromise};
+}
+export function prepareTotalizer({timeoutMs}={}){
+  try{return acquirePrimary({initializationTimeoutMs:boundedReaderTimeout(timeoutMs,BACKGROUND_PRIMARY_TIMEOUT_MS),background:true}).ready;}
+  catch(error){return Promise.reject(error);}
+}
+function runNextDetection(){
+  if(activeDetection)return;
+  const job=detectionQueue.shift();if(!job)return;
+  activeDetection=job;job.active=true;
+  Promise.resolve().then(async()=>{job.check();const value=await recognizePhoto(job.data,job);job.check();job.finish(null,value);}).catch(error=>job.finish(error));
+}
+export function detectTotalizer(data,options={}){
+  const timeoutMs=boundedReaderTimeout(options.timeoutMs,TOTALIZER_TIMEOUT_MS);
+  const job={data,options,active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs};
+  let cancel;
+  const cancellation=new Promise(resolve=>{cancel=resolve;});
+  job.wait=promise=>Promise.race([promise,cancellation.then(()=>{throw job.error;})]);
+  job.check=()=>{if(!job.canceled&&performance.now()>=job.deadline)job.expire();if(job.canceled)throw job.error;};
+  const request=new Promise((resolve,reject)=>{
+    let settled=false;
+    const finish=job.finish=(error,value)=>{
+      if(settled)return;settled=true;clearTimeout(timer);job.active=false;job.data=null;
+      if(activeDetection===job)activeDetection=undefined;
+      else{const index=detectionQueue.indexOf(job);if(index>=0)detectionQueue.splice(index,1);}
+      if(error)reject(error);else resolve(value);
+      queueMicrotask(runNextDetection);
+    };
+    job.expire=()=>{
+      if(settled)return;
+      job.canceled=true;job.error=Object.assign(new Error('The automatic reading took too long. The photo can still be reviewed.'),{reason:'recognition-timeout'});
+      // A queued expiry must not stop the photo that is currently running.
+      if(job.active){
+        // Let an explicitly/background-prepared engine finish downloading.
+        // Expired captures stop awaiting it and can never begin late inference.
+        if(!(job.primary?.background&&job.primary.initializing))resetPrimary(job.primary,job.error);
+        cancelTotalizerFrame();cancelAdvancedTotalizer();
+      }
+      cancel();
+      finish(job.error);
+    };
+    const timer=setTimeout(job.expire,timeoutMs);
+  });
+  // This promise is settled by the deadline even if an old worker never
+  // responds. The next photo can recover without awaiting that old task.
+  detectionQueue.push(job);runNextDetection();return request;
 }
 
-export async function detectTotalizerResult(data){
+export async function detectTotalizerResult(data,options){
   const started=performance.now();
   try{
-    const reading=await detectTotalizer(data);
+    const reading=await detectTotalizer(data,options);
     return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
-  }catch{
-    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason:'recognition-failed',completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
+  }catch(error){
+    const reason=['recognition-timeout','initialization-timeout','worker-failed','unsupported-browser'].includes(error.reason)?error.reason:'recognition-failed';
+    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
   }
 }
 
-async function recognizePhoto(data){
+async function recognizePhoto(data,job){
+  job.check();
   let image;
-  if(typeof data==='string'){image=new Image();image.src=data;await image.decode();}
+  if(typeof data==='string'){image=new Image();image.src=data;await job.wait(image.decode());job.check();}
   else{
     // Camera recognition uses a snapshot of the original pixels, before JPEG
     // compression can erase a narrow segment or turn a reflection into one.
@@ -42,16 +94,16 @@ async function recognizePhoto(data){
   const scale=Math.min(1,1280/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
-  const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data,gray=new Uint8Array(canvas.width*canvas.height);
-  for(let i=0;i<gray.length;i++)gray[i]=Math.round(.2126*pixels[i*4]+.7152*pixels[i*4+1]+.0722*pixels[i*4+2]);
-  const analysis=totalizerRegions(gray,canvas.width,canvas.height);
+  const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+  const {gray,analysis}=await job.wait(analyzeTotalizerFrame(pixels,canvas.width,canvas.height));
+  job.check();
   // Neither fallback can read a missing number row. Do not download a neural
   // runtime/model only to return an empty list of candidates.
   if(!analysis.regions.length)return null;
-  const ready=prepareTotalizer();
+  const primary=acquirePrimary(job.options);job.primary=primary.session;
   let worker;
   try{
-    worker=await ready;
+    worker=await job.wait(primary.ready);job.check();
     const readings=new Set(),evidence=new Map(),glyphs=[];
     let sensitiveMask,longDisplay=false;
     for(const primary of analysis.regions){
@@ -75,8 +127,8 @@ async function recognizePhoto(data){
           part.getContext('2d').putImageData(new ImageData(crop.rgba,crop.width,crop.height),0,0);
           const passes=[];
           for(const mode of ['7','13']){
-            await worker.setParameters({tessedit_pageseg_mode:mode});
-            const {data:result}=await worker.recognize(part,{}, {text:true,blocks:true});
+            job.check();await worker.setParameters({tessedit_pageseg_mode:mode});job.check();
+            const {data:result}=await worker.recognize(part,{}, {text:true,blocks:true});job.check();
             const symbols=result.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words.flatMap(w=>w.symbols))))||[];
             const leading=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
@@ -112,7 +164,7 @@ async function recognizePhoto(data){
     // physical cell fitting independently checks the shape and decimal layout.
     // Model-loading failure retains the previously verified reader's behavior.
     const readNeural=async()=>{
-      try{return await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+      try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);job.check();return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
     };
     let neural;
     if(value!==null){
@@ -121,8 +173,9 @@ async function recognizePhoto(data){
       if(fast!==null)return fast;
     }
     const grid=await readTotalizerGridAsync(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
+    job.check();
     if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04))return null;
     neural ||= await readNeural();
     return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
-  }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
+  }catch(error){if(!job.canceled&&error.reason!=='unsupported-browser')resetPrimary(primary.session,error);throw error;}
 }

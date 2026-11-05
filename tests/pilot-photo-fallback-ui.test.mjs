@@ -37,12 +37,12 @@ test('Unreadable photo offers automatic retry first and keeps manual entry as an
   await capturePumpCamera(page,card);
   assert.equal(await page.getByRole('button',{name:/^Pump 2 ·/}).isDisabled(),true,'Changing pumps must not discard an in-progress OCR result');
   allowUpload();
-  await card.getByText('Automatic reader failed to load. The photo is saved. Reconnect and retake to retry.',{exact:true}).waitFor({timeout:30000});
+  await card.getByText('Automatic reader is unavailable on this attempt. The photo is saved. Retry the reader or check the photo and enter the number.',{exact:true}).waitFor({timeout:30000});
   assert.equal(await card.locator('input[inputmode=decimal]').count(),0);
   await card.getByRole('button',{name:'Enter number manually',exact:true}).click();
   const input=card.locator('input[inputmode=decimal]');assert.equal(await input.getAttribute('readonly'),null);
   assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'error');
-  await card.getByText('Automatic reader failed to load. The photo is saved. Reconnect and retake to retry.',{exact:true}).waitFor();
+  await card.getByText('Automatic reader is unavailable on this attempt. The photo is saved. Retry the reader or check the photo and enter the number.',{exact:true}).waitFor();
   assert.equal(photoCount,1);assert.equal(await card.getByText(/Retake once more/).count(),0);
   await input.fill('9999');assert.equal(await card.getByRole('button',{name:'Yes, confirm reading'}).isEnabled(),false);
   await input.fill('10010');await card.getByRole('button',{name:'Yes, confirm reading'}).click();await card.getByText('✓ Complete',{exact:true}).waitFor();
