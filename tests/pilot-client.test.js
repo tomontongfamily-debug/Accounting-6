@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('an explicit retry sends the original photo request ID and exact body after an uncertain save',async()=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};
+ const {pilotPost}=await import('../src/pilot-client.js?explicit-photo-retry'),bodies=[];
+ const mutationId=crypto.randomUUID(),input={reportKey:'Barili__2026-11-05__shift-1',rowId:'nozzle',revision:3,data:'original-capture'};
+ globalThis.fetch=async(_url,options)=>{bodies.push(options.body);return{ok:bodies.length>2,status:bodies.length>2?200:503,json:async()=>bodies.length>2?{ok:true}:{ok:false,error:'The save could not be verified. Retry with the same request.'}};};
+ try{
+  await assert.rejects(pilotPost('/api/demo/photo',input,'',{mutationId}),e=>e.status===503);
+  assert.equal((await pilotPost('/api/demo/photo',input,'',{mutationId})).ok,true);
+  assert.equal(bodies.length,3);assert.equal(new Set(bodies).size,1);assert.equal(JSON.parse(bodies[0]).mutationId,mutationId);
+ }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('a failed station reconstruction is reported once and later actions can recover',async()=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};

@@ -38,8 +38,9 @@ test('Opening photos save automatic and reviewed manual readings from a phone an
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
   });
   const page=await ctx.newPage();page.on('pageerror',e=>errors.push(e.message));
-  await page.clock.install({time:new Date('2026-11-04T14:05:00Z')});
-  await page.goto('http://127.0.0.1:4367/cashier');
+  // Keep the historical browser clock fixed, independent of Node's mock date.
+  await page.clock.install();await page.clock.setFixedTime(Date.parse('2026-11-04T14:05:00Z'));
+  await page.goto('http://127.0.0.1:4367/pilot/cashier');
   await page.getByRole('heading',{name:'Choose a shift',exact:true}).waitFor();
   await page.locator('.cashier-opening-card').click();
   await page.getByRole('heading',{name:'Opening pump readings',exact:true}).waitFor();

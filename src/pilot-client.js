@@ -24,29 +24,32 @@ async function request(options,readOnly) {
         },REQUEST_TIMEOUT_MS);
       }),
     ]);
+  } catch(error){
+    // Network and invalid-body failures can happen after a mutation commits.
+    error.saveUncertain=!readOnly;throw error;
   } finally {clearTimeout(timer);}
 }
 
-export function pilotPost(route,input={},sessionToken='') {
+export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.randomUUID()}={}) {
   const cfg=window.__fueltechPilotConfig;
   const reportKey=input.report?`${input.report.branch}__${input.report.date}__${input.report.shiftId}`:input.reportKey;
   const key=reportKey?`${cfg?.mode}:${cfg?.start_date}:${reportKey}`:'';
   const snapshot=structuredClone(input);
   // Cash buttons and draft autosaves must observe each other's completed save.
   // Separate reports remain independent; failed requests do not stall the queue.
-  if(!key)return post(route,snapshot,sessionToken,key);
-  const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key));
+  if(!key)return post(route,snapshot,sessionToken,key,mutationId);
+  const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
   pendingReports.set(key,request);
   request.finally(()=>{if(pendingReports.get(key)===request)pendingReports.delete(key);}).catch(()=>{});
   return request;
 }
-async function post(route,input,sessionToken,key) {
+async function post(route,input,sessionToken,key,mutationId) {
   const cfg=window.__fueltechPilotConfig;
   if(!cfg||cfg.mode==='disabled') throw Error('The pilot is not enabled.');
   if(input.report) {
     input={...input,report:{...input.report,pilotRevision:Math.max(Number(input.report.pilotRevision||0),savedRevisions.get(key)||0)}};
   }
-  const envelope={route,input,mode:cfg.mode,startDate:cfg.start_date,mutationId:crypto.randomUUID()};
+  const envelope={route,input,mode:cfg.mode,startDate:cfg.start_date,mutationId};
   // The identical request ID is reused after an interrupted response.
   const options={method:'POST',headers:{'Content-Type':'application/json',...(sessionToken&&sessionToken!=='cookie'?{'x-fueltech-session':sessionToken}:{})},body:JSON.stringify(envelope)};
   let response,result;

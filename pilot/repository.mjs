@@ -8,7 +8,7 @@ import { accountingTiming, dateOffset, loadSources } from './integrations.mjs';
 import { initialState, ensureCurrentReports, reconcileSources } from './state.mjs';
 import { runAction } from './service.mjs';
 import { launchStatus } from './launch.mjs';
-import { backupImmutable } from './backup.mjs';
+import { persistPumpPhoto } from './photo-storage.mjs';
 import { posEnabled, refreshPosEvidence } from './pos-redemptions.mjs';
 import { loadState, statePatch } from './storage.mjs';
 
@@ -129,15 +129,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     reconcileSources(state,sources);
   }
   if(usesPos)await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
-  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:async(path,image)=>{
-    const uploaded=await db.storage.from(BUCKET).upload(path,image,{contentType:'image/jpeg',upsert:false});
-    if(uploaded.error) {
-      // An interrupted response may leave an immutable upload. Verify its bytes before reuse.
-      const existing=await db.storage.from(BUCKET).download(path);
-      if(existing.error||!Buffer.from(await existing.data.arrayBuffer()).equals(image)) throw fail('Photo could not be saved. Retake or retry.');
-    }
-    await backupImmutable('photos/'+path,image);
-  }});
+  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>persistPumpPhoto(db,path,image,context)});
   if(!loaded.data||outcome.changed||!isDeepStrictEqual(before,JSON.parse(JSON.stringify(outcome.state)))) {
     const persisted=JSON.parse(JSON.stringify(outcome.state));
     const saved=await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:statePatch(loaded.data?before:{},persisted)}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result});

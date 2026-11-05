@@ -23,13 +23,13 @@ function PumpSales({report,row}) {
     {sales.excessLoss?<p className="error" role="alert">Leak loss exceeds the metered liters. Check the loss entry; the pump reading is still saved.</p>:<p>Paid sales: <b>{sales.paidLiters.toFixed(2)} L</b> · <b>{php(sales.paidSales)}</b>{sales.lossLiters>0&&sales.paidLiters<0.000001?' — all metered liters are recorded as loss.':''}</p>}
   </div>;
 }
-export async function demoApi(path,body={}) {
-  const value=await pilotPost(`/api/demo/${path}`,body);
+export async function demoApi(path,body={},options) {
+  const value=await pilotPost(`/api/demo/${path}`,body,'',options);
   if (['deposit-submit','deposit-verify','settings'].includes(path)) window.dispatchEvent(new Event('fueltech-pilot-change'));
   return value;
 }
-export async function savePumpReading(report,row) {
-  return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0});
+export async function savePumpReading(report,row,options) {
+  return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0},options);
 }
 function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false}) {
   const phoneView=usePhoneView();
@@ -59,10 +59,10 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     if(busy || Number(row.readingRevision||0)===revision.current)return;
     revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setOcrResult(row.ocr_result);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
   },[row,busy]);
-  async function saveReading(next,savedPhoto) {
+  async function saveReading(next,savedPhoto,options) {
     // Photo upload already committed this report. Reuse that response to show
     // the saved evidence without another mutation or waiting for recognition.
-    const saved=await onConfirm({...next,readingRevision:revision.current},savedPhoto);
+    const saved=await onConfirm({...next,readingRevision:options?.readingRevision??revision.current},savedPhoto,options);
     revision.current=Number(saved.readingRevision||0);
     return saved;
   }
@@ -71,7 +71,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     : readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
   function processPhoto(data,recognitionImage=data) {
-    return resumeCapture({data,sourceRow:row,expectedRevision:revision.current},recognitionImage);
+    return resumeCapture({data,sourceRow:row,expectedRevision:revision.current,photoMutationId:crypto.randomUUID()},recognitionImage);
   }
   async function resumeCapture(capture,recognitionImage) {
     const run=++recognitionRun.current;
@@ -80,7 +80,6 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     setPendingPhoto(capture.data);setLiveReading(null);
     try {
       if(capture.data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
-      if(capture.expectedRevision!==revision.current)throw Error('This nozzle changed. Reload the saved shift before trying again.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
       const recognition=capture.recognition ||= detect(recognitionImage||capture.data);
@@ -89,7 +88,8 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       },()=>{});
       if(!capture.saved){
         await onPrepare?.();
-        capture.saved=await demoApi('photo',{reportKey:keyOf(report),rowId:row.id,data:capture.data,replaceReading:true,revision:capture.expectedRevision,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})});
+        capture.photoInput||={reportKey:keyOf(report),rowId:row.id,data:capture.data,replaceReading:true,revision:capture.expectedRevision,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})};
+        capture.saved=await demoApi('photo',capture.photoInput,{mutationId:capture.photoMutationId});
         capture.expectedRevision=Number(capture.saved.readingRevision);
         revision.current=capture.expectedRevision;
       }
@@ -105,15 +105,19 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       setUploading(false);setCaptureStage('reading');
       const {reading:value,attempt}=await recognition;
       if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
-      if(capture.expectedRevision!==revision.current)throw Error('This nozzle changed. Reload the saved shift before trying again.');
       setCaptureStage('reading-save');
-      await saveReading({...capture.sourceRow,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt});
+      // Freeze the exact input and ID across explicit retries. A lost response
+      // can already have committed; the server receipt returns that same save.
+      capture.readingInput||={...capture.sourceRow,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt};
+      capture.readingOptions||={mutationId:crypto.randomUUID(),readingRevision:capture.expectedRevision};
+      await saveReading(capture.readingInput,undefined,capture.readingOptions);
       if(value===null)setEditing(false);
     } catch(e) {
-      // This failure is raised before the station action executes, so retrying
-      // can reuse the exact capture/result without duplicating a saved photo.
-      retain=e.code==='STATION_RECORDS_UNAVAILABLE'||e.status===503&&e.message==='Unable to load verified station records.';
-      if(retain){setRetryCapture(capture);setError(capture.saved?'Photo saved, but the station server could not save the reading. Retry saving; no retake is needed.':'The station server could not save this photo. Your capture is kept on this screen. Retry saving when the connection recovers.');}
+      // Keep an interrupted upload even when its commit result is uncertain.
+      // Same-ID retries keep the receipt and original nozzle revision checks.
+      retain=e.status>=500||e.saveUncertain===true
+        ||e.status===409&&e.message==='Another device saved first. Refresh and retry.';
+      if(retain){setRetryCapture(capture);setError(capture.saved?'The station server could not verify the reading save. Your capture is kept on this screen. Retry saving; no retake is needed.':'The station server could not verify this photo save. Your capture is kept on this screen. Retry saving when the connection recovers.');}
       else setError(e.message);
     }finally{if(active.current&&recognitionRun.current===run){recognitionRun.current++;setBusy(false);setUploading(false);if(!retain)setPendingPhoto('');setLiveReading(null);}}
   }
@@ -242,7 +246,7 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
     return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:''};
   };
   const done=rows.filter(row=>readingComplete(photoRow(row))).length;
-  return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p>{!report.confirmed&&<ReaderPreparation/>}<div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={(next,savedPhoto)=>onReading(change,next,savedPhoto)}/>)}</div></div>;
+  return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p>{!report.confirmed&&<ReaderPreparation/>}<div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={(next,savedPhoto,options)=>onReading(change,next,savedPhoto,options)}/>)}</div></div>;
 }
 export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
