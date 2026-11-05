@@ -37,6 +37,40 @@ test('retained checkpoints restore the current state and expired client cursors 
 });
 
 const sql=name=>fs.readFileSync(new URL('../supabase/migrations/'+name,import.meta.url),'utf8');
+test('compact reconstruction preserves exact records, audit pages and permissions without copying nested maps',async()=>{
+ const pg=await prepared();
+ try{
+  const {state}=fixture();
+  state.audit=Array.from({length:140},(_,i)=>({id:randomUUID(),order:i,action:'saved'}));
+  state.photos={'/photo/one':{reportKey:'original',path:'one.jpg'},'/photo/two':{reportKey:'original',path:'two.jpg'}};
+  state.posRedemptionSync={status:'verified',rows:[{id:'receipt',amount:77.25}],points:[{id:'point',points:12}]};
+  await pg.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
+  await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await pg.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
+  await pg.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
+  const definition=(await pg.query("select pg_get_functiondef('public.fueltech_pilot_load_compact(text,integer,bigint)'::regprocedure) source")).rows[0].source;
+  await pg.exec(definition.replace('public.fueltech_pilot_load_compact(', 'pg_temp.compact_prior('));
+  const before=(await pg.query("select data from fueltech_pilot_state where mode='shadow'")).rows[0].data;
+  await pg.exec(sql('20261105053059_avoid_repeated_compact_json_copying.sql'));
+  await pg.exec(sql('20261105054014_bound_accounting_report_read_timeout.sql'));
+  const configs=(await pg.query("select proconfig from pg_proc where oid in ('public.fueltech_pilot_load_compact(text,integer,bigint)'::regprocedure,'public.fueltech_pilot_load_v2(text,integer,bigint)'::regprocedure)")).rows;
+  assert.equal(configs.length,2);for(const {proconfig} of configs)assert.ok(proconfig.includes('statement_timeout=15s'));
+  const load=(name,limit=0,cursor=null)=>pg.query(`select ${name}('shadow',$1,$2) v`,[limit,cursor]).then(r=>r.rows[0].v);
+  for(const shape of ['object','null','missing']){
+   await pg.query("update fueltech_pilot_documents set data=to_jsonb($1::text) where mode='shadow' and section='shape' and item_key='pos'",[shape]);
+   for(const [limit,cursor] of [[0,null],[100,null],[100,41],[200,null],[-1,null],[100,0]]){
+    assert.deepEqual(await load('fueltech_pilot_load_compact',limit,cursor),await load('pg_temp.compact_prior',limit,cursor),JSON.stringify({shape,limit,cursor}));
+   }
+  }
+  await pg.query("update fueltech_pilot_documents set data='\"object\"' where mode='shadow' and section='shape' and item_key='pos'");
+  assert.deepEqual((await pg.query("select data from fueltech_pilot_state where mode='shadow'")).rows[0].data,before);
+  assert.equal((await pg.query("select fueltech_pilot_load_compact('missing',0,null) v")).rows[0].v,null);
+  await pg.exec('set role service_role');assert.equal((await load('fueltech_pilot_load_compact')).revision,7);await pg.exec('reset role');
+  for(const role of ['anon','authenticated']){
+   await pg.exec('set role '+role);await assert.rejects(load('fueltech_pilot_load_compact'),/permission denied/);await pg.exec('reset role');
+  }
+ }finally{await pg.close();}
+});
 async function prepared(){
  const db=new PGlite();
  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
