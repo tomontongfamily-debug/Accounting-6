@@ -25,9 +25,11 @@ export function pilotDatabase() {
   }
   return sharedDatabase;
 }
-export async function configuration(db=pilotDatabase()) {
-  const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date,storage_version').eq('branch','Liloan').single();
-  if(error) throw fail('Pilot preparation is not installed. The existing app remains available.');
+export async function configuration(db=pilotDatabase(),{signal}={}) {
+  let query=db.from('fueltech_pilot_config').select('mode,start_date,storage_version').eq('branch','Liloan').single();
+  if(signal)query=query.abortSignal(signal);
+  const {data,error}=await query;
+  if(error) throw Object.assign(fail('Pilot preparation is not installed. The existing app remains available.'),{code:error.code});
   return withStationRollout(data);
 }
 // The all-stations Admin page uses the regular report endpoint. Liloan decisions

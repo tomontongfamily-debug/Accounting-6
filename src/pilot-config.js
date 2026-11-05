@@ -8,7 +8,9 @@ export async function loadPilotConfiguration({signal,timeoutMs=CONFIG_TIMEOUT_MS
   try {
     return await Promise.race([
       (async()=>{
-        const response=await fetch('/api/pilot/config',{cache:'no-store',signal:controller.signal});
+        // The endpoint forbids browser storage itself; allow its short shared
+        // CDN cache to absorb simultaneous checks from station screens.
+        const response=await fetch('/api/pilot/config',{signal:controller.signal});
         const value=await response.json();
         if(!response.ok||!['live','shadow','disabled'].includes(value?.mode))throw new Error('Unable to check the station connection. Please retry.');
         return value;
