@@ -78,3 +78,9 @@ Output Directory: dist
 - The big summary totals all branches within the selected start and end dates.
 - No cashier or manager changes were made.
 - Admin View, Bank Verification, and Daily Station Summary remain unchanged.
+
+### Manager access under database load
+
+The station repository shares one server-only Supabase client and coalesces concurrent reconstructions of the same committed revision. Every request checks `fueltech_pilot_heads.revision` before reuse; mutations receive independent cloned snapshots and still use the existing atomic revision and idempotent receipt checks. Cache entries are bounded and expire after 15 seconds. Audit cursors, mode and complete POS evidence use separate entries.
+
+Migration `20261105021047_reduce_pilot_reconstruction_disk_io.sql` removes large temporary materialization/sort files from full POS reconstruction. It compares the complete reconstructed history before and after the function change in the same writer-locked transaction, and changes no reports, photos, audit entries or financial amounts. On the affected live dataset, EXPLAIN changed from 876 temporary blocks written and 408 read to zero for the full load. The migration and application cache address the repeated load behind manager timeouts on the shared Micro database.

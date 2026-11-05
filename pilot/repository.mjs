@@ -14,10 +14,16 @@ import { loadState, statePatch } from './storage.mjs';
 
 const fail=(message,status=503)=>Object.assign(new Error(message),{status});
 export const BUCKET='fueltech-pilot-photos';
+let sharedDatabase, sharedDatabaseUrl, sharedDatabaseKey;
 export function pilotDatabase() {
   const key=process.env.SUPABASE_SERVICE_ROLE_KEY||process.env.SUPABASE_SECRET_KEY;
   if(!key) throw fail('The Accounting server connection has not been configured.');
-  return createClient(process.env.SUPABASE_URL||'https://chqinknijqtixeenhtvu.supabase.co',key,{auth:{persistSession:false,autoRefreshToken:false}});
+  const url=process.env.SUPABASE_URL||'https://chqinknijqtixeenhtvu.supabase.co';
+  if(!sharedDatabase||url!==sharedDatabaseUrl||key!==sharedDatabaseKey){
+    sharedDatabase=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
+    sharedDatabaseUrl=url;sharedDatabaseKey=key;
+  }
+  return sharedDatabase;
 }
 export async function configuration(db=pilotDatabase()) {
   const {data,error}=await db.from('fueltech_pilot_config').select('mode,start_date,storage_version').eq('branch','Liloan').single();
@@ -73,7 +79,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     return receipt.data.result;
   }
   const incremental=config.storage_version===2;
-  const loaded=incremental?{data:await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null})}:await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
+  const loaded=incremental?{data:await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,cache:db===sharedDatabase})}:await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
   if(loaded.error) throw fail('Unable to load the pilot records.');
   let storeRevision=loaded.data?.revision||0;
   let state=loaded.data?.data;
@@ -84,7 +90,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const needsEvidence=requiresFresh||(enabled&&(!sync.attemptedAt||Date.now()-Date.parse(sync.attemptedAt)>60000))
       ||enabled!==(sync.status!=='disabled')||missingShift
       ||(enabled&&Object.values(state.reports).some(r=>r.branch==='Liloan'&&!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic));
-    if(needsEvidence){loaded.data=await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,fullPos:true});state=loaded.data?.data;storeRevision=loaded.data?.revision||0;}
+    if(needsEvidence){loaded.data=await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,fullPos:true,cache:db===sharedDatabase});state=loaded.data?.data;storeRevision=loaded.data?.revision||0;}
   }
   if(state&&(state.mode!==config.mode||state.startDate!==config.start_date)) throw fail('Cutover differs from saved pilot records. Restore or review configuration before continuing.');
   if(!state) {
