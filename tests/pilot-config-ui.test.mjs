@@ -28,14 +28,24 @@ test('configuration failures allow retry and preserve entered information on pho
       configMode='live';await page.getByRole('button',{name:'Retry connection',exact:true}).click();
       const pin=page.getByRole('textbox',{name:'Six-digit branch PIN',exact:true});
       await pin.fill('123');const mountedAuthCalls=authCalls;
+      const healthyCalls=configCalls;
+      await page.evaluate(()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'));document.dispatchEvent(new Event('visibilitychange'));});
+      assert.equal(configCalls,healthyCalls,'Focus/online bursts must not duplicate a recent successful check');
       configMode='fail';
       await page.clock.runFor(15000);
+      assert.equal(configCalls,healthyCalls,'Healthy screens no longer poll every 15 seconds');
+      await page.clock.runFor(45000);
       await expect(page.getByRole('status')).toContainText('Your current screen remains open');
       await expect(pin).toHaveValue('123');assert.equal(authCalls,mountedAuthCalls);
+      const failedCalls=configCalls;
+      await page.clock.runFor(15000);
+      await expect.poll(()=>configCalls).toBe(failedCalls+1);
+      await page.clock.runFor(15000);
+      assert.equal(configCalls,failedCalls+1,'A repeated failure backs off to 30 seconds');
       configMode='live';await page.getByRole('button',{name:'Retry connection',exact:true}).click();
       await expect(page.getByRole('status')).toHaveCount(0);await expect(pin).toHaveValue('123');
       const completedCalls=configCalls;
-      configMode='hang';await page.clock.runFor(15000);
+      configMode='hang';await page.clock.runFor(60000);
       await expect.poll(()=>configCalls).toBe(completedCalls+1);
       const pendingCalls=configCalls;
       await page.evaluate(()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'));});
@@ -46,7 +56,7 @@ test('configuration failures allow retry and preserve entered information on pho
       configMode='live';await page.getByRole('button',{name:'Retry connection',exact:true}).click();
       await expect(page.getByRole('status')).toHaveCount(0);await expect(pin).toHaveValue('123');
       // A successful disabling response must still close the app.
-      configMode='disabled';await page.clock.runFor(15000);
+      configMode='disabled';await page.clock.runFor(60000);
       await expect(page.getByText('The pilot has not been enabled yet.',{exact:false})).toBeVisible();
       await expect(pin).toHaveCount(0);assert.deepEqual(errors,[]);
       await context.close();

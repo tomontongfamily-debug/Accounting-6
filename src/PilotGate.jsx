@@ -5,17 +5,21 @@ export default function PilotGate() {
   const [config,setConfig]=useState(null),[error,setError]=useState('');
   const [checking,setChecking]=useState(false),checkRef=useRef(null);
   useEffect(()=>{
-    let active=true,pending=false,controller,timer;
+    let active=true,pending=false,controller,timer,nextCheckAt=0,retryDelay=15000;
     const check=async(background=false)=>{
       if(pending)return;
       clearTimeout(timer);
-      if(background&&document.visibilityState==='hidden'){timer=setTimeout(reconnect,15000);return;}
+      if(background&&document.visibilityState==='hidden')return;
+      if(background&&Date.now()<nextCheckAt){timer=setTimeout(reconnect,nextCheckAt-Date.now());return;}
       pending=true;controller=new AbortController();setChecking(true);
+      let delay;
       try {
         const value=await loadPilotConfiguration({signal:controller.signal});
+        delay=value.mode==='live'&&value.launch&&!value.launch.ready?15000:60000;
+        retryDelay=15000;
         if(active){window.__fueltechPilotConfig=value;setConfig(value);setError('');}
-      }catch(e){if(active)setError(e.message);}
-      finally{pending=false;if(active){setChecking(false);timer=setTimeout(reconnect,15000);}}
+      }catch(e){delay=retryDelay;retryDelay=Math.min(retryDelay*2,60000);if(active)setError(e.message);}
+      finally{pending=false;if(active){setChecking(false);nextCheckAt=Date.now()+delay;if(document.visibilityState!=='hidden')timer=setTimeout(reconnect,delay);}}
     };
     const reconnect=()=>{void check(true);};
     checkRef.current=check;
