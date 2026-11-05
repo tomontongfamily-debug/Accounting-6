@@ -1,8 +1,11 @@
 const savedRevisions=new Map();
 const pendingReports=new Map();
 const REQUEST_TIMEOUT_MS=30000;
+// Match the read-only actions in pilot/repository.mjs. Unknown actions remain
+// conservative: a timeout can leave their save result uncertain.
+const READ_ONLY_ROUTES=new Set(['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health']);
 
-async function request(options) {
+async function request(options,readOnly) {
   const controller=new AbortController();
   let timer;
   try {
@@ -15,7 +18,8 @@ async function request(options) {
       })(),
       new Promise((_,reject)=>{
         timer=setTimeout(()=>{
-          reject(Object.assign(new Error('The station server took too long to respond. Your save may have completed. Refresh the saved shift before trying again.'),{code:'PILOT_REQUEST_TIMEOUT',status:408,saveUncertain:true}));
+          const message=readOnly?'The station server took too long to load the saved information. Please retry loading.':'The station server took too long to respond. Your save may have completed. Refresh the saved shift before trying again.';
+          reject(Object.assign(new Error(message),{code:'PILOT_REQUEST_TIMEOUT',status:408,saveUncertain:!readOnly}));
           controller.abort();
         },REQUEST_TIMEOUT_MS);
       }),
@@ -47,7 +51,7 @@ async function post(route,input,sessionToken,key) {
   const options={method:'POST',headers:{'Content-Type':'application/json',...(sessionToken&&sessionToken!=='cookie'?{'x-fueltech-session':sessionToken}:{})},body:JSON.stringify(envelope)};
   let response,result;
   for(let attempt=0;attempt<2;attempt++) {
-    try {({response,result}=await request(options));}
+    try {({response,result}=await request(options,READ_ONLY_ROUTES.has(route)));}
     catch(error){
       // A timed-out mutation may still be running. Reload authoritative state
       // before another attempt instead of launching a second expensive check.

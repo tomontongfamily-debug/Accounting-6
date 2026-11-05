@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import globals from 'globals';
 export default [
+  {...js.configs.recommended,files:['src/pilot-config.js'],languageOptions:{globals:{...globals.browser}}},
   {...js.configs.recommended,files:['src/ocr-downloads.js','src/ocr-assets.js'],languageOptions:{globals:{...globals.browser}}},
   { ...js.configs.recommended, files:['src/pos-redemptions.js','src/pos-redemptions.jsx'], languageOptions:{globals:{...globals.browser},parserOptions:{ecmaFeatures:{jsx:true}}}, rules:{'no-unused-vars':['error',{varsIgnorePattern:'^[A-Z]',argsIgnorePattern:'^_'}]} },
   { ...js.configs.recommended, files:['src/correction-decision-actions.jsx'], languageOptions:{globals:{...globals.browser},parserOptions:{ecmaFeatures:{jsx:true}}}, rules:{'no-unused-vars':['error',{varsIgnorePattern:'^[A-Z]',argsIgnorePattern:'^_'}]} },

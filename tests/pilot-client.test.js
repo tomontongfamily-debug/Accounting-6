@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('read-only timeouts offer a loading retry without claiming an uncertain save',async t=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};
+ t.mock.timers.enable({apis:['setTimeout']});
+ const {pilotPost}=await import('../src/pilot-client.js?read-only-timeouts');
+ let calls=0;
+ globalThis.fetch=async()=>{calls++;return new Promise(()=>{});};
+ try{
+  for(const route of ['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health']){
+   const rejected=assert.rejects(pilotPost(route),error=>error.code==='PILOT_REQUEST_TIMEOUT'&&error.saveUncertain===false&&/retry loading/i.test(error.message)&&!/save may have completed/i.test(error.message));
+   await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(30000);await rejected;
+  }
+  assert.equal(calls,8);
+ }finally{t.mock.timers.reset();globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('a stalled request releases the cash queue and requires refreshing the saved result',{timeout:1000},async t=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
