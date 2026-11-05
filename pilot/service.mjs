@@ -448,7 +448,7 @@ function validatePriceReadingOrder(report,change) {
         r.cashReviewState='';r.recountRequired=false;
         storeReport(r,session,change?'price-change-photo-saved':'pump-reading-saved');
       }
-      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id,photo_path:photoPath,previousPhoto,previousOcr,...(change?{changeId:change.id}: {})});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision}: {})});
+      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id,photo_path:photoPath,previousPhoto,previousOcr,...(change?{changeId:change.id}: {})});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision,report:exposeReport(database.reports[input.reportKey],session)}: {})});
     }
     if(route==='/api/demo/issue') {
       requireRole(session,'Cashier');const r=candidate(input.report,session);

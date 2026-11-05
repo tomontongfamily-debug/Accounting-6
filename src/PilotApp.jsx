@@ -3577,10 +3577,10 @@ export default function App() {
     setSyncMessage('Latest saved report loaded. A recovery copy of the previous local draft is kept on this device. Review the report before submitting.');
   }
 
-  async function updatePumpReading(nextRow) {
+  async function updatePumpReading(nextRow,savedPhoto) {
     const current = latestActiveReportForEdit();
     pumpMutationVersionRef.current += 1;
-    const saved = await savePumpReading(current,nextRow);
+    const saved = savedPhoto || await savePumpReading(current,nextRow);
     pumpMutationVersionRef.current += 1;
     const savedRow = saved.report.pumpRows.find(row=>row.id===nextRow.id);
     const key = reportKey(current.branch,current.date,current.shiftId);
@@ -3697,12 +3697,12 @@ export default function App() {
     await pendingSaveRef.current.catch(()=>{});
   }
 
-  async function patchMidShiftPriceReading(change,row) {
+  async function patchMidShiftPriceReading(change,row,savedPhoto) {
     await prepareMidShiftPhotos();
     const current=latestActiveReportForEdit();
     pumpMutationVersionRef.current += 1;
     let saved;
-    try { saved=await demoApi('midshift-reading',{reportKey:reportKey(current.branch,current.date,current.shiftId),changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,row,revision:row.readingRevision||0}); }
+    try { saved=savedPhoto||await demoApi('midshift-reading',{reportKey:reportKey(current.branch,current.date,current.shiftId),changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,row,revision:row.readingRevision||0}); }
     finally { pumpMutationVersionRef.current += 1; }
     acceptDemoReport(saved.report);
     const updated=saved.report.midShiftPriceChanges.find(item=>item.id===change.id);
