@@ -53,3 +53,23 @@ test('automatic preparation respects slow connections and data saving',async()=>
  assert.equal(can({effectiveType:'3g',downlink:10}),false);
  assert.equal(can(null),false);
 });
+
+for(const blocked of ['fetch','body','storage'])test(`stalled ${blocked} preparation is bounded and the next attempt recovers`,async()=>{
+ const before={fetch:globalThis.fetch,caches:globalThis.caches};let stalled=true;
+ globalThis.caches={open:async()=>{if(blocked==='storage'&&stalled)return new Promise(()=>{});return undefined;}};
+ globalThis.fetch=async url=>{
+  const key=[...raw.keys()].find(file=>url.endsWith('/'+file));
+  if(stalled&&key.endsWith('.wasm')){
+   if(blocked==='fetch')return new Promise(()=>{});
+   if(blocked==='body')return new Response(new ReadableStream({start(){}}));
+  }
+  return new Response(raw.get(key));
+ };
+ try{
+  const reader=await import(`../src/ocr-downloads.js?fixture=${++moduleId}`);
+  await assert.rejects(reader.prepareReaderFiles({timeoutMs:50}),/timed out/);
+  assert.equal(reader.readerPreparation().status,'error');
+  stalled=false;await reader.prepareReaderFiles({timeoutMs:5000});
+  assert.equal(reader.readerPreparation().status,'ready');
+ }finally{globalThis.fetch=before.fetch;globalThis.caches=before.caches;}
+});

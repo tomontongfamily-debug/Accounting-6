@@ -62,7 +62,7 @@ async function allRows(query) {
     rows.push(...data);if(data.length<1000)return rows;
   }
 }
-export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,attempt=0}={}) {
+export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,backupPhoto,attempt=0}={}) {
   if(!['Admin','Approver','Cashier','Manager'].includes(session.role)) throw fail('Invalid station role.',403);
   const config=await configuration(db);
   if(['Cashier','Manager'].includes(session.role)&&!configuredStations(config).includes(session.branch)) throw fail('This station is not enabled.',403);
@@ -71,10 +71,14 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   if(envelope.mode!==config.mode||envelope.startDate!==config.start_date) throw fail('Pilot configuration changed. Reload the page.',409);
   const {route,input={},mutationId}=envelope;
   const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
+  // A pump photo/reading changes physical evidence, not payment, voucher or
+  // POS records. Keep these actions independent of unrelated source imports;
+  // cash checks and submission still verify the current financial sources.
+  const pumpEvidenceOnly=['/api/demo/photo','/api/demo/pump-reading','/api/demo/midshift-reading','/api/demo/pump-report'].includes(route);
   // Only Liloan imports POS redemptions. A different station must not wait for
   // its full evidence/history import just to load, photograph or save a shift.
   // Admin and Approver still need the complete, current all-station view.
-  const usesPos=['Admin','Approver'].includes(session.role)||session.branch==='Liloan';
+  const usesPos=(!pumpEvidenceOnly||forceSources)&&(['Admin','Approver'].includes(session.role)||session.branch==='Liloan');
   const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
@@ -120,7 +124,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   }
   prepareStationRollout(state,config,seedPrices);
   ensureCurrentReports(state);
-  if(forceSources||requiresFresh||!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000) {
+  if(forceSources||requiresFresh||(!pumpEvidenceOnly&&(!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000))) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
       cvClient=createClient(process.env.FUELTECH_CV_URL,process.env.FUELTECH_CV_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
@@ -129,7 +133,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     reconcileSources(state,sources);
   }
   if(usesPos)await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
-  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>persistPumpPhoto(db,path,image,context)});
+  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>persistPumpPhoto(db,path,image,context,backupPhoto)});
   if(!loaded.data||outcome.changed||!isDeepStrictEqual(before,JSON.parse(JSON.stringify(outcome.state)))) {
     const persisted=JSON.parse(JSON.stringify(outcome.state));
     const saved=await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:statePatch(loaded.data?before:{},persisted)}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result});
@@ -138,7 +142,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const conflict=['PT409','40001'].includes(saved.error?.code);
     if(conflict&&attempt<2) {
       await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
-      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,attempt:attempt+1});
+      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1});
     }
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
     if(saved.error) throw fail(conflict?'Another device saved first. Refresh and retry.':'The save could not be verified. Retry with the same request.',conflict?409:503);

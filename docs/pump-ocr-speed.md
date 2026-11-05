@@ -1,7 +1,48 @@
 # Pump photo recognition speed
 
-The `lcd-fast-consensus-5` reader reduces waiting while preserving the previous
+The `lcd-phone-bounded-6` reader reduces waiting while preserving the previous
 reader's acceptance and confirmation rules. It does not rewrite saved readings.
+
+## Minute-long waits on phones
+
+The earlier computer benchmark measured recognition only. It did not establish
+the managers' capture-to-saved-reading latency. Investigation found:
+
+- Primary worker startup and jobs could hang indefinitely and hold every later
+  photo in the serial recognition queue. A vendor worker crash after startup
+  did not reject outstanding jobs.
+- Loading 22.7 MB of public fallback files had no elapsed deadline. On a slow
+  connection that wait occurred before the worker's initialization timeout.
+- Photo/reading saves could refresh unrelated financial sources across all six
+  stations when the source snapshot was over one minute old.
+- A slow background pump-report poll occupied the same queue as photo writes.
+- Recent saved reports included old reader versions, so publishing a build did
+  not establish that every manager's already-open page was using it.
+
+Evidence-only actions now retain committed financial summaries and skip global
+source/POS imports. Cash checks, report submission and explicit source refreshes
+retain their verification. Primary photo storage and independent immutable backup
+verification still complete before the photo commit. Pump polls wait existing
+writes but cannot block later photo writes or confirmations.
+
+Recognition has a 15-second deadline including queue wait. A stalled attempt
+returns an error/retry outcome, never an invented number. Owned worker handles
+allow termination and recovery; expired jobs cannot resume late inference or
+overwrite a later capture. Background preparation has a separate finite budget
+so slow first-time downloads can finish without forcing each photo to wait for
+them. Public fallback-file preparation is bounded at 90 seconds.
+
+Browsers without working live camera access offer native camera capture. The
+fallback avoids createImageBitmap and still preserves the original confirmation
+and photo revision checks. A failed automatic attempt can retry the saved capture
+without uploading a replacement. The UI identifies photo saving separately from
+recognition and stores bounded stage durations for later diagnosis.
+
+Chromium and WebKit desktop-engine tests exercise these paths with a phone-sized
+viewport, unavailable camera APIs and blocked persistent storage. These tests do
+not reproduce physical phone CPU, camera or mobile-network performance. Firefox
+could not start on the test host because of a Windows runtime assembly error;
+Firefox phone compatibility remains unverified.
 
 ## Changes
 

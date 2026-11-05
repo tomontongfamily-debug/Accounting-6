@@ -74,6 +74,13 @@ for(const failedReader of [false,true])test(`photos save and pumps remain availa
   if(failedReader){
    await expect(secondCard.getByRole('status')).toContainText('The photo is saved.');
    await expect(secondCard.getByRole('button',{name:'Enter number manually',exact:true})).toBeEnabled();
+   const savedPath=savedSecond.photo_path;
+   await secondCard.getByRole('button',{name:'Retry automatic reading',exact:true}).click();
+   await expect.poll(()=>page.evaluate(()=>globalThis.finishOcr.length)).toBe(3);
+   await page.evaluate(value=>globalThis.finishOcr[2](value),second.opening+11);
+   await expect(secondCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+   assert.equal(state.reports[key].pumpRows.find(row=>row.id===second.id).photo_path,savedPath,'Retrying OCR must reuse the saved photo');
+   assert.equal(uploads.size,2);
   }else await expect(secondCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:new RegExp(`^${first.pump} ·`)}).click();
   await expect(firstCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
@@ -82,7 +89,7 @@ for(const failedReader of [false,true])test(`photos save and pumps remain availa
   assert.equal(state.reports[key].pumpRows[0].closing,first.opening+10);
   assert.equal(uploads.size,2);
   assert.equal(writes.filter(route=>route==='/api/demo/photo').length,2);
-  assert.equal(writes.filter(route=>route==='/api/demo/pump-reading').length,3);
+  assert.equal(writes.filter(route=>route==='/api/demo/pump-reading').length,failedReader?4:3);
   assert.equal(state.reports[key].confirmed,false);
   assert.deepEqual(errors,[]);
  }finally{await browser.close();await server.close();}
