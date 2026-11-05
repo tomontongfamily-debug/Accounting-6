@@ -11,7 +11,7 @@ import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
 import { validateFuelLeakLosses } from '../src/fuel-leak-loss.js';
-import {tankDeliveryError,sameTankDelivery,newTankDelivery} from '../src/tank-deliveries.js';
+import {tankDeliveryError,sameTankDelivery,newTankDelivery,newTankDeliveryLoad,tankDeliveryLoadError,deliveryLoadEntries} from '../src/tank-deliveries.js';
 import { refreshPosReport } from './pos-redemptions.mjs';
 import { SELLING_PRODUCTS, carryMidShiftPrices, confirmedDailyPricePatch, syncUnsubmittedPrices } from './prices.mjs';
 const stamp=()=>new Date().toISOString();
@@ -219,15 +219,18 @@ function validatePriceReadingOrder(report,change) {
       const old=database.reports[input.reportKey];if(!old)reject('Open the saved shift before recording a delivery.');
       branchAccess(session,old.branch);assertCorrectionWindow(old);
       if(old.confirmed||old.baselineReport||old.baselineMissing||old.date<stationStartDate(database,old.branch))reject('This shift is locked. Open the current shift to record a delivery.',423);
-      const delivery=newTankDelivery(input.delivery||{},input.delivery?.id),issue=tankDeliveryError(delivery);if(issue)reject(issue);
+      const raw=input.delivery||{},isLoad=Object.hasOwn(raw,'items');
+      const delivery=isLoad?newTankDeliveryLoad(raw,raw.id):newTankDelivery(raw,raw.id);
+      const issue=isLoad?tankDeliveryLoadError(delivery):tankDeliveryError(delivery);if(issue)reject(issue);
+      const entries=isLoad?deliveryLoadEntries(delivery):[delivery];
       const previousNonReadingRevision=Number(old.pilotLastNonReadingRevision??old.pilotRevision??0);
-      const existing=(old.deliveries||[]).find(d=>d.id===delivery.id);
-      if(existing){
-        if(['driverName','product','liters','time'].some(k=>String(existing[k])!==String(delivery[k])))reject('This saved delivery changed. Refresh before trying again.',409);
+      const existing=(old.deliveries||[]).filter(d=>(d.deliveryId||d.id)===delivery.id);
+      if(existing.length){
+        if(existing.length!==entries.length||entries.some(entry=>!existing.some(saved=>saved.id===entry.id&&['driverName','product','liters','time'].every(k=>String(saved[k])===String(entry[k])))))reject('This saved delivery changed. Refresh before trying again.',409);
         return send({ok:true,alreadyRecorded:true,report:exposeReport(old,session),previousNonReadingRevision});
       }
-      if(Object.values(database.reports).some(other=>other.branch===old.branch&&(other.deliveries||[]).some(d=>sameTankDelivery(d,delivery,{sameDate:other.date===old.date}))))reject('This delivery is already recorded. Check the saved deliveries before adding it again.',409);
-      const r={...old,deliveries:[...(old.deliveries||[]),delivery]};
+      if(Object.values(database.reports).some(other=>other.branch===old.branch&&(other.deliveries||[]).some(d=>entries.some(entry=>sameTankDelivery(d,entry,{sameDate:other.date===old.date})))))reject('This delivery is already recorded. Check the saved deliveries before adding it again.',409);
+      const r={...old,deliveries:[...(old.deliveries||[]),...entries]};
       r.tankRows=old.tankRows.map(row=>({...row,delivery:r.deliveries.filter(d=>d.product===row.product).reduce((sum,d)=>sum+Number(d.liters),0)}));
       const saved=storeReport(r,session,'tank-delivery-saved',{delivery});
       return send({...saved,report:exposeReport(saved.report,session),previousNonReadingRevision});

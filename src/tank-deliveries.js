@@ -1,4 +1,5 @@
-const products=['Premium','Regular','Diesel'];
+export const DELIVERY_PRODUCTS=['Regular','Diesel','Premium'];
+const products=DELIVERY_PRODUCTS;
 const text=value=>String(value||'').trim().replace(/\s+/g,' ');
 export function tankDeliveryError(delivery){
   if(!products.includes(delivery.product))return 'Choose the fuel delivered.';
@@ -19,6 +20,34 @@ export function sameTankDelivery(a,b,{sameDate=true}={}){
 }
 export function newTankDelivery(draft,id){
   return {id,driverName:text(draft.driverName),product:draft.product,liters:['string','number'].includes(typeof draft.liters)?Number(draft.liters):NaN,time:draft.time,reference:''};
+}
+export function newTankDeliveryLoad(draft,id){
+  const items=Object.hasOwn(draft,'items')?(Array.isArray(draft.items)?draft.items:[]):
+    products.filter(product=>text(draft.litersByProduct?.[product])!==''&&Number(draft.litersByProduct[product])!==0).map(product=>({product,liters:draft.litersByProduct[product]}));
+  return {id,driverName:text(draft.driverName),time:draft.time,items:items.map(item=>{
+    const row=newTankDelivery(item||{},id);return {product:row.product,liters:row.liters};
+  })};
+}
+export function tankDeliveryLoadError(load){
+  if(!load.id||String(load.id).length>60)return 'Refresh the delivery form and try again.';
+  if(!text(load.driverName)||text(load.driverName).length>80)return 'Enter the driver name (up to 80 characters).';
+  if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(load.time||''))return 'Choose the delivery time.';
+  if(!Array.isArray(load.items)||!load.items.length)return 'Enter liters for at least one fuel. Leave the other fuels blank.';
+  if(load.items.length>products.length||new Set(load.items.map(item=>item.product)).size!==load.items.length)return 'Enter each fuel only once in this delivery.';
+  for(const item of load.items){const issue=tankDeliveryError({...load,...item});if(issue)return issue;}
+  return '';
+}
+export function deliveryLoadEntries(load){
+  return load.items.map(item=>({...newTankDelivery({...load,...item},`${load.id}:${item.product}`),deliveryId:load.id}));
+}
+export function groupTankDeliveries(rows){
+  const groups=new Map();
+  for(const [index,row] of (rows||[]).entries()){
+    const id=row.deliveryId||row.id||`legacy-${index}`;
+    if(!groups.has(id))groups.set(id,{id,driverName:row.driverName,time:row.time,reference:row.reference,items:[]});
+    groups.get(id).items.push({product:row.product,liters:row.liters});
+  }
+  return [...groups.values()];
 }
 export function mergeDeliverySave(local,result){
   const saved=result.report;
