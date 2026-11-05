@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('a failed station reconstruction is reported once and later actions can recover',async()=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};
+ const {pilotPost}=await import('../src/pilot-client.js?station-records-failure');let calls=0;
+ globalThis.fetch=async()=>{calls++;return {ok:calls>1,status:calls>1?200:503,json:async()=>calls>1?{ok:true}:{ok:false,code:'STATION_RECORDS_UNAVAILABLE',error:'Unable to load verified station records.'}};};
+ try{
+  await assert.rejects(pilotPost('/api/demo/photo',{reportKey:'Moalboal__2026-11-05__shift-2'}),error=>error.code==='STATION_RECORDS_UNAVAILABLE');
+  assert.equal(calls,1,'Do not immediately double an expensive failed reconstruction');
+  assert.equal((await pilotPost('/api/demo/photo',{reportKey:'Moalboal__2026-11-05__shift-2'})).ok,true);
+  assert.equal(calls,2);
+ }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('read-only timeouts offer a loading retry without claiming an uncertain save',async t=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};

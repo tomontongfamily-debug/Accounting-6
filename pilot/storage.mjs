@@ -61,7 +61,7 @@ export async function loadState(db,mode,{audit=false,before=null,fullPos=false,c
   const options={p_mode:mode,p_audit_limit:audit?100:0,p_before:before};
   const read=async()=>{
     const result=await db.rpc(fullPos?'fueltech_pilot_load_v2':'fueltech_pilot_load_compact',options);
-    if(result.error)throw Object.assign(Error('Unable to load verified station records.'),{status:503});
+    if(result.error)throw Object.assign(Error('Unable to load verified station records.'),{status:503,code:'STATION_RECORDS_UNAVAILABLE'});
     return result.data;
   };
   if(!cache)return read();

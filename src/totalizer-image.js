@@ -133,6 +133,16 @@ export function readingWithVisibleDecimal(symbols,components,format){
   const text=digits.map(s=>s.text).join('');return Number(text.slice(0,decimal)+'.'+text.slice(decimal));
 }
 
+// Longer totalizers need nine independently segmented physical cells. Merely
+// allowing an extra OCR digit would also admit a frame mistaken for a leading 1.
+export function supportedTotalizerReading(symbols,components,segments){
+  const regular=readingWithVisibleDecimal(symbols,components,{integerDigits:6,decimalPlaces:2});
+  if(regular!==null)return segments.length===9?null:regular;
+  const longer=readingWithVisibleDecimal(symbols,components,{integerDigits:7,decimalPlaces:2});
+  if(longer===null||segments.length!==9||segments.some(s=>!/^\d$/.test(s.text)))return null;
+  return readingWithVisibleDecimal(segments,components,{integerDigits:7,decimalPlaces:2})===longer?longer:null;
+}
+
 // OCR confidence is not independent evidence: multiple passes can confidently
 // agree on a frame edge or a damaged LCD digit. Corroborate every suggested
 // digit against the seven physical strokes, otherwise request human review.

@@ -1,5 +1,42 @@
 # Pump totalizer OCR
 
+## November 5: seven-integer counters and honest timing (`lcd-nine-cell-4`)
+
+Moalboal includes totalizers above 999,999.99. The primary reader now accepts
+seven integer digits plus two decimal digits only when all nine cells are
+independently segmented, both readers agree on their digits and visible decimal,
+the existing repeated-pass confidence requirements hold, and the original LCD
+strokes pass verification. A later verified alignment can replace a poor early
+alignment of the same number; it cannot promote a different number.
+
+The neural/grid fallback still fits eight cells. It is not used to guess a
+nine-cell total or discard its leading digit. Missing number rows return an
+abstention immediately. The eight-cell fallback skips neural downloads when
+neither Tesseract nor the physical grid provides a possible corroborator.
+The model/runtime files remain unchanged, and their existing caches remain valid.
+
+Capture now distinguishes reading digits from saving the photo and saving the
+result, with elapsed seconds for the current step. New OCR evidence includes
+`durationMs`, measured from entering the local reader queue until its result;
+it excludes photo upload and station-save requests. A first neural fallback
+still needs approximately 22.7 MB of verified model/runtime files, so a cold
+connection and an older device can take much longer than a warm local test.
+There is no one-to-two-second guarantee for the complete phone workflow.
+
+The specific station-reconstruction error is returned with a machine-readable
+code. It occurs before the action executes and is no longer retried immediately.
+The current capture and its OCR promise remain in memory, with a Retry saving
+button. Retrying the reading does not upload another photo or run OCR again.
+Confirmation stays hidden until saving succeeds. Keep the page open while a
+retry is pending; this is in-memory recovery, not persistent offline storage.
+Unknown save outcomes retain their existing refresh/idempotency protections.
+
+Validation for this revision includes real-engine synthetic six/seven-integer
+LCDs, blank rows, extra decimal cells and frame rejection; phone save-retry tests;
+and existing reading/capture safeguards. Synthetic timings are local regression
+measurements, not measurements of the manager's phone or original pump photo.
+The private-photo replay figures below belong to the earlier reader revision.
+
 ## Opening Setup
 
 Opening Setup uses the daily report camera, photo storage and automatic reader

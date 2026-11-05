@@ -1,4 +1,4 @@
-export const TOTALIZER_VERSION='lcd-neural-3';
+export const TOTALIZER_VERSION='lcd-nine-cell-4';
 
 // An OCR attempt belongs to one photo, independently of the cashier's number.
 // A confirmation/edit from an older client must not erase that evidence.
@@ -11,6 +11,7 @@ export function mergeOcrEvidence(previous,incoming){
     const status=reading!==null?'detected':attempt.status==='detected'?'no-reading':attempt.status;
     result={status,version:String(attempt.version||'unknown').slice(0,80)};
     if(attempt.completedAt&&!Number.isNaN(Date.parse(attempt.completedAt)))result.completedAt=new Date(attempt.completedAt).toISOString();
+    if(Number.isFinite(attempt.durationMs)&&attempt.durationMs>=0&&attempt.durationMs<=3600000)result.durationMs=Math.round(attempt.durationMs);
     if(status==='error')result.reason='recognition-failed';
   }
   return {ocr_detected_reading:reading,...(result?{ocr_result:result}: {})};
