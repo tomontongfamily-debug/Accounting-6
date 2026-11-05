@@ -21,11 +21,14 @@ test('all five new stations can open tonight’s setup on a phone; failed Admin 
    state=await openingPhotos(state,opening);
    const context=await browser.newContext({viewport:{width:390,height:844},timezoneId:'Asia/Manila'});
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-   await page.clock.install({time:new Date('2026-11-04T05:00:00Z')});
+   await page.clock.install();
+   await page.clock.setFixedTime(Date.parse('2026-11-04T05:00:00Z'));
    await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;let result,status=200;
     if(path==='/api/pilot/config')result=config;
-    else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',branch,token:'cookie',expiresAt:Date.now()+3600000};
+    // Navigation can replace the document clock. Match the receiving browser's
+    // session clock rather than the frozen server-side historical test clock.
+    else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',branch,token:'cookie',expiresAt:await page.evaluate(()=>Date.now()+12*3600000)};
     else if(path==='/api/pilot/action'){
      const body=route.request().postDataJSON();
      try{const out=await runAction(state,{role:'Cashier',branch},body.route,body.input);state=out.state;result=out.result;}
@@ -33,7 +36,9 @@ test('all five new stations can open tonight’s setup on a phone; failed Admin 
     }else result={ok:true,enabled:false};
     await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
    });
-   await page.goto('http://127.0.0.1:4361/cashier');
+   // Keep the historical browser clock through this test's setup/submission.
+   // The public /cashier redirect is covered by the current-date load tests.
+   await page.goto('http://127.0.0.1:4361/pilot/cashier');
    await page.getByRole('heading',{name:'Choose a shift',exact:true}).waitFor();
    assert.match(await page.locator('.cashier-opening-card').innerText(),/2026-11-04/);
    assert.match(await page.locator('.cashier-shift-heading').innerText(),new RegExp(branch+' - 2026-11-05'));
@@ -43,7 +48,7 @@ test('all five new stations can open tonight’s setup on a phone; failed Admin 
    await page.getByLabel('Setup Cashier Name',{exact:true}).fill('Test '+branch);
    assert.equal(await page.getByRole('button',{name:'Confirm Opening Setup',exact:true}).isDisabled(),true);
    assert.equal(await page.getByRole('heading',{name:'Pump photos',exact:true}).count(),0);
-   await page.clock.setFixedTime(new Date('2026-11-04T14:05:00Z'));
+   await page.clock.setFixedTime(Date.parse('2026-11-04T14:05:00Z'));
    for(const input of await page.locator('input[inputmode="decimal"]').all())await input.fill('0');
    await page.getByRole('button',{name:'Confirm Opening Setup',exact:true}).click();
    await expect.poll(()=>state.reports[branch+'__2026-11-04__shift-3'].confirmed).toBe(true);
@@ -55,7 +60,7 @@ test('all five new stations can open tonight’s setup on a phone; failed Admin 
   const context=await browser.newContext(),page=await context.newPage();
   await page.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;
-   const result=path==='/api/pilot/config'?withStationRollout({ok:true,mode:'live',start_date:'2026-10-03',launch:{ready:true}}):path.startsWith('/api/auth/')?{ok:true,role:'Admin',branch:'',token:'cookie',expiresAt:Date.now()+3600000}:{ok:false,error:'Archive test: database unavailable'};
+   const result=path==='/api/pilot/config'?withStationRollout({ok:true,mode:'live',start_date:'2026-10-03',launch:{ready:true}}):path.startsWith('/api/auth/')?{ok:true,role:'Admin',branch:'',token:'cookie',expiresAt:await page.evaluate(()=>Date.now()+3600000)}:{ok:false,error:'Archive test: database unavailable'};
    await route.fulfill({status:result.ok?200:503,contentType:'application/json',body:JSON.stringify(result)});
   });
   await page.goto('http://127.0.0.1:4361/admin');
