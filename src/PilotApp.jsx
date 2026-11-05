@@ -12,6 +12,7 @@ import AdminReportAlerts from './admin-report-alerts.jsx';
 import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
 import { readStationSession } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
+import { createStoreRefreshQueue } from './store-refresh.js';
 import { pilotPost } from './pilot-client.js';
 import { openingReady, pilotOpeningSlot } from './pilot-opening.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
@@ -2454,6 +2455,7 @@ function removeQueuedReportByKey(key) {
 }
 
 async function flushOfflineReports(sessionToken, allowedBranch = "", onlineReports = {}) {
+  let uploaded=false;
   for (const [key, report] of Object.entries(readOfflineQueue()).filter(([, item]) => !allowedBranch || item?.branch === allowedBranch)) {
     if (shouldDiscardOfflineReport(report, GLOBAL_OPENING_DATE)) {
       removeQueuedReportByKey(key);
@@ -2472,6 +2474,7 @@ async function flushOfflineReports(sessionToken, allowedBranch = "", onlineRepor
     queueOfflineReport(rebasedReport);
     try {
       const result = await saveOnlineReport(rebasedReport, sessionToken);
+      uploaded=true;
       removeQueuedReport(rebasedReport);
       if (reportCompleted(result.report)) removeLocalDraft(result.report);
       else if (result.report && readLocalDrafts()[key]?.clientSave?.mutationId === rebasedReport.clientSave?.mutationId) cacheLocalDraft(result.report);
@@ -2486,6 +2489,7 @@ async function flushOfflineReports(sessionToken, allowedBranch = "", onlineRepor
       removeLocalDraft(rebasedReport);
     }
   }
+  return uploaded;
 }
 
 async function requestReportLease({ branch, date, shiftId, clientId, actor, action = "acquire", sessionToken }) {
@@ -3090,7 +3094,8 @@ export default function App() {
       }
     }
 
-    refreshOnlineStore();
+    const storeRefreshQueue=createStoreRefreshQueue(refreshOnlineStore);
+    storeRefreshQueue.refresh();
 
     loadRealtimeConfig(sessionToken)
       .then((config) => {
@@ -3101,7 +3106,7 @@ export default function App() {
           onChange: () => {
             if (!mounted || document.hidden) return;
             window.clearTimeout(realtimeRefreshTimer);
-            realtimeRefreshTimer = window.setTimeout(() => { refreshPhoneReadings(); refreshOnlineStore(true); }, 750);
+            realtimeRefreshTimer = window.setTimeout(() => { refreshPhoneReadings(); storeRefreshQueue.refresh(true); }, 750);
           },
           onStatus: (status) => {
             if (!mounted || !hasLoadedOnlineStoreRef.current) return;
@@ -3119,7 +3124,7 @@ export default function App() {
       });
 
     function refreshWhenVisible() {
-      if (!document.hidden) { refreshPhoneReadings(); refreshOnlineStore(true); }
+      if (!document.hidden) { refreshPhoneReadings(); storeRefreshQueue.refresh(true); }
     }
 
     const demoRefreshInterval = window.setInterval(refreshWhenVisible, 15000);
@@ -3130,6 +3135,7 @@ export default function App() {
 
     return () => {
       mounted = false;
+      storeRefreshQueue.stop();
       window.clearTimeout(realtimeRefreshTimer);
       window.clearInterval(demoRefreshInterval);
       stopRealtime();
