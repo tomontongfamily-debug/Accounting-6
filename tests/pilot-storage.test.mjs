@@ -155,6 +155,8 @@ test('bulk POS reconstruction preserves all 7000 records through the set-based r
   await db.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
   const indexedStart=performance.now();const indexed=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;
   assert.deepEqual(indexed,old);
+  await db.exec(sql('20261105021047_reduce_pilot_reconstruction_disk_io.sql'));
+  const noSpill=(await db.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;assert.deepEqual(noSpill,old);
   console.info('Indexed document reconstruction',JSON.stringify({milliseconds:Math.round(performance.now()-indexedStart)}));
   console.info('7000-record POS read comparison',JSON.stringify({beforeMs:Math.round(oldMs),afterMs:Math.round(newMs)}));
   const compactStart=performance.now();const compact=(await db.query("select fueltech_pilot_load_compact('shadow',0,null) v")).rows[0].v;
@@ -182,6 +184,7 @@ test('large station history preserves every ordered POS record, report, photo an
    select 'shadow',section,key,data,1 from jsonb_to_recordset($1) as d(section text,key text,data jsonb)
    on conflict(mode,section,item_key) do update set data=excluded.data`,[JSON.stringify(docs)]);
   const start=performance.now();
+  await pg.exec(sql('20261105021047_reduce_pilot_reconstruction_disk_io.sql'));
   const full=(await pg.query("select fueltech_pilot_load_v2('shadow',0,null) v")).rows[0].v;
   assert.deepEqual(full.data,{...state,audit:[]});
   assert.deepEqual((await pg.query("select data from fueltech_pilot_state where mode='shadow'")).rows[0].data,state);

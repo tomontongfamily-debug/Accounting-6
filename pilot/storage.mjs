@@ -52,8 +52,35 @@ export function statePatch(before,after) {
   if(newAudit.length<oldAudit.length||!isDeepStrictEqual(oldAudit,newAudit.slice(0,oldAudit.length)))throw Error('Saved audit events are immutable.');
   return {upserts,removals:[...prior.values()].map(({section,key})=>({section,key})),audit:newAudit.slice(oldAudit.length)};
 }
-export async function loadState(db,mode,{audit=false,before=null,fullPos=false}={}) {
-  const result=await db.rpc(fullPos?'fueltech_pilot_load_v2':'fueltech_pilot_load_compact',{p_mode:mode,p_audit_limit:audit?100:0,p_before:before});
-  if(result.error)throw Object.assign(Error('Unable to load verified station records.'),{status:503});
-  return result.data;
+// Cache immutable snapshots only after checking the committed revision on every
+// request. Concurrent devices share one reconstruction; callers always receive
+// separate objects so a draft/action cannot change another request's snapshot.
+const snapshots=new WeakMap();
+const CACHE_LIMIT=6, CACHE_MS=15000;
+export async function loadState(db,mode,{audit=false,before=null,fullPos=false,cache=false}={}) {
+  const options={p_mode:mode,p_audit_limit:audit?100:0,p_before:before};
+  const read=async()=>{
+    const result=await db.rpc(fullPos?'fueltech_pilot_load_v2':'fueltech_pilot_load_compact',options);
+    if(result.error)throw Object.assign(Error('Unable to load verified station records.'),{status:503});
+    return result.data;
+  };
+  if(!cache)return read();
+  const head=await db.from('fueltech_pilot_heads').select('revision').eq('mode',mode).maybeSingle();
+  if(head.error)throw Object.assign(Error('Unable to verify the current station revision.'),{status:503});
+  if(!head.data)return null;
+  let entries=snapshots.get(db);
+  if(!entries){entries=new Map();snapshots.set(db,entries);}
+  const key=JSON.stringify([mode,Number(head.data.revision),audit,before,fullPos]);
+  let entry=entries.get(key);
+  if(!entry||Date.now()-entry.at>=CACHE_MS){
+    const promise=read();entry={at:Date.now(),promise};entries.set(key,entry);
+    while(entries.size>CACHE_LIMIT)entries.delete(entries.keys().next().value);
+    // A failed reconstruction must be retried, never served as a successful read.
+    promise.catch(()=>{if(entries.get(key)===entry)entries.delete(key);});
+  }
+  const result=await entry.promise;
+  if(!result||Number(result.revision)<Number(head.data.revision)){
+    entries.delete(key);throw Object.assign(Error('The station changed while loading. Refresh to load the saved shift.'),{status:503});
+  }
+  return structuredClone(result);
 }
