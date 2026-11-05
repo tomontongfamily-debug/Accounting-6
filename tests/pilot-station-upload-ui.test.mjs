@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {chromium} from '@playwright/test';
+import {chromium,expect} from '@playwright/test';
 import {preview} from 'vite';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
@@ -40,7 +40,7 @@ test('All station photos auto-fill through the phone camera flow',{skip:!process
     const card=page.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);
     assert.equal(await page.locator('input[type=file]').count(),0);
     await capturePumpCamera(page,card);
-    await card.getByText('Saving photo or reading…',{exact:true}).waitFor({state:'hidden',timeout:30000});
+    await expect(card.getByRole('button',{name:'Retake photo',exact:true})).toBeEnabled({timeout:30000});
     const input=card.locator('input[inputmode=decimal]');
     const reading=await input.count()&&((await input.inputValue())!=='')?Number(await input.inputValue()):null;
     const savedRow=state.reports[key].pumpRows[0];
