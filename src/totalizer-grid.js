@@ -96,13 +96,15 @@ function classify(coverage){
       cost/=7;
       if(cost<first){second=first;first=cost;digit=d;}else if(cost<second)second=cost;
     }
-    sum+=first;worst=Math.max(worst,first);margin=Math.min(margin,second-first);digitMargins.push(second-first);text+=digit;
+    sum+=first;worst=Math.max(worst,first);
+    margin=Math.min(margin,second-first);digitMargins.push(second-first);text+=digit;
   }
   return {text,value:Number(text)/100,score:sum/8+worst*.5,margin,digitMargins};
 }
 
-function sampleLayout(integral,width,height,layout,refine=false){
-  const {left,glyphWidth:w,pitch,height:h,slope,base,shear,dotx,heightSlope=0,curve=0}=layout,coverage=new Float32Array(56);
+function sampleLayout(integral,width,height,layout,refine=false,coverage=new Float32Array(56),ceiling){
+  const {left,glyphWidth:w,pitch,height:h,slope,base,shear,dotx,heightSlope=0,curve=0}=layout;
+  let sum=0,worst=0;
   for(let cell=0;cell<8;cell++){
     const j=cell-5,cellx=left+j*pitch+j*j*curve*h,cellHeight=h+heightSlope*(cellx+w*.5-dotx),cellWidth=w*cellHeight/h;
     for(let s=0;s<7;s++){
@@ -112,12 +114,42 @@ function sampleLayout(integral,width,height,layout,refine=false){
       if(refine)for(const ox of[-.08,0,.08])for(const oy of[-.025,0,.025])value=Math.max(value,occupancy(integral,width,height,x+ox*cellWidth,y+oy*cellHeight,dx,dy));
       coverage[cell*7+s]=value;
     }
+    if(ceiling!==undefined){
+      let first=Infinity;
+      for(let d=0;d<10;d++){
+        let cost=0;for(let s=0;s<7;s++)cost+=(coverage[cell*7+s]-patterns[d][s])**2;
+        first=Math.min(first,cost/7);
+      }
+      sum+=first;worst=Math.max(worst,first);
+      // Remaining cells add nonnegative error. Stop sampling a layout that
+      // cannot beat the 400 retained layouts even with perfect later digits.
+      // Keep ties, preserving the original stable sort's earlier layout.
+      if(sum/8+worst*.5>ceiling)return null;
+    }
   }
-  return coverage;
+  return ceiling===undefined?coverage:sum/8+worst*.5;
+}
+
+// Bounded max-heap retains exactly the first 400 entries of a stable score
+// sort, without keeping and sorting thousands of discarded layout objects.
+function retainLayout(heap,entry,limit){
+  const worse=(a,b)=>a.score>b.score||a.score===b.score&&a.order>b.order;
+  if(heap.length<limit){
+    let i=heap.push(entry)-1;
+    while(i){const parent=(i-1)>>1;if(!worse(heap[i],heap[parent]))break;[heap[i],heap[parent]]=[heap[parent],heap[i]];i=parent;}
+    return;
+  }
+  if(!worse(heap[0],entry))return;
+  heap[0]=entry;let i=0;
+  for(;;){const left=i*2+1,right=left+1;let child=i;
+    if(left<heap.length&&worse(heap[left],heap[child]))child=left;
+    if(right<heap.length&&worse(heap[right],heap[child]))child=right;
+    if(child===i)break;[heap[i],heap[child]]=[heap[child],heap[i]];i=child;
+  }
 }
 
 export function readTotalizerGrid(mask,width,height,regions,components){
-  const integral=integralMask(mask,width,height),candidates=[];
+  const integral=integralMask(mask,width,height),candidates=[],coverage=new Float32Array(56);
   for(const original of regions.slice(0,3)){
     const ratio=original.width/original.bandHeight;
     const region=ratio<4.5?{...original,bandHeight:original.width/6.5}:original;
@@ -129,22 +161,25 @@ export function readTotalizerGrid(mask,width,height,regions,components){
     if(bars.length<4)continue;
     for(const dot of points){
       const alignment=barAlignment(bars,dot,h),dotx=dot.x+dot.width/2,hh=alignment.height,layouts=[];
-      for(const pitch of range(.55*hh,.88*hh,23))for(const glyphWidth of range(.43*hh,.72*hh,12))for(const gap of range(-.02*hh,.14*hh,7)){
+      const pitches=range(.55*hh,.88*hh,23),glyphWidths=range(.43*hh,.72*hh,12),gaps=range(-.02*hh,.14*hh,7),shears=range(-.05,.25,7);
+      let order=0;
+      for(const pitch of pitches)for(const glyphWidth of glyphWidths)for(const gap of gaps){
         const left=dotx-gap-glyphWidth;
         if(left-5*pitch<region.x-h*.15||left+2*pitch+glyphWidth>Math.min(width,region.x+region.width+h*.1))continue;
-        for(const shear of range(-.05,.25,7)){
+        for(const shear of shears){
           const layout={...alignment,left,glyphWidth,pitch,shear,dotx};
-          const result=classify(sampleLayout(integral,width,height,layout));
-          layouts.push({layout,result});
+          const score=sampleLayout(integral,width,height,layout,false,coverage,layouts.length===400?layouts[0].score:Infinity);
+          if(score!==null)retainLayout(layouts,{layout,score,order},400);
+          order++;
         }
       }
-      layouts.sort((a,b)=>a.result.score-b.result.score);
+      layouts.sort((a,b)=>a.score-b.score||a.order-b.order);
       const refined=[];
-      for(const {layout}of layouts.slice(0,400)){
-        refined.push({layout,...classify(sampleLayout(integral,width,height,layout,true))});
+      for(const {layout}of layouts){
+        refined.push({layout,...classify(sampleLayout(integral,width,height,layout,true,coverage))});
         if(alignment.perspective)for(const curve of[-.005,0,.005]){
           const adjusted={...layout,...alignment.perspective,curve};
-          refined.push({layout:adjusted,...classify(sampleLayout(integral,width,height,adjusted,true))});
+          refined.push({layout:adjusted,...classify(sampleLayout(integral,width,height,adjusted,true,coverage))});
         }
       }
       refined.sort((a,b)=>a.score-b.score);

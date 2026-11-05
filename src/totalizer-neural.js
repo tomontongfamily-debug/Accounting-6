@@ -1,10 +1,10 @@
 import { prepareReaderFiles } from './ocr-downloads.js';
 let ready;
-export function prepareNeuralTotalizer(){
+export function prepareNeuralTotalizer(preparedFiles){
   ready ||= (async()=>{
     // Finish and verify downloads before starting the runtime's CPU-init clock.
     // The same bytes are reused by preparation and recognition, even on 3G.
-    const [ort,files]=await Promise.all([import('onnxruntime-web/wasm'),prepareReaderFiles()]);
+    const [ort,files]=await Promise.all([import('onnxruntime-web/wasm'),preparedFiles||prepareReaderFiles()]);
     ort.env.wasm.numThreads=1;
     ort.env.wasm.initTimeout=20000;
     ort.env.wasm.wasmPaths={

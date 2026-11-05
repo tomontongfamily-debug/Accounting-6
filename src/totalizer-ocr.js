@@ -1,9 +1,8 @@
 import { createWorker } from 'tesseract.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
-import { neuralTotalizerCandidates } from './totalizer-neural.js';
+import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync } from './totalizer-reader-client.js';
 import { OCR_ASSET_VERSION, ocrAsset } from './ocr-assets.js';
-import { readTotalizerGrid } from './totalizer-grid.js';
-import { chooseTotalizerReading } from './totalizer-consensus.js';
+import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, supportedTotalizerReading, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask, totalizerRegions } from './totalizer-image.js';
 
 let workerPromise;
@@ -109,13 +108,21 @@ async function recognizePhoto(data){
     // The existing neural/grid fallback fits eight cells. It cannot establish
     // a nine-cell reading and must not silently drop its leading digit.
     if(longDisplay)return null;
-    const grid=readTotalizerGrid(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
-    if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04))return null;
     // A neural model reads the original color row at several resolutions;
     // physical cell fitting independently checks the shape and decimal layout.
     // Model-loading failure retains the previously verified reader's behavior.
+    const readNeural=async()=>{
+      try{return await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+    };
     let neural;
-    try{neural=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);}catch(error){throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+    if(value!==null){
+      neural=await readNeural();
+      const fast=chooseFastTotalizerReading({tesseract:value,neural});
+      if(fast!==null)return fast;
+    }
+    const grid=await readTotalizerGridAsync(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
+    if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04))return null;
+    neural ||= await readNeural();
     return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
   }catch(error){workerPromise=undefined;if(worker)await worker.terminate();throw error;}
 }
