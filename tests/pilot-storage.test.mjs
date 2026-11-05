@@ -52,6 +52,9 @@ test('compact reconstruction preserves exact records, audit pages and permission
   await pg.exec(definition.replace('public.fueltech_pilot_load_compact(', 'pg_temp.compact_prior('));
   const before=(await pg.query("select data from fueltech_pilot_state where mode='shadow'")).rows[0].data;
   await pg.exec(sql('20261105053059_avoid_repeated_compact_json_copying.sql'));
+  await pg.exec(sql('20261105054014_bound_accounting_report_read_timeout.sql'));
+  const configs=(await pg.query("select proconfig from pg_proc where oid in ('public.fueltech_pilot_load_compact(text,integer,bigint)'::regprocedure,'public.fueltech_pilot_load_v2(text,integer,bigint)'::regprocedure)")).rows;
+  assert.equal(configs.length,2);for(const {proconfig} of configs)assert.ok(proconfig.includes('statement_timeout=15s'));
   const load=(name,limit=0,cursor=null)=>pg.query(`select ${name}('shadow',$1,$2) v`,[limit,cursor]).then(r=>r.rows[0].v);
   for(const shape of ['object','null','missing']){
    await pg.query("update fueltech_pilot_documents set data=to_jsonb($1::text) where mode='shadow' and section='shape' and item_key='pos'",[shape]);

@@ -23,7 +23,8 @@ test('Pondol phone shows today’s Shift 1 after an already-confirmed setup with
  const server=await preview({preview:{host:'127.0.0.1',port:4374,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try {
   const page=await browser.newPage({viewport:{width:390,height:844},timezoneId:'Asia/Manila'}),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.clock.install({time:new Date('2026-11-05T04:29:00Z')});
+  await page.clock.install({time:Date.parse('2026-11-05T04:29:00Z')});
+  await page.clock.setFixedTime(Date.parse('2026-11-05T04:29:00Z'));
   await page.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;let result,status=200;
    if(path==='/api/pilot/config')result=config;
@@ -36,6 +37,7 @@ test('Pondol phone shows today’s Shift 1 after an already-confirmed setup with
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
   });
   await page.goto('http://127.0.0.1:4374/cashier');
+  assert.equal(await page.evaluate(()=>Date.now()),Date.parse('2026-11-05T04:29:00Z'));
   await page.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();
   const picker=page.getByRole('combobox',{name:'Shift to photograph',exact:true});
   await expect(picker).toHaveValue(shiftKey);
