@@ -6,8 +6,8 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-for(const failure of ['upload-before-commit','lost-photo-response','lost-reading-response','invalid-photo-response'])test(`${failure}: kept phone capture retries the same request and reaches a desktop that began without photos`,async()=>{
- const server=await createServer({cacheDir:'node_modules/.vite/interrupted-photo-test',server:{host:'127.0.0.1',port:0,strictPort:true}});await server.listen();
+for(const failure of ['upload-before-commit','lost-photo-response','lost-reading-response','invalid-photo-response'])test(`${failure}: kept phone capture retries the same request and reaches a desktop that began without photos`,async t=>{
+ const server=await createServer({cacheDir:'node_modules/.vite/interrupted-photo-test',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});t.after(()=>server.close());await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let {state,key,cashier}=fixture();const report=state.reports[key];report.cashCountConfirmed=true;report.actualCashCounted=200;report.cashDenominations={200:1};report.pilotRevision=1;report.pilotLastNonReadingRevision=1;report.pilotCashRevision=1;
  const uploads=new Map(),receipts=new Map(),requests=[],errors=[];let failing=true;
@@ -51,9 +51,10 @@ for(const failure of ['upload-before-commit','lost-photo-response','lost-reading
   await phone.getByRole('heading',{name:'Pump photos',exact:true}).waitFor();await phone.getByLabel('Shift to photograph').selectOption(key);
   const card=phone.locator(`[data-pump-row-id="${report.pumpRows[0].id}"]`);await capturePumpCamera(phone,card);
   const retry=card.getByRole('button',{name:failure==='lost-reading-response'?'Retry saving reading':'Retry saving photo',exact:true});
-  await expect(retry).toBeVisible();assert.ok((await card.locator('.totalizer-photo').getAttribute('src')).startsWith('data:image/jpeg'));
+  await expect(retry).toBeVisible();await expect(card.locator('header')).toContainText('Save pending');assert.ok((await card.locator('.totalizer-photo').getAttribute('src')).startsWith('data:image/jpeg'));
   await expect(phone.getByLabel('Shift to photograph')).toBeDisabled();
   failing=false;await retry.click();await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+  await expect(card.locator('header')).toContainText('Photo saved · Confirm reading');
   assert.equal(uploads.size,1);assert.equal(new Set(requests.map(r=>JSON.stringify(r))).size,1,'Every retry has the exact original request ID, revision and payload');
   assert.equal(await phone.evaluate(()=>globalThis.recognitionCalls),1);
   await desktop.evaluate(()=>window.dispatchEvent(new Event('focus')));
@@ -62,5 +63,5 @@ for(const failure of ['upload-before-commit','lost-photo-response','lost-reading
   await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();await expect(card.getByText('✓ Complete',{exact:true})).toBeVisible();
   await desktop.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(desktopCard.getByText(/Reading confirmed and saved/)).toBeVisible();
   assert.equal(state.reports[key].pumpRows[0].closing,10010);assert.equal(state.reports[key].actualCashCounted,200);assert.deepEqual(errors,[]);
- }finally{await browser.close();await server.close();}
+ }finally{await browser.close();}
 });

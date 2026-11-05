@@ -11,6 +11,10 @@ Keep the phone page open until the save is verified; pending captures remain in
 memory rather than durable offline storage. A genuine nozzle conflict still
 requires loading the current saved reading.
 
+Cards distinguish a missing photo from a saved photo awaiting confirmation and
+from an interrupted save. A saved, unconfirmed photo is no longer labelled
+"Photo required".
+
 Private upload metadata now includes the server-validated branch, report key,
 nozzle ID, prior nozzle revision, optional price-change identity and SHA-256.
 These identify original uploads even if the later report commit fails. Existing
