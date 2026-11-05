@@ -18,6 +18,8 @@ Each read validates its login, RLS, role memberships, administrative privileges,
 
 ## Accounting behavior
 
+Cashier and Manager requests for Barili, Mabolo, Arpili, Pondol and Moalboal use the compact saved-state read and do not trigger Liloan's full POS history read or live POS import. An unavailable or slow Liloan POS connection must not block these stations from loading their saved shifts. Their requests preserve Liloan's saved evidence and status. Liloan staff, Admin and Approver retain the existing full-evidence and freshness checks; this isolation does not turn missing evidence into verified zero totals.
+
 Refresh occurs when a live Liloan report or the Admin report store is loaded, at most once per minute in saved state; cash reconciliation and submission request a fresh read. This is an on-demand feed, not a background scheduler. Accounting stores its own evidence copy and source fingerprint audit entries. Completed reports are refreshed too, so late, amended or removed POS records appear as evidence changes.
 
 Manila boundaries are Shift 1 04:00–13:00, Shift 2 13:00–22:00, Shift 3 22:00–04:00 the next day. Events before 04:00 belong to the preceding business date. Source IDs deduplicate records. Unknown types, conflicting IDs, invalid amounts, missing timezone or rows outside the station/window invalidate the copy.

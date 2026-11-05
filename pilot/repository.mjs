@@ -71,6 +71,10 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   if(envelope.mode!==config.mode||envelope.startDate!==config.start_date) throw fail('Pilot configuration changed. Reload the page.',409);
   const {route,input={},mutationId}=envelope;
   const requiresFresh=route==='/api/demo/cash-check'||(route==='/api/reports/save'&&input.operation==='submit');
+  // Only Liloan imports POS redemptions. A different station must not wait for
+  // its full evidence/history import just to load, photograph or save a shift.
+  // Admin and Approver still need the complete, current all-station view.
+  const usesPos=['Admin','Approver'].includes(session.role)||session.branch==='Liloan';
   const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
@@ -86,7 +90,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   let storeRevision=loaded.data?.revision||0;
   let state=loaded.data?.data;
   const sync=state?.posRedemptionSync;
-  if(incremental&&sync?._deferred){
+  if(incremental&&usesPos&&sync?._deferred){
     const enabled=posEnabled(config.mode,posEnv),today=accountingTiming(new Date().toISOString()).date;
     const missingShift=[dateOffset(today,-1),today].filter(date=>date>=state.startDate).some(date=>['shift-1','shift-2','shift-3'].some(shift=>!state.reports[`Liloan__${date}__${shift}`]));
     const needsEvidence=requiresFresh||(enabled&&(!sync.attemptedAt||Date.now()-Date.parse(sync.attemptedAt)>60000))
@@ -124,7 +128,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const sources=await loadSources(db,cvClient,state.startDate,accountingTiming(new Date().toISOString()).date,{branches:configuredStations(state),stationStarts:state.stationStarts});
     reconcileSources(state,sources);
   }
-  await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
+  if(usesPos)await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
   const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:async(path,image)=>{
     const uploaded=await db.storage.from(BUCKET).upload(path,image,{contentType:'image/jpeg',upsert:false});
     if(uploaded.error) {
