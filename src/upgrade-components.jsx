@@ -1,7 +1,8 @@
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect, prepareTotalizer } from './totalizer-ocr.js';
-import {readerPreparation,subscribeReaderPreparation,prepareReaderFiles,hasPreparedReaderFiles,canPrepareReaderAutomatically} from './ocr-downloads.js';
+import {readerPreparation,subscribeReaderPreparation,hasPreparedReaderFiles,canPrepareReaderAutomatically} from './ocr-downloads.js';
+import {prepareAdvancedTotalizer} from './totalizer-reader-client.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
@@ -126,7 +127,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     }
     setOpeningCamera(true);
     try {
-      const opened=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+      const opened=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
       if(!active.current){opened.getTracks().forEach(t=>t.stop());return;}
       stream.current=opened;setCamera(true);
     }catch{if(active.current)setError(phoneView?'Camera access is unavailable. Allow camera access in your phone browser settings, then tap Open camera again.':'Camera access is unavailable. Use the photo picker below.');}
@@ -193,20 +194,26 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
 }
 function ReaderPreparation(){
   const [status,setStatus]=useState(readerPreparation);const [primaryReady,setPrimaryReady]=useState(false);
+  const [advancedReady,setAdvancedReady]=useState(false);const [preparingAdvanced,setPreparingAdvanced]=useState(false);
   const [preparingPrimary,setPreparingPrimary]=useState(false);const [error,setError]=useState('');
   useEffect(()=>{
     let mounted=true,timer;const unsubscribe=subscribeReaderPreparation(setStatus);
+    const warm=async()=>{
+      if(!mounted)return;setPreparingAdvanced(true);
+      try{await prepareAdvancedTotalizer();if(mounted)setAdvancedReady(true);}
+      finally{if(mounted)setPreparingAdvanced(false);}
+    };
     prepareTotalizer().then(async()=>{
       if(!mounted)return;setPrimaryReady(true);
-      if(await hasPreparedReaderFiles())return prepareReaderFiles();
-      if(mounted&&canPrepareReaderAutomatically())timer=window.setTimeout(()=>{prepareReaderFiles().catch(()=>{});},1500);
+      if(await hasPreparedReaderFiles())return warm();
+      if(mounted&&canPrepareReaderAutomatically())timer=window.setTimeout(()=>{warm().catch(()=>{});},1500);
     }).catch(()=>{});
     return()=>{mounted=false;window.clearTimeout(timer);unsubscribe();};
   },[]);
-  const ready=primaryReady&&status.status==='ready',preparing=preparingPrimary||status.status==='preparing';
+  const ready=primaryReady&&advancedReady,preparing=preparingPrimary||preparingAdvanced||status.status==='preparing';
   async function prepare(){
     setPreparingPrimary(true);setError('');
-    try{await Promise.all([prepareTotalizer().then(()=>setPrimaryReady(true)),prepareReaderFiles()]);}
+    try{await Promise.all([prepareTotalizer().then(()=>setPrimaryReady(true)),prepareAdvancedTotalizer().then(()=>setAdvancedReady(true))]);}
     catch{setError('Preparation could not finish. Check your connection and retry.');}
     finally{setPreparingPrimary(false);}
   }
@@ -214,7 +221,7 @@ function ReaderPreparation(){
     {ready?<p role="status">{status.savedForReuse?'Reader ready for faster photos.':'Reader ready for this page. Keep it open for faster photos.'}</p>:<>
       <p>Prepare the reader on Wi-Fi once for faster readings when the signal is weak. Photos still need a connection to save.</p>
       <button type="button" className="secondary" disabled={preparing} onClick={prepare}>{preparing?'Preparing reader…':'Prepare faster readings'}</button>
-      {preparing&&<p role="status">Preparing reader: {status.percent}% <progress aria-label="Reader preparation progress" max="100" value={status.percent}/></p>}
+      {preparing&&<p role="status">{status.status==='ready'?'Finishing reader setup…':`Preparing reader: ${status.percent}%`} <progress aria-label="Reader preparation progress" max="100" value={status.percent}/></p>}
       {(error||status.status==='error')&&<p role="status">{error||'Preparation could not finish. Check your connection and retry.'}</p>}
     </>}
   </aside>;
