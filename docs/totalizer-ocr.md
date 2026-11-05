@@ -1,5 +1,26 @@
 # Pump totalizer OCR
 
+## Interrupted photo saves
+
+Captures remain on screen after a server error, network failure, timeout or
+aggregate-save contention. The Retry saving button reuses the exact request ID,
+payload and nozzle revision, so a lost response retrieves the original receipt
+and an interrupted commit can attach its already uploaded bytes. The reading
+retry also reuses its OCR result without another upload or recognition attempt.
+Keep the phone page open until the save is verified; pending captures remain in
+memory rather than durable offline storage. A genuine nozzle conflict still
+requires loading the current saved reading.
+
+Cards distinguish a missing photo from a saved photo awaiting confirmation and
+from an interrupted save. A saved, unconfirmed photo is no longer labelled
+"Photo required".
+
+Private upload metadata now includes the server-validated branch, report key,
+nozzle ID, prior nozzle revision, optional price-change identity and SHA-256.
+These identify original uploads even if the later report commit fails. Existing
+immutable file and backup verification remain required. Phone response merging
+also preserves newer photos from other in-flight captures.
+
 ## November 5: seven-integer counters and honest timing (`lcd-nine-cell-4`)
 
 Moalboal includes totalizers above 999,999.99. The primary reader now accepts
@@ -29,7 +50,7 @@ The current capture and its OCR promise remain in memory, with a Retry saving
 button. Retrying the reading does not upload another photo or run OCR again.
 Confirmation stays hidden until saving succeeds. Keep the page open while a
 retry is pending; this is in-memory recovery, not persistent offline storage.
-Unknown save outcomes retain their existing refresh/idempotency protections.
+Interrupted save outcomes now use the same-ID capture recovery described above.
 
 Validation for this revision includes real-engine synthetic six/seven-integer
 LCDs, blank rows, extra decimal cells and frame rejection; phone save-retry tests;

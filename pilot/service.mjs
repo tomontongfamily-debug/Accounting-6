@@ -432,7 +432,9 @@ function validatePriceReadingOrder(report,change) {
       if(image.length>2*1024*1024 || image[0]!==255 || image[1]!==216) reject('Invalid or oversized photo.');
       const id=mutationId, photoPath='/api/pilot/photo?id='+id;
       const objectPath=database.mode+'/'+r.branch+'/'+id+'.jpg';
-      await uploadPhoto(objectPath,image);
+      await uploadPhoto(objectPath,image,{reportKey:keyOf(r),rowId:photoRow.id,branch:r.branch,
+        readingRevision:Number(previous?.readingRevision||0),uploadedAt:stamp(),
+        ...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})});
       database.photos[photoPath]={reportKey:input.reportKey,rowId:photoRow.id,branch:r.branch,file:objectPath,...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})};
       let readingRevision;
       if(input.replaceReading){

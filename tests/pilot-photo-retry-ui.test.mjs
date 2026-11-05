@@ -6,8 +6,8 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-for(const stage of ['photo','pump-reading'])test(`a failed ${stage} station read preserves the capture and retries without repeating OCR`,async()=>{
- const server=await createServer({cacheDir:'node_modules/.vite/photo-retry-test',server:{host:'127.0.0.1',port:0,strictPort:true}});await server.listen();
+for(const stage of ['photo','pump-reading'])test(`a failed ${stage} station read preserves the capture and retries without repeating OCR`,async t=>{
+ const server=await createServer({cacheDir:'node_modules/.vite/photo-retry-test',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});t.after(()=>server.close());await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let {state,key,report,cashier}=fixture();
  let failing=true,photoAttempts=0,readingAttempts=0;const uploads=new Map(),errors=[];
@@ -58,5 +58,5 @@ for(const stage of ['photo','pump-reading'])test(`a failed ${stage} station read
   assert.equal(state.reports[key].pumpRows[0].closing,10010);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
   assert.deepEqual(errors,[]);
- }finally{await browser.close();await server.close();}
+ }finally{await browser.close();}
 });

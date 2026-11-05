@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { demoApi, PumpPhotoWorkflow, savePumpReading } from './upgrade-components.jsx';
 import { readingComplete } from './error-reduction.ts';
+import { mergePhoneReadings } from './phone-reading-sync.js';
 export { usePhoneView } from './phone-view.js';
 
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
@@ -42,11 +43,11 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     window.addEventListener('focus',refresh);
     return()=>{mounted=false;window.clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh);};
   },[selected]);
-  async function save(row,savedPhoto) {
+  async function save(row,savedPhoto,options) {
     const version=generation.current;
     mutations.current+=1;
-    const result=savedPhoto||await savePumpReading(report,row);
-    if(version===generation.current){setReport(result.report);setMessage(savedPhoto?'Photo saved. Automatic reading continues; you can photograph the next pump.':row.readingConfirmed?'Reading confirmed and saved. It will appear on the desktop automatically.':'Photo saved. Check and confirm the reading.');setError('');}
+    const result=savedPhoto||await savePumpReading(report,row,options);
+    if(version===generation.current){setReport(current=>mergePhoneReadings(current,result.report)||result.report);setMessage(savedPhoto?'Photo saved. Automatic reading continues; you can photograph the next pump.':row.readingConfirmed?'Reading confirmed and saved. It will appear on the desktop automatically.':'Photo saved. Check and confirm the reading.');setError('');}
     return result.report.pumpRows.find(r=>r.id===row.id);
   }
   const done=report?.pumpRows.filter(readingComplete).length||0;
