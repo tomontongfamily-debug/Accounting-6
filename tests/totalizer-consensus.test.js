@@ -1,9 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseTotalizerReading} from '../src/totalizer-consensus.js';
+import {chooseTotalizerReading,chooseFastTotalizerReading} from '../src/totalizer-consensus.js';
 import {decodeTotalizerTokens} from '../src/totalizer-neural.js';
 const nn=(value,extra={})=>({value,score:.99,integerConfidence:.99,fractionConfidence:.99,inputHeight:48,...extra});
 const grid=(value,extra={})=>[{value,score:.005,margin:.14,digitMargins:Array(8).fill(.14),...extra}];
+
+test('the fast path needs independent agreement in every nonempty view and preserves full-grid outcomes',()=>{
+ const value=123456.78,neural=[32,48,64].map(inputHeight=>nn(value,{inputHeight}));
+ assert.equal(chooseFastTotalizerReading({tesseract:value,neural}),value);
+ for(const physical of [[],grid(value),grid(723456.78),grid(123456.79),grid(value,{score:.2})]){
+  assert.equal(chooseTotalizerReading({tesseract:value,neural,grid:physical}),value);
+ }
+ assert.equal(chooseFastTotalizerReading({neural}),null);
+ assert.equal(chooseFastTotalizerReading({tesseract:value,neural:[]}),null);
+ assert.equal(chooseFastTotalizerReading({tesseract:value,neural:[nn(null)]}),null);
+ for(const conflict of [nn(723456.78),nn(123456.79),nn(723456.78,{score:.4})]){
+  assert.equal(chooseFastTotalizerReading({tesseract:value,neural:[...neural,conflict]}),null);
+ }
+ for(const uncertain of [{score:.89},{integerConfidence:.84},{fractionConfidence:.49}]){
+  assert.equal(chooseFastTotalizerReading({tesseract:value,neural:[nn(value,uncertain)]}),null);
+ }
+});
 
 test('A high neural average cannot hide an uncertain integer digit',()=>{
  const characters=['blank',...'0123456789.'],text='12345678',steps=text.length*2,classes=characters.length,data=new Float32Array(steps*classes);

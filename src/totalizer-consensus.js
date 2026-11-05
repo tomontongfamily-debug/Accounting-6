@@ -11,6 +11,14 @@ function corroboratedOne(physical,index,glyphs){
     s.bbox.y1-s.bbox.y0>h*.65&&s.bbox.y1-s.bbox.y0<h*1.3);
 }
 
+export function chooseFastTotalizerReading({tesseract=null,neural=[]}){
+  // If every nonempty neural view agrees with the independent OCR reading,
+  // fitting a grid cannot introduce another supported answer. Use the same
+  // per-digit confidence rules; even a weak conflicting view needs the grid.
+  if(tesseract===null||neural.some(r=>r.value!==null&&r.value!==tesseract))return null;
+  return chooseTotalizerReading({tesseract,neural});
+}
+
 export function chooseTotalizerReading({verified=null,tesseract=null,grid=[],neural=[],glyphs=[]}){
   if(verified!==null)return verified;
   const physical=grid[0],goodGrid=physical&&physical.score<.08&&physical.margin>.04;

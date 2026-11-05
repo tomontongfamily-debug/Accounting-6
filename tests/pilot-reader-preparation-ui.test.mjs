@@ -5,12 +5,13 @@ import {chromium,expect} from '@playwright/test';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 
-for(const automatic of [false,true])test(`reader files prepare ${automatic?'automatically on a fast connection':'optionally on a slow connection'} and survive refresh`,async()=>{
+for(const {automatic,cache}of [{automatic:false,cache:true},{automatic:true,cache:true},{automatic:false,cache:false}])test(`reader files prepare ${automatic?'automatically on a fast connection':'optionally on a slow connection'} ${cache?'and survive refresh':'without persistent storage or duplicate downloads'}`,async()=>{
  const server=await createServer({server:{host:'127.0.0.1',port:44344,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let{state,cashier}=fixture();const writes=[],downloads=[];
  try{
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
+  if(!cache)await page.addInitScript(()=>Object.defineProperty(globalThis,'caches',{configurable:true,value:undefined}));
   await page.addInitScript(automatic=>Object.defineProperty(navigator,'connection',{configurable:true,value:{effectiveType:automatic?'4g':'3g',downlink:automatic?10:1.5,saveData:false}}),automatic);
   page.on('request',request=>{if(/\/(neural|ort)\//.test(new URL(request.url()).pathname))downloads.push(request.url());});
   await page.route('**/api/**',async route=>{
@@ -31,9 +32,18 @@ for(const automatic of [false,true])test(`reader files prepare ${automatic?'auto
    assert.equal(downloads.length,0,'Slow connections must not silently start the larger download');
    await panel.getByRole('button',{name:'Prepare faster readings'}).click();
   }
-  await expect(panel).toContainText('Reader ready for faster photos.',{timeout:10000});
+  await expect(panel).toContainText(cache?'Reader ready for faster photos.':'Reader ready for this page.',{timeout:10000});
   assert.equal(downloads.length,3);assert.deepEqual(writes,[]);
   await expect(page.getByRole('button',{name:'Open camera',exact:true}).first()).toBeEnabled();
+  if(!cache){
+   assert.deepEqual(await page.evaluate(async()=>{
+    const {prepareAdvancedTotalizer,neuralTotalizerCandidatesAsync}=await import('/src/totalizer-reader-client.js');
+    await prepareAdvancedTotalizer();
+    return neuralTotalizerCandidatesAsync(new Uint8ClampedArray(4),1,1,[]);
+   }),[]);
+   assert.equal(downloads.length,3,'The worker must reuse the verified bytes when persistent storage is unavailable');
+   return;
+  }
   await panel.screenshot({path:'../../outputs/Pump-reader-ready.png'});
   await page.reload();
   await expect(page.getByRole('complementary',{name:'Automatic reader preparation'})).toContainText('Reader ready for faster photos.');
