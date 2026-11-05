@@ -17,7 +17,9 @@ import { pilotPost } from './pilot-client.js';
 import { openingReady, pilotOpeningSlot } from './pilot-opening.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, TankDeliveries, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
+import { demoApi, MidShiftPhotoReadings, savePumpReading, PumpPhotoWorkflow, CashConfirmation, AutomaticPay, DepositUpgrade, DepositHistoryCard, ErrorAnalytics, DepositSettings } from "./upgrade-components.jsx";
+import { TankDeliveries } from './tank-deliveries.jsx';
+import { mergeDeliverySave } from './tank-deliveries.js';
 import { recoverCashDraft } from './cash-recovery.js';
 import { initialCashierStep } from './cash-first-workflow.js';
 import { mergePhoneReadings } from './phone-reading-sync.js';
@@ -2862,6 +2864,7 @@ export default function App() {
   const [cashierReportOpen, setCashierReportOpen] = useState(false);
   const [cashierReportDateOverride, setCashierReportDateOverride] = useState("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [isSavingDelivery, setIsSavingDelivery] = useState(false);
   const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   const [hasUnsavedOnlineChange, setHasUnsavedOnlineChange] = useState(false);
   const [isSavingOnline, setIsSavingOnline] = useState(false);
@@ -3558,6 +3561,24 @@ export default function App() {
     if(next!==latest)stageLocalReport(next);
     else setHasUnsavedOnlineChange(false);
     setSyncMessage('Latest saved shift loaded. Check your cash quantities before confirming.');
+  }
+
+  async function saveTankDelivery(delivery) {
+    const current=latestActiveReportForEdit(),key=reportKey(current.branch,current.date,current.shiftId);
+    setIsSavingDelivery(true);pumpMutationVersionRef.current+=1;
+    try {
+      // Finish this device's pending edits before appending to the fresh shift.
+      // Delivery saves own only received stock, never cash or pump evidence.
+      await prepareMidShiftPhotos();
+      const result=await demoApi('delivery-save',{reportKey:key,delivery},{mutationId:delivery.id});
+      const merge=local=>mergeDeliverySave(mergePhoneReadings(local,result.report),result);
+      activeReportRef.current=merge(activeReportRef.current);
+      for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=merge(ref.current);
+      setStore(old=>({...old,reports:{...old.reports,[key]:merge(old.reports[key])}}));
+      const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(merge(cached));
+      const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(merge(queued));
+      return result;
+    } finally {pumpMutationVersionRef.current+=1;setIsSavingDelivery(false);}
   }
 
   async function reloadLatestShift() {
@@ -4376,7 +4397,7 @@ export default function App() {
                   <button type="button" className="secondary" onClick={() => window.location.reload()}>Try Again</button>
                 </Section>
               : cashierReportOpen
-              ? <CashierPage onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
+              ? <CashierPage onSaveDelivery={saveTankDelivery} isSavingDelivery={isSavingDelivery} onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
               : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && branch === "Liloan" && <AdminReportAlerts sessionToken={sessionToken} manager />}
             {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
@@ -4574,7 +4595,7 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
   );
 }
 
-function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
+function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved, onReloadCash, report, result, warnings, criticalWarnings, missingPreviousShift, onGoToMissingShift, editingConflict, isSubmittingReport, activeEditors, currentShift, patchReport, updateRows, addRow, removeRow, confirmStartingOpening, confirmReport, onBackToShifts }) {
   const reviewFlags = reportReviewFlags(report, result);
   const activeRequest = correctionRequest(report);
   const fieldWarnings = pumpFieldWarnings(report);
@@ -4715,7 +4736,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
     <div className="cashier-wizard-shell">
       <div className="cashier-wizard-header">
         <div>
-          <button type="button" className="cashier-back-shifts" onClick={onBackToShifts}>Back to Shifts</button>
+          <button type="button" className="cashier-back-shifts" disabled={isSavingDelivery} onClick={onBackToShifts}>Back to Shifts</button>
           <span>Cashier Shift Report</span>
           <h2>{report.branch} - {currentShift.label}</h2>
           <p>{currentShift.date} - {reportStatusLabel(report, reviewFlags)}</p>
@@ -4731,7 +4752,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
         <div className="cashier-wizard-progress-copy"><b>Step {wizardStep + 1} of {wizardSteps.length}</b><span>{wizardSteps[wizardStep]}</span></div>
         <div className="cashier-wizard-track"><span style={{ width: `${((wizardStep + 1) / wizardSteps.length) * 100}%` }} /></div>
         <div className="cashier-wizard-dots">
-          {wizardSteps.map((step, index) => <button key={step} type="button" className={index === wizardStep ? "active" : index < wizardStep ? "done" : ""} onClick={() => requestWizardStep(index)} aria-label={`Open ${step}`}>{index + 1}</button>)}
+          {wizardSteps.map((step, index) => <button key={step} type="button" className={index === wizardStep ? "active" : index < wizardStep ? "done" : ""} disabled={isSavingDelivery} onClick={() => requestWizardStep(index)} aria-label={`Open ${step}`}>{index + 1}</button>)}
         </div>
       </div>}
 
@@ -4771,7 +4792,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
         )}
       </div>
 
-      <fieldset className="cashier-wizard-step" disabled={reportCompleted(report)}>
+      <fieldset className="cashier-wizard-step" disabled={reportCompleted(report) || isSavingDelivery}>
       {wizardStep === 0 && (
       <Section title="Cash on Hand">
 
@@ -4799,6 +4820,7 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
 
       {wizardStep === 3 && (
       <Section title="Reference Inventory">
+        <TankDeliveries key={reportKey(report.branch,report.date,report.shiftId)} report={report} onSave={onSaveDelivery} />
         <p className="neutral">Reference inventory only. Tank differences do not create a financial error. Sales come from pump readings.</p>
         <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Calibration", "Fuel Leak Loss (L)", "Current Actual Dip", "Before Tank Loss", "Underground Tank Difference"]} minWidth="980px">
           {result.tankRows.map((row, index) => (
@@ -4816,7 +4838,6 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
           ))}
         </Table>
         <FuelLeakLoss report={report} onChange={rows => patchReport(["root", "fuelLeakLosses"], rows)} />
-        <TankDeliveries report={report} patchReport={patchReport} />
       </Section>
       )}
 
@@ -4928,8 +4949,8 @@ function CashierPage({ onReading, onDemoSaved, onReloadCash, report, result, war
       </fieldset>
 
       {!openingSetupMode && <div className="cashier-wizard-actions">
-        <button type="button" className="secondary" onClick={() => setWizardStep((step) => Math.max(0, step - 1))} disabled={wizardStep === 0}>Back</button>
-        {wizardStep < wizardSteps.length - 1 && <button type="button" className="primary" onClick={() => requestWizardStep(Math.min(wizardSteps.length - 1, wizardStep + 1))}>Save and Next</button>}
+        <button type="button" className="secondary" onClick={() => setWizardStep((step) => Math.max(0, step - 1))} disabled={wizardStep === 0 || isSavingDelivery}>Back</button>
+        {wizardStep < wizardSteps.length - 1 && <button type="button" className="primary" disabled={isSavingDelivery} onClick={() => requestWizardStep(Math.min(wizardSteps.length - 1, wizardStep + 1))}>Save and Next</button>}
       </div>}
     </div>
   );
