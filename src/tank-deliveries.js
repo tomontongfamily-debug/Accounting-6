@@ -23,14 +23,20 @@ export function newTankDelivery(draft,id){
 export function mergeDeliverySave(local,result){
   const saved=result.report;
   if(!local||!saved||['branch','date','shiftId'].some(k=>local[k]!==saved[k]))return local;
+  const base=Number(local.pilotRevision||0),latest=Number(saved.pilotRevision||0);
+  const lastEdit=Number(saved.pilotLastNonReadingRevision??latest);
+  // An idempotent retry can return its original receipt after another device
+  // saved a later delivery. Keep that newer stock list and revision.
+  if(lastEdit<Number(local.pilotLastNonReadingRevision??base))return local;
   const next={...local,deliveries:saved.deliveries,tankRows:(local.tankRows||[]).map(row=>{
     const remote=saved.tankRows?.find(r=>r.tank===row.tank&&r.product===row.product);
     return remote?{...row,delivery:remote.delivery}:row;
   })};
   // A delivery owns the stock received. It cannot authorize replacing another
   // device's intervening manual edits with an older full shift draft.
-  if(Number(local.pilotRevision||0)>=Number(result.previousNonReadingRevision??saved.pilotRevision??0)){
-    next.pilotRevision=saved.pilotRevision;next.pilotLastNonReadingRevision=saved.pilotLastNonReadingRevision;next.serverMeta=saved.serverMeta;
+  if(base>=Number(result.previousNonReadingRevision??latest)){
+    next.pilotRevision=Math.max(base,latest);next.pilotLastNonReadingRevision=lastEdit;
+    if(latest>=base)next.serverMeta=saved.serverMeta;
   }
   return next;
 }

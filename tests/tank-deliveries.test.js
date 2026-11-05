@@ -8,6 +8,14 @@ test('simple deliveries require a driver, fuel, positive liters and a real time;
  for(const patch of [{driverName:''},{product:''},{liters:0},{liters:'bad'},{time:'24:00'},{time:'10:60'},{id:''}])assert.ok(tankDeliveryError({...delivery,...patch}));
  assert.equal(tankDeliveryError({product:'Diesel',liters:10,time:'08:00',reference:'DR-123'}),'');
 });
+test('late delivery receipts cannot remove later deliveries or rewind newer photo revisions',()=>{
+ const original={branch:'Barili',date:'2026-11-05',shiftId:'shift-1',pilotRevision:1,pilotLastNonReadingRevision:1,deliveries:[delivery],tankRows:[{tank:'Diesel',product:'Diesel',delivery:3000}]};
+ const later={...original,pilotRevision:2,pilotLastNonReadingRevision:2,deliveries:[delivery,{...delivery,id:'second',time:'14:30'}],tankRows:[{tank:'Diesel',product:'Diesel',delivery:6000}]};
+ assert.equal(mergeDeliverySave(later,{report:original,previousNonReadingRevision:0}),later);
+ const photos={...original,pilotRevision:3,pilotLastNonReadingRevision:0,deliveries:[],tankRows:[{tank:'Diesel',product:'Diesel',delivery:0}]};
+ const merged=mergeDeliverySave(photos,{report:original,previousNonReadingRevision:0});
+ assert.equal(merged.pilotRevision,3);assert.equal(merged.pilotLastNonReadingRevision,1);assert.equal(merged.tankRows[0].delivery,3000);
+});
 test('duplicate retries are detected without preventing a driver returning with another load',()=>{
  assert.equal(sameTankDelivery(delivery,{...delivery,id:'retry',driverName:'juan cruz'}),true);
  assert.equal(sameTankDelivery(delivery,{...delivery,id:'next',time:'14:00'}),false);
