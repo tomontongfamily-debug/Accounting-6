@@ -24,8 +24,10 @@ recognition decision. All model inference stays in the browser.
 Unresolved photos offer a closer retake without reflections first. Manual entry
 remains an explicit override, and normal cashier confirmation remains required.
 The live-camera guide encourages photographing the eight digits at a useful
-size. Pump tabs are disabled while capture, recognition or saving is active so
-switching pumps cannot discard an in-progress suggestion. Loading failures
+size. Pump tabs are disabled while capturing or uploading a photo. Once its
+upload is committed, staff can photograph the next pump while OCR continues.
+Cards stay mounted across pump changes so suggestions are not discarded.
+Loading failures
 remain recorded as errors, separately from uncertain images. No confirmed
 accounting reading or historical OCR suggestion is rewritten by this update.
 
@@ -70,6 +72,17 @@ their existing server saves.
 
 The benchmark figures below describe the earlier restrictive revision. They
 must not be read as the automatic fill rate of this revision.
+
+November 5 capture update: the photo-upload response includes the committed,
+role-filtered report. The phone and desktop apply it immediately, with OCR still
+pending and the previous confirmation invalidated. This adds no server mutation.
+Pump navigation resumes after upload while recognition and its existing result
+save continue. Staff can capture the next pump without waiting for a slow reader.
+Keep the page open until reading results finish saving; shift selection and
+logout remain disabled during background work on the phone. Confirmation for
+each nozzle remains unavailable until its OCR result has been saved, and staff
+must still check and confirm every reading. No recognizer thresholds, model
+files, historical readings or accounting amounts are changed.
 
 Final private validation covers all 752 current saved photos: 670 correct
 suggestions and 82 abstentions in the complete built-browser replay, followed

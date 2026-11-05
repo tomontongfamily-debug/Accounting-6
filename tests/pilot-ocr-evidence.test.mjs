@@ -9,6 +9,11 @@ test('OCR outcomes survive manual confirmation and stale null fields; retakes re
  let row=report.pumpRows[0];
  const upload=await act('/api/demo/photo',{reportKey:key,rowId:row.id,revision:0,replaceReading:true,data:'data:image/jpeg;base64,/9j/2Q=='},{mutationId:'first-photo',uploadPhoto:async()=>{}});
  row=state.reports[key].pumpRows[0];assert.equal(row.ocr_result.status,'pending');
+ assert.equal(upload.report.pilotRevision,state.reports[key].pilotRevision);
+ assert.equal(upload.report.pumpRows[0].photo_path,upload.photo_path);
+ assert.equal(upload.report.pumpRows[0].readingRevision,upload.readingRevision);
+ assert.equal(upload.report.pumpRows[0].readingConfirmed,false);
+ assert.equal(upload.report.pumpRows[0].ocr_result.status,'pending');
  const attempt={status:'detected',version:'test-model',completedAt:'2026-11-03T09:00:00Z'};
  await act('/api/demo/pump-reading',{reportKey:key,revision:row.readingRevision,row:{...row,ocr_detected_reading:10010.12,ocr_result:attempt}});
  row=state.reports[key].pumpRows[0];
