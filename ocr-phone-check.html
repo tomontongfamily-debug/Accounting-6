@@ -18,13 +18,27 @@
       progress { width: 100%; } ul, ol { padding-left: 22px; } li { margin: 12px 0; overflow-wrap: anywhere; }
       .photo-name { display: block; font-weight: 600; } .result { white-space: pre-wrap; }
       #message { min-height: 1.5em; } #errors { color: #96251d; } code { overflow-wrap: anywhere; }
+      #quick-results { margin-top: 0; padding: 10px; font-size: 12px; } #quick-results h2 { margin: 0; font-size: 16px; }
+      #quick-results p { margin: 5px 0; } table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th, td { padding: 4px 2px; text-align: left; border-bottom: 1px solid #d5dce2; overflow-wrap: anywhere; }
+      th:first-child { width: 29%; } main > h1 { margin: 0 0 8px; } #compact-status { font-weight: 600; }
     </style>
   </head>
   <body>
     <main>
       <h1>Phone OCR check</h1>
-      <p>Use an actual phone or a cloud service's physical phone. A desktop mobile viewport does not verify phone speed.</p>
-      <p><small>This diagnostic reads selected photos inside this browser. It does not upload photos or change station reports. Real-phone performance has not been verified by opening this page alone.</small></p>
+      <section id="quick-results" aria-label="Compact phone test evidence">
+        <h2>Measured results</h2>
+        <p id="compact-label">Local photo test · network condition unverified</p>
+        <p id="compact-status" role="status">Starting…</p>
+        <p id="compact-preparation"></p>
+        <p id="compact-probe"></p>
+        <p id="compact-summary">No photos tested yet.</p>
+        <table aria-label="Per photo measured results"><thead><tr><th>Case</th><th>Outcome</th><th>Reading</th><th>ms</th><th>Check</th></tr></thead><tbody id="compact-results"></tbody></table>
+        <small>Setup and download probe are separate from photo-reading time. Network labels do not establish a carrier generation.</small>
+      </section>
+      <p>Run on a phone OS and record whether it is a physical handset or a cloud emulator. Physical-handset speed requires physical-device testing.</p>
+      <p><small>This diagnostic reads local photos or specifically approved signed photo downloads inside this browser. It does not upload photos or change station reports. Device performance has not been verified by opening this page alone.</small></p>
       <section aria-labelledby="preparation-heading">
         <h2 id="preparation-heading">Automatic reader preparation</h2>
         <p id="preparation-status" role="status">Starting automatically…</p>
@@ -45,6 +59,7 @@
               <option value="slow-3g">Slow 3G</option>
               <option value="fast-3g">Fast 3G</option>
               <option value="4g">4G</option>
+              <option value="5g">5G</option>
               <option value="offline-after-preparation">Offline after preparation</option>
               <option value="custom">Custom / see device note</option>
             </select>
