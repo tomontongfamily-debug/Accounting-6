@@ -2,7 +2,7 @@ export type Reading = { id: string; pump: string; nozzle: string; product: strin
 export type Issue = { category: string; detail: string };
 export type CoveredReport = { key: string; branch: string; date: string; shiftId: string; cash: number; confirmed: boolean };
 export type Adjustment = { type: string; amount: number; note?: string };
-export type Deposit = { id: string; branch: string; depositDate: string; bank: string; reference: string; coveredReportKeys: string[]; carryoverSourceIds: string[]; coveredCash: number; previousCarryover: number; adjustments: Adjustment[]; expected: number; amount: number; unexplainedDifference: number; carryoverRemaining: number; partial: boolean; note: string; status: 'pending' | 'verified' | 'rejected'; manager: string; rejectionReason?: string };
+export type Deposit = { id: string; branch: string; depositDate: string; bank: string; reference: string; coveredReportKeys: string[]; carryoverSourceIds: string[]; coveredCash: number; previousCarryover: number; adjustments: Adjustment[]; expected: number; amount: number; unexplainedDifference: number; carryoverRemaining: number; partial: boolean; note: string; status: 'pending' | 'verified' | 'rejected'; manager: string; rejectionReason?: string; allocationVersion?: number; reportAllocations?: {reportKey:string;amount:number}[]; carryoverAllocations?: {depositId:string;amount:number}[] };
 export type Transaction = { id: string; branch: string; date: string; shiftId: string; amount: number; status: string };
 export const ERROR_CATEGORIES = ['CASH_VARIANCE','PUMP_READING','PUMP_OCR_CORRECTION','ONLINE_PAY','PO','REDEMPTION','MANUAL_DEDUCTION','FUEL_PRICE','MID_SHIFT_PRICE','TANK_DELIVERY','BANK_DEPOSIT','BANK_VERIFIER','OTHER'];
 export function money(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
@@ -78,12 +78,21 @@ export function permittedDay(date: string, noDepositDays: number[]): string {
 export function depositDue(report: CoveredReport, days: number[]): string {
   return permittedDay(datePlus(report.date,report.shiftId === 'shift-1' ? 0 : 1),days);
 }
+export function reservedReportCash(key:string, cash:number, deposits:Deposit[]):number {
+  const active=deposits.filter(d=>d.status!=='rejected');
+  if(active.some(d=>d.allocationVersion!==1&&d.coveredReportKeys.includes(key)))return cash;
+  return money(active.reduce((sum,d)=>sum+(d.reportAllocations||[]).filter(a=>a.reportKey===key).reduce((n,a)=>n+Number(a.amount),0),0));
+}
+export function availableCarryover(source:Deposit,deposits:Deposit[]):number {
+  const active=deposits.filter(d=>d.status!=='rejected');
+  if(active.some(d=>d.allocationVersion!==1&&d.carryoverSourceIds.includes(source.id)))return 0;
+  const reserved=active.reduce((sum,d)=>sum+(d.carryoverAllocations||[]).filter(a=>a.depositId===source.id).reduce((n,a)=>n+Number(a.amount),0),0);
+  return money(Math.max(0,source.carryoverRemaining-reserved));
+}
 export function depositCoverage(reports: CoveredReport[], deposits: Deposit[], branch: string, date: string, days: number[]) {
-  const reserved=new Set(deposits.filter(d => d.status !== 'rejected').flatMap(d => d.coveredReportKeys));
-  const carryUsed=new Set(deposits.filter(d => d.status !== 'rejected').flatMap(d => d.carryoverSourceIds));
-  const covered=reports.filter(r => r.branch===branch && r.confirmed && depositDue(r,days)<=date && !reserved.has(r.key)).sort((a,b)=>(a.date+a.shiftId).localeCompare(b.date+b.shiftId));
-  const carry=deposits.filter(d => d.branch===branch && d.status==='verified' && d.depositDate<=date && d.carryoverRemaining>0 && !carryUsed.has(d.id));
-  return { reports:covered, carryoverSourceIds:carry.map(d=>d.id), coveredCash:money(covered.reduce((sum,r)=>sum+r.cash,0)), previousCarryover:money(carry.reduce((sum,d)=>sum+d.carryoverRemaining,0)) };
+  const covered=reports.filter(r=>r.branch===branch&&r.confirmed&&depositDue(r,days)<=date).map(r=>({...r,originalCash:r.cash,cash:money(Math.max(0,r.cash-reservedReportCash(r.key,r.cash,deposits)))})).filter(r=>r.cash>0).sort((a,b)=>(a.date+a.shiftId).localeCompare(b.date+b.shiftId));
+  const carry=deposits.filter(d=>d.branch===branch&&d.status==='verified'&&d.depositDate<=date).map(d=>({...d,availableCash:availableCarryover(d,deposits)})).filter(d=>d.availableCash>0);
+  return {reports:covered,carryoverSourceIds:carry.map(d=>d.id),carryoverBalances:carry.map(d=>({id:d.id,availableCash:d.availableCash})),coveredCash:money(covered.reduce((sum,r)=>sum+r.cash,0)),previousCarryover:money(carry.reduce((sum,d)=>sum+d.availableCash,0))};
 }
 export function depositAmounts(coveredCash: number, carry: number, adjustments: Adjustment[], actual: number, partial: boolean) {
   const costs=money(adjustments.reduce((sum,a)=>sum+amount(a.amount),0));

@@ -2,7 +2,7 @@ import { configuredStations, stationStartDate, isStationOpening } from '../src/s
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
 import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEffectiveDailyPricing, reportKey } from '../src/accounting-engine.js';
-import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues } from './domain.mjs';
+import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues, reservedReportCash, availableCarryover } from './domain.mjs';
 import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
 import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
@@ -39,15 +39,15 @@ function branchAccess(session,branch) {
   if(['Cashier','Manager'].includes(session.role)&&branch!==session.branch) reject('This report belongs to another station.',403);
 }
 function authoritative(r) {
+  if(r.branch==='Moalboal')r={...r,deductions:{...r.deductions,bankCard:r.deductions?.bankCard??0}};
   r=refreshFuelCVReview(refreshManagerReconciliation(r,database),compute(r));
   if(r.date<stationStartDate(database,r.branch)) return refreshPosReport(r,database.posRedemptionSync);
   const pay=automaticTransactions(database.pay,r), po=automaticTransactions(database.po,r);
   const pricing=getEffectivePricing(database.priceBook,r.branch,r.date,r.shiftId);
   const active=database.deposits.filter(d=>d.status!=='rejected');
   const consumed=new Set(active.flatMap(d=>d.carryoverSourceIds));
-  const reserved=active.some(d=>d.coveredReportKeys.includes(keyOf(r)));
-  const remainder=active.filter(d=>d.anchorKey===keyOf(r)&&!consumed.has(d.id)).reduce((sum,d)=>sum+d.carryoverRemaining+Math.max(0,d.unexplainedDifference),0);
-  const pilotCashAwaitingDeposit=r.confirmed?money((reserved?0:Number(r.actualCashCounted||0))+remainder):undefined;
+  const remainder=active.filter(d=>d.anchorKey===keyOf(r)).reduce((sum,d)=>sum+availableCarryover(d,active)+(!consumed.has(d.id)?Math.max(0,d.unexplainedDifference):0),0);
+  const pilotCashAwaitingDeposit=r.confirmed?money(Math.max(0,Number(r.actualCashCounted||0)-reservedReportCash(keyOf(r),Number(r.actualCashCounted||0),active))+remainder):undefined;
   if(r.confirmed) return refreshPosReport({...r,pilotCashAwaitingDeposit},database.posRedemptionSync);
   const purchaseRows=r.confirmed?r.purchaseRows:[...(r.purchaseRows||[]).filter(row=>row.source!=='FuelTech CV'),...accountingCashVouchers(database,r)];
   const next={...r,purchaseRows,cvFuelRows:accountingFuelVouchers(database,r),cvImport:{mode:database.mode,source:'FuelTech CV'},pilotCashAwaitingDeposit,prices:{...r.prices,...pricing.prices},poRows:po.transactions.map(t=>({...t,source:'FuelTech Pay'})),onlinePay:{total:pay.total,count:pay.count,source:'FuelTech Pay'},deductions:{...r.deductions,gcash:pay.total,card:0,paymaya:0}};
@@ -90,6 +90,14 @@ function candidate(input,session,readingId) {
     r.deductions={...r.deductions,cashRedemption:input.deductions?.cashRedemption??r.deductions.cashRedemption,fuelRedemption:input.deductions?.fuelRedemption??r.deductions.fuelRedemption};
     r.pointsWithdrawn=Number(r.deductions.cashRedemption||0)+Number(r.deductions.fuelRedemption||0);
     if(r.cashReviewState&&r.reviewedExpectedCash!==compute(r).expectedCash){r.cashReviewState='';r.recountRequired=false;}
+  }
+  if(Object.hasOwn(input.deductions||{},'bankCard')) {
+    const cardAmount=amount(input.deductions.bankCard);
+    if(r.branch!=='Moalboal'&&cardAmount!==0)reject('Debit / credit card payments are enabled only in Moalboal.');
+    if(r.branch==='Moalboal') {
+      if(Number(r.deductions.bankCard||0)!==cardAmount){r.cashReviewState='';r.recountRequired=false;}
+      r.deductions={...r.deductions,bankCard:cardAmount};
+    }
   }
   if(old.cashCountConfirmed) {r.actualCashCounted=old.actualCashCounted;r.cashDenominations=old.cashDenominations;}
   else if(r.cashDenominations&&Object.values(r.cashDenominations).some(v=>v!==''&&v!=null)) r.actualCashCounted=denominationTotal(r.cashDenominations);
@@ -526,8 +534,19 @@ function validatePriceReadingOrder(report,change) {
       requireRole(session,'Manager','Admin','Approver');const branch=input.branch||session.branch;branchAccess(session,branch);
       return send({ok:true,deposits:database.deposits.filter(d=>session.role!=='Manager'||d.branch===session.branch),coverage:coverage(branch,input.date||getCurrentShift().date),noDepositDays:database.noDepositDays,checkRequiredCount:Object.values(database.reports).filter(r=>r.branch===branch&&exposeReport(r,session).checkRequired).length});
     }
+    if(route==='/api/demo/deposit-receipt') {
+      requireRole(session,'Manager');branchAccess(session,input.branch);
+      if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(input.data||''))reject('Upload a receipt photo.');
+      const image=Buffer.from(input.data.split(',')[1],'base64');
+      if(image.length>2*1024*1024||image[0]!==255||image[1]!==216)reject('Receipt photo is invalid or too large.');
+      const path='/api/pilot/photo?id='+mutationId,file=database.mode+'/'+input.branch+'/'+mutationId+'.jpg';
+      await uploadPhoto(file,image,{branch:input.branch,kind:'bank-receipt',uploadedAt:stamp()});
+      database.photos[path]={branch:input.branch,file,kind:'bank-receipt',uploadedAt:stamp()};
+      audit('deposit-receipt-uploaded',session,{receiptPath:path});save();return send({ok:true,receiptPath:path});
+    }
     if(route==='/api/demo/deposit-submit') {
       requireRole(session,'Manager');branchAccess(session,input.branch);
+      if(input.allocationVersion===1&&!String(input.reference||'').trim())input={...input,reference:'DEP-'+input.depositDate+'-'+mutationId.slice(0,8)};
       if(permittedDay(input.depositDate,database.noDepositDays)!==input.depositDate) reject('Choose a permitted deposit day.');
       if(!String(input.bank||'').trim() || !String(input.reference||'').trim()) reject('Bank and reference are required.');
       if(database.deposits.some(d=>d.branch===session.branch&&d.bank.toLowerCase()===input.bank.trim().toLowerCase()&&d.reference.toLowerCase()===input.reference.trim().toLowerCase()&&d.status!=='rejected')) reject('This bank reference has already been submitted.');
@@ -537,14 +556,45 @@ function validatePriceReadingOrder(report,change) {
       if(!keys.length&&!carryIds.length) reject('Select at least one shift or remaining balance.');
       if(keys.some(k=>!available.reports.some(r=>r.key===k))||carryIds.some(id=>!available.carryoverSourceIds.includes(id))) reject('A selected shift or balance is no longer available. Refresh and select again.',409);
       const reports=available.reports.filter(r=>keys.includes(r.key));
-      const covered={reports,carryoverSourceIds:carryIds,coveredCash:money(reports.reduce((sum,r)=>sum+r.cash,0)),previousCarryover:money(database.deposits.filter(d=>carryIds.includes(d.id)).reduce((sum,d)=>sum+d.carryoverRemaining,0))};
+      const covered={reports,carryoverSourceIds:carryIds,coveredCash:money(reports.reduce((sum,r)=>sum+r.cash,0)),previousCarryover:money(database.deposits.filter(d=>carryIds.includes(d.id)).reduce((sum,d)=>sum+availableCarryover(d,database.deposits),0))};
+      const explicit=input.allocationVersion===1;
+      if(input.allocationVersion!==undefined&&!explicit)reject('Refresh the deposit form.');
+      let allocationData={};
+      if(explicit) {
+        const checkAmount=value=>{
+          if(typeof value==='boolean'||value==null||!/^\d+(?:\.\d{1,2})?$/.test(String(value)))reject('Enter allocation amounts with up to two decimal places.');
+          const result=amount(value);if(result<=0)reject('Each selected shift needs an amount greater than zero.');return result;
+        };
+        if(!Array.isArray(input.reportAllocations)||!Array.isArray(input.carryoverAllocations)||input.reportAllocations.length!==keys.length||input.carryoverAllocations.length!==carryIds.length)reject('Enter an amount for every selected cash source.');
+        if(new Set(input.reportAllocations.map(a=>a.reportKey)).size!==keys.length||new Set(input.carryoverAllocations.map(a=>a.depositId)).size!==carryIds.length)reject('Select each cash source only once.');
+        const reportAllocations=input.reportAllocations.map(a=>{
+          const source=reports.find(r=>r.key===a.reportKey);if(!source)reject('This shift is no longer available.',409);
+          const value=checkAmount(a.amount);
+          if(value>source.cash)reject('The shift allocation exceeds its available cash. Refresh and review.',409);
+          if(amount(a.availableCash)!==source.cash)reject('Available shift cash changed. Refresh and review.',409);
+          return {reportKey:source.key,amount:value};
+        });
+        const carryoverAllocations=input.carryoverAllocations.map(a=>{
+          const source=database.deposits.find(d=>d.id===a.depositId&&carryIds.includes(d.id));if(!source)reject('This earlier balance is no longer available.',409);
+          const cash=availableCarryover(source,database.deposits),value=checkAmount(a.amount);
+          if(value>cash||amount(a.availableCash)!==cash)reject('Available earlier cash changed. Refresh and review.',409);
+          return {depositId:source.id,amount:value};
+        });
+        covered.coveredCash=money(reportAllocations.reduce((n,a)=>n+a.amount,0));
+        covered.previousCarryover=money(carryoverAllocations.reduce((n,a)=>n+a.amount,0));
+        const receipt=database.photos[input.receiptPath];
+        if(!receipt||receipt.kind!=='bank-receipt'||receipt.branch!==input.branch||(receipt.depositId&&database.deposits.some(d=>d.id===receipt.depositId&&d.status!=='rejected')))reject('Upload a receipt photo for this deposit.');
+        allocationData={allocationVersion:1,reportAllocations,carryoverAllocations,receiptPath:input.receiptPath};
+      }
       if((input.reviewedCoveredCash!==undefined&&amount(input.reviewedCoveredCash)!==covered.coveredCash)||(input.reviewedCarryover!==undefined&&amount(input.reviewedCarryover)!==covered.previousCarryover)) reject('The selected cash amount changed. Refresh and review it before submitting.',409);
       const adjustments=(input.adjustments||[]).map(a=>({type:a.type,amount:amount(a.amount),note:String(a.note||'').trim()}));
       if(adjustments.some(a=>!['TRANSPORTATION','BANK_FEE','OTHER_APPROVED_EXPENSE'].includes(a.type)||(a.type==='OTHER_APPROVED_EXPENSE'&&!a.note))) reject('Use a supported adjustment category and describe other approved expenses.');
-      if(input.partial&&!String(input.note||'').trim()) reject('Explain the partial deposit.');
-      const deposit={id:randomUUID(),branch:input.branch,depositDate:input.depositDate,bank:input.bank.trim(),reference:input.reference.trim(),amount:amount(input.amount),partial:!!input.partial,note:String(input.note||''),manager:session.role,status:'pending',coveredReportKeys:covered.reports.map(r=>r.key),carryoverSourceIds:covered.carryoverSourceIds,coveredCash:covered.coveredCash,previousCarryover:covered.previousCarryover,adjustments,...depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),!!input.partial)};
+      if(explicit&&(amount(input.amount)<=0||depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),false).unexplainedDifference!==0))reject('Shift amounts must match the deposit plus any fees. Adjust the amounts or remove a shift.');
+      if(!explicit&&input.partial&&!String(input.note||'').trim()) reject('Explain the partial deposit.');
+      const deposit={id:randomUUID(),branch:input.branch,depositDate:input.depositDate,bank:input.bank.trim(),reference:input.reference.trim(),amount:amount(input.amount),partial:explicit?false:!!input.partial,note:String(input.note||''),...allocationData,manager:session.role,status:'pending',coveredReportKeys:covered.reports.map(r=>r.key),carryoverSourceIds:covered.carryoverSourceIds,coveredCash:covered.coveredCash,previousCarryover:covered.previousCarryover,adjustments,...depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),explicit?false:!!input.partial)};
       database.deposits.push(deposit);
-      for(const report of covered.reports) database.reports[report.key].depositCoverage={id:deposit.id,status:'pending'};
+      if(explicit)database.photos[input.receiptPath]={...database.photos[input.receiptPath],depositId:deposit.id};
+      for(const report of covered.reports) database.reports[report.key].depositCoverage={id:deposit.id,status:'pending',remaining:money(Math.max(0,Number(database.reports[report.key].actualCashCounted||0)-reservedReportCash(report.key,Number(database.reports[report.key].actualCashCounted||0),database.deposits)))};
       const anchor=covered.reports.at(-1)?.key || database.deposits.find(d=>d.id===covered.carryoverSourceIds[0])?.anchorKey;
       deposit.anchorKey=anchor;
       if(anchor) database.reports[anchor].deposits.push({...deposit,groupId:deposit.id,verified:false,coverageLabel:`${covered.reports.length} reports + carryover`,pilotAutomatic:true});
@@ -557,8 +607,10 @@ function validatePriceReadingOrder(report,change) {
       if(input.action==='reject' && !['DEPOSIT NOT FOUND','WRONG AMOUNT','WRONG BANK','WRONG REFERENCE','PARTIAL AMOUNT RECEIVED','OTHER'].includes(input.reason)) reject('Choose a rejection reason.');
       d.status=input.action==='confirm'?'verified':'rejected';d.rejectionReason=input.action==='reject'?input.reason:'';
       for(const key of d.coveredReportKeys) {
-        if(d.status==='rejected') delete database.reports[key].depositCoverage;
-        else database.reports[key].depositCoverage={id:d.id,status:d.status};
+        const remaining=money(Math.max(0,Number(database.reports[key].actualCashCounted||0)-reservedReportCash(key,Number(database.reports[key].actualCashCounted||0),database.deposits)));
+        const latest=database.deposits.filter(other=>other.status!=='rejected'&&other.coveredReportKeys.includes(key)).at(-1);
+        if(latest)database.reports[key].depositCoverage={id:latest.id,status:latest.status,remaining};
+        else delete database.reports[key].depositCoverage;
       }
       if(d.anchorKey) database.reports[d.anchorKey].deposits=database.reports[d.anchorKey].deposits.map(row=>row.id===d.id?{...row,verified:d.status==='verified',removed:d.status==='rejected',status:d.status}:row);
       audit(`deposit-${d.status}`,session,{depositId:d.id,reason:d.rejectionReason});save();return send({ok:true});

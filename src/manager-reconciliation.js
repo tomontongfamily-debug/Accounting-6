@@ -28,7 +28,7 @@ export function managerReconciliationIssues(report) {
 export function managerDepositCoverageIssues(report, state) {
   if (!state) return [];
   const key=report.branch+'__'+report.date+'__'+report.shiftId;
-  return (state.deposits || []).filter(d => d.status !== 'rejected' && d.anchorKey === key && (d.coveredReportKeys || []).some(k => approvedManagerReconciliation(state.reports[k]))).flatMap(d => {
+  return (state.deposits || []).filter(d => d.status !== 'rejected' && d.allocationVersion !== 1 && d.anchorKey === key && (d.coveredReportKeys || []).some(k => approvedManagerReconciliation(state.reports[k]))).flatMap(d => {
     const reports=(d.coveredReportKeys || []).map(k => state.reports[k]);
     if (reports.some(r => !r || !Number.isFinite(Number(r.actualCashCounted)))) return [];
     const cash=round(reports.reduce((sum,r) => sum+Number(r.actualCashCounted),0)), saved=Number(d.coveredCash), difference=round(cash-saved);

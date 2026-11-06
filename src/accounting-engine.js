@@ -470,7 +470,7 @@ function pointsWithdrawnFromRedemptions(report = {}) {
 }
 
 function deductionLabel(key) {
-  return key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
+  return key === "bankCard" ? "Debit / credit card" : key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
@@ -604,6 +604,7 @@ function createReport(branch, date, prices, shiftId = "shift-1", pricingMeta = {
     deductions: {
       gcash: 0,
       card: 0,
+      ...(branch === "Moalboal" ? { bankCard: 0 } : {}),
       cashRedemption: 0,
       fuelRedemption: 0,
     },
