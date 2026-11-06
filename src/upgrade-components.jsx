@@ -125,7 +125,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       // Keep an interrupted upload even when its commit result is uncertain.
       // Same-ID retries keep the receipt and original nozzle revision checks.
       retain=e.status>=500||e.saveUncertain===true
-        ||e.status===409&&e.message==='Another device saved first. Refresh and retry.';
+        ||e.status===409&&(e.retryableConflict===true||/^Another device saved first\./.test(e.message||''));
       if(retain){setRetryCapture(capture);setError(capture.saved?'The station server could not verify the reading save. Your capture is kept on this screen. Retry saving; no retake is needed.':'The station server could not verify this photo save. Your capture is kept on this screen. Retry saving when the connection recovers.');}
       else setError(e.message);
     }finally{if(active.current&&recognitionRun.current===run){recognitionRun.current++;setBusy(false);setUploading(false);if(!retain)setPendingPhoto('');setLiveReading(null);}}
