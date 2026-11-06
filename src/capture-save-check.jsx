@@ -31,6 +31,9 @@ window.fetch=async(url,options)=>{
 };
 const drawing=document.createElement('canvas');drawing.width=800;drawing.height=400;
 const ctx=drawing.getContext('2d');ctx.fillStyle='#d6e3b7';ctx.fillRect(0,0,800,400);ctx.fillStyle='#10241b';ctx.font='90px monospace';ctx.fillText('10010.12',70,230);
+// Android produces video frames only while the source canvas keeps drawing.
+// A single initial paint can leave a newly attached stream permanently empty.
+setInterval(()=>ctx.fillRect(0,0,1,1),100);
 const media={getUserMedia:async()=>drawing.captureStream(20)};
 Object.defineProperty(navigator,'mediaDevices',{value:media,configurable:true});
 const recognize=async()=>{await delay(500);return {reading:10010.12,attempt:{status:'detected',version:'SIMULATED-reader',durationMs:500,completedAt:new Date().toISOString()}};};
