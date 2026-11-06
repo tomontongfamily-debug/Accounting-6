@@ -6,8 +6,9 @@ import {completedPhotoOcrEvidence} from './ocr-evidence.js';
 // Completely isolated functional fixture. Its fetch stub never delegates to
 // the network, and no account, station photo or signed URL is used.
 window.__fueltechPilotConfig={mode:'shadow',start_date:'2026-11-06'};
+const editDemo=new URLSearchParams(location.search).get('edit')==='1';
 const report={branch:'Latency demo',date:'2026-11-06',shiftId:'shift-2',pilotRevision:1,
-  pumpRows:[1,2].map(number=>({id:'isolated-'+number,pump:'Pump '+number,nozzle:'Regular',product:'Regular',opening:10000,closing:'',readingRevision:0,readingConfirmed:false}))};
+  pumpRows:(editDemo?[1]:[1,2]).map(number=>({id:'isolated-'+number,pump:'Pump '+number,nozzle:'Regular',product:'Regular',opening:10000,closing:'',readingRevision:0,readingConfirmed:false}))};
 const calls=[],shown=new Map(),started=performance.now();
 const evidence=document.getElementById('evidence'),cards=document.getElementById('cards');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -37,7 +38,13 @@ setInterval(()=>ctx.fillRect(0,0,1,1),100);
 const media={getUserMedia:async()=>drawing.captureStream(20)};
 Object.defineProperty(navigator,'mediaDevices',{value:media,configurable:true});
 const recognize=async()=>{await delay(500);return {reading:10010.12,attempt:{status:'detected',version:'SIMULATED-reader',durationMs:500,completedAt:new Date().toISOString()}};};
+if(editDemo){
+  Object.assign(report.pumpRows[0],{photo_path:drawing.toDataURL('image/jpeg',.95),ocr_detected_reading:10070.12,ocr_result:{status:'detected',version:'SIMULATED-reader',durationMs:500},readingRevision:1});
+  document.querySelector('h1').textContent='Check and edit a meter reading';
+  document.querySelector('body>p').textContent='Isolated app demo. The sample photo says 10010.12; the simulated OCR suggestion is wrong. Tap Edit number to compare and correct it. No station records are changed.';
+}
 function update(){
+  if(editDemo){evidence.textContent='App demo · sample photo and simulated OCR\nEdit the number using the enlarged photo.';return;}
   for(const card of cards.querySelectorAll('[data-pump-row-id]')){
     if([...card.querySelectorAll('[role=status]')].some(node=>node.textContent.includes('Reading found:'))&&!shown.has(card.dataset.pumpRowId))shown.set(card.dataset.pumpRowId,Math.round(performance.now()-started));
   }
@@ -64,4 +71,4 @@ async function run(){
   }catch(error){errors.push(error.message);complete=true;update();}
 }
 const tick=setInterval(()=>{if(complete){clearInterval(tick);return;}if(performance.now()-started>45000){errors.push('Fixture exceeded 45 seconds.');complete=true;}update();},200);
-run();
+if(editDemo){complete=true;update();}else run();
