@@ -90,7 +90,7 @@ test('calibration accepts full and ranged responses only with the exact requeste
   assert.equal(response.contentLength,expectedByteCount);assert.equal(response.requestedRange,null);
  }
  const response=validateCalibrationResponse({status:206,contentRange:'bytes 0-262143/1048576',contentLength:'262144',bytes:262144,expectedByteCount:262144});
- assert.deepEqual(response,{status:206,contentRange:'bytes 0-262143/1048576',contentLength:262144,requestedRange:'bytes=0-262143',totalByteCount:1048576});
+ assert.deepEqual(response,{status:206,contentRange:'bytes 0-262143/1048576',contentLength:262144,contentEncoding:null,requestedRange:'bytes=0-262143',totalByteCount:1048576});
  // A streaming response can omit Content-Length; its actual byte count and
  // the range total are still checked before measurements are accepted.
  assert.equal(validateCalibrationResponse({status:206,contentRange:'bytes 0-262143/1048576',contentLength:null,bytes:262144,expectedByteCount:262144}).contentLength,null);
@@ -106,6 +106,21 @@ test('calibration rejects ignored ranges, malformed headers and truncated or ove
  assert.throws(()=>validateCalibrationResponse({status:206,contentRange:'bytes 0-98303/98304',contentLength:'98304',bytes:98304}));
  assert.throws(()=>validateCalibrationResponse({status:200,contentRange:'bytes 0-98303/98304',contentLength:'98304',bytes:98304}));
 });
+test('encoded Content-Length validates wire bytes while the decoded fixture and range remain exact',()=>{
+ const bytes=LARGE_CALIBRATION_BYTES,encodedBodySize=bytes+5;
+ const input={status:200,contentRange:null,contentLength:String(encodedBodySize),contentEncoding:'br',encodedBodySize,bytes,expectedByteCount:bytes};
+ const response=validateCalibrationResponse(input);
+ assert.equal(response.contentLength,encodedBodySize);assert.equal(response.contentEncoding,'br');
+ assert.throws(()=>validateCalibrationResponse({...input,contentLength:String(bytes)}));
+ assert.throws(()=>validateCalibrationResponse({...input,encodedBodySize:undefined}));
+ assert.throws(()=>validateCalibrationResponse({...input,bytes:encodedBodySize}));
+ assert.throws(()=>validateCalibrationResponse({...input,bytes:bytes-1}));
+ assert.equal(validateCalibrationResponse({...input,contentLength:null,encodedBodySize:undefined}).contentLength,null);
+ assert.equal(validateCalibrationResponse({...input,contentLength:String(bytes),contentEncoding:'identity'}).contentLength,bytes);
+ const ranged={...input,status:206,contentRange:'bytes 0-262143/1048576',contentLength:'262149',encodedBodySize:262149,bytes:262144,expectedByteCount:262144};
+ assert.equal(validateCalibrationResponse(ranged).contentLength,262149);
+ assert.throws(()=>validateCalibrationResponse({...ranged,contentRange:'bytes 0-262148/1048576'}));
+});
 const resourceTiming=(bytes,bodyMs)=>({startTime:50,fetchStart:50,requestStart:60,responseStart:100,responseEnd:100+bodyMs,encodedBodySize:bytes,decodedBodySize:bytes,transferSize:bytes+300,workerStart:0});
 const close=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-8,`${actual} != ${expected}`);
 test('calibration keeps raw wall/body rates and the Android burst-adjusted lower bound separately',()=>{
@@ -118,6 +133,17 @@ test('calibration keeps raw wall/body rates and the Android burst-adjusted lower
  assert.equal(metrics.burstModel.assumedBurstBytes,131072);assert.equal(metrics.burstModel.upperRateTolerance,1.3);
  assert.match(metrics.burstModel.source,/android\.googlesource\.com/);assert.match(metrics.burstModel.rateMeaning,/lower bound/);
  assert.match(metrics.interpretation,/without proving enforcement/);
+});
+test('Brotli overhead keeps a valid decoded 1 MiB probe verifiable and uses wire bytes for rate math',()=>{
+ const bytes=LARGE_CALIBRATION_BYTES,encodedBodySize=bytes+5,bodyMs=12026.2;
+ const resource={...resourceTiming(bytes,bodyMs),encodedBodySize,transferSize:encodedBodySize+300};
+ const metrics=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:12918,resource,expectedIngressBytesPerSecond:125000});
+ assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');
+ assert.equal(metrics.resourceTiming.decodedBodySize,bytes);assert.equal(metrics.resourceTiming.encodedBodySize,encodedBodySize);
+ close(metrics.bodyMbps,encodedBodySize*8/bodyMs/1000);
+ close(metrics.burstAdjustedBodyMbps,(encodedBodySize-ANDROID_INGRESS_BURST_BYTES)*8/bodyMs/1000);
+ close(metrics.theoreticalMinimumBodyMs,7340.072);
+ assert.equal(calibrationMetrics({...metrics,resource:{...resource,decodedBodySize:bytes-1}}).limitAssessment,'not-verifiable');
 });
 test('a 96 KiB probe cannot issue a cap verdict while the initial 128 KiB burst covers it',()=>{
  const resource=resourceTiming(CALIBRATION_BYTES,10);
@@ -149,7 +175,9 @@ test('a cap verdict requires exact fixture bytes and usable transfer timing, but
  const bytes=LARGE_CALIBRATION_BYTES,resource=resourceTiming(bytes,8000),input={bytes,expectedByteCount:bytes,wallMs:8500,resource,expectedIngressBytesPerSecond:125000};
  for(const change of [
   {bytes:bytes-1},{expectedByteCount:CALIBRATION_BYTES},{resource:undefined},
-  {resource:{...resource,transferSize:0}},{resource:{...resource,encodedBodySize:bytes-1}},
+  {resource:{...resource,transferSize:0}},{resource:{...resource,decodedBodySize:bytes-1}},
+  {resource:{...resource,decodedBodySize:undefined}},{resource:{...resource,encodedBodySize:0}},
+  {resource:{...resource,encodedBodySize:NaN}},{resource:{...resource,encodedBodySize:Infinity}},
   {resource:{...resource,responseEnd:100}},{resource:{...resource,responseEnd:99}},
   {resource:{...resource,responseStart:NaN}},{expectedIngressBytesPerSecond:0},
  ])assert.equal(calibrationMetrics({...input,...change}).limitAssessment,'not-verifiable');

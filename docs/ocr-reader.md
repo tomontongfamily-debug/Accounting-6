@@ -57,6 +57,9 @@ eight-cell row, its visible six-plus-two decimal and a qualified agreeing OCR
 pass may explain an interior split. Every physical nine-cell row and every
 unexplained extra glyph still blocks the eight-cell fallback. Explaining a split
 adds no reading or vote; the existing grid/neural consensus remains required.
+Small OCR box borders may extend beyond the ink, but glyph centers stay inside
+the original cell ranges. The proof rejects oversized glyphs, wide merged cells,
+outside-leading centers and splits in the first or last physical cell.
 
 ## Real-phone acceptance testing
 

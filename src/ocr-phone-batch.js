@@ -70,13 +70,17 @@ export function calibrationRequest(expectedByteCount=CALIBRATION_BYTES){
   expectedByteCount,totalByteCount:expectedByteCount===CALIBRATION_BYTES?CALIBRATION_BYTES:LARGE_CALIBRATION_BYTES,
   headers:range?{Range:`bytes=0-${expectedByteCount-1}`}:{}};
 }
-export function validateCalibrationResponse({status,contentRange,contentLength,bytes,expectedByteCount=CALIBRATION_BYTES}){
+export function validateCalibrationResponse({status,contentRange,contentLength,contentEncoding=null,encodedBodySize,bytes,expectedByteCount=CALIBRATION_BYTES}){
  const request=calibrationRequest(expectedByteCount),range=request.headers.Range!==undefined;
  if(status!==(range?206:200))throw Error('Calibration response status did not match the requested byte range.');
  if(bytes!==expectedByteCount)throw Error('Calibration file size did not match the requested byte count.');
- if(contentLength!==null&&contentLength!==undefined&&(!/^\d+$/.test(contentLength)||Number(contentLength)!==expectedByteCount))throw Error('Calibration Content-Length did not match the requested byte count.');
+ // Fetch returns decoded bytes. Content-Length instead describes the encoded
+ // body when Content-Encoding is present (even random data can gain overhead).
+ const encoded=typeof contentEncoding==='string'&&contentEncoding.trim()!==''&&contentEncoding.trim().toLowerCase()!=='identity';
+ const expectedContentLength=encoded?finite(encodedBodySize):expectedByteCount;
+ if(contentLength!==null&&contentLength!==undefined&&(!/^\d+$/.test(contentLength)||!expectedContentLength||Number(contentLength)!==expectedContentLength))throw Error('Calibration Content-Length did not match the response body size.');
  if(range?contentRange!==`bytes 0-${expectedByteCount-1}/${request.totalByteCount}`:contentRange!==null&&contentRange!==undefined)throw Error('Calibration Content-Range did not match the requested byte range.');
- return {status,contentRange:contentRange??null,contentLength:contentLength===null||contentLength===undefined?null:Number(contentLength),
+ return {status,contentRange:contentRange??null,contentLength:contentLength===null||contentLength===undefined?null:Number(contentLength),contentEncoding,
   requestedRange:request.headers.Range??null,totalByteCount:request.totalByteCount};
 }
 export function calibrationMetrics({bytes,wallMs,resource,expectedByteCount=CALIBRATION_BYTES,expectedIngressBytesPerSecond=null}){
@@ -90,7 +94,7 @@ export function calibrationMetrics({bytes,wallMs,resource,expectedByteCount=CALI
  const theoreticalMinimumBodyMs=timing?.encodedBodySize>0&&Number.isFinite(expectedIngressBytesPerSecond)&&expectedIngressBytesPerSecond>0?Math.max(timing.encodedBodySize-ANDROID_INGRESS_BURST_BYTES,0)/expectedIngressBytesPerSecond*1000:null;
  let limitAssessment='not-requested',observedToRequestedRatio=null;
  if(expectedIngressBytesPerSecond!==null){
-  if(!CALIBRATION_BYTE_CHOICES.includes(expectedByteCount)||bytes!==expectedByteCount||timing?.encodedBodySize!==expectedByteCount||bytes<=ANDROID_INGRESS_BURST_BYTES||!burstAdjustedBodyMbps||!timing?.transferSize||expectedIngressBytesPerSecond<=0||!Number.isFinite(expectedIngressBytesPerSecond))limitAssessment='not-verifiable';
+  if(!CALIBRATION_BYTE_CHOICES.includes(expectedByteCount)||bytes!==expectedByteCount||timing?.decodedBodySize!==expectedByteCount||bytes<=ANDROID_INGRESS_BURST_BYTES||!burstAdjustedBodyMbps||!timing?.transferSize||expectedIngressBytesPerSecond<=0||!Number.isFinite(expectedIngressBytesPerSecond))limitAssessment='not-verifiable';
   else{
    observedToRequestedRatio=burstAdjustedBodyMbps*1e6/8/expectedIngressBytesPerSecond;
    limitAssessment=observedToRequestedRatio>CALIBRATION_LIMIT_TOLERANCE?'requested-limit-not-observed':observedToRequestedRatio<.2?'slower-than-requested':'consistent-with-requested-limit';
