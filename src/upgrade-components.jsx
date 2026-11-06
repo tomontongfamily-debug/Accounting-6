@@ -1,6 +1,7 @@
 import {captureKey,keepPumpCapture,readPumpCapture,forgetPumpCapture} from './pump-capture-store.js';
 import {finalizePumpPhotoInput,captureDuration} from './pump-capture-flow.js';
 import {MeterReadingEditor} from './meter-reading-editor.jsx';
+import {ReadingFinalConfirmation} from './reading-final-confirmation.jsx';
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect } from './totalizer-ocr.js';
@@ -41,6 +42,8 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   const [ocrResult,setOcrResult]=useState(row.ocr_result);
   const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+  const [finalConfirmation,setFinalConfirmation]=useState(null);
+  const confirming=useRef(false);
   const [uploading,setUploading]=useState(false);
   const [captureStage,setCaptureStage]=useState('photo');const [elapsed,setElapsed]=useState(0);
   const [retryCapture,setRetryCapture]=useState(null);
@@ -235,13 +238,20 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
     }catch{if(active.current)setError('This image could not be opened. Please take another photo.');}
     finally{captureInFlight.current=false;if(active.current){setBusy(false);setUploading(false);}}
   }
+  function askToConfirm(){
+    if(busy||locked||retryCapture||!photo||draft===''||warning.blocked)return;
+    setFinalConfirmation({reading:draft,photo,revision:revision.current});
+  }
   async function confirm() {
-    if(!photo||draft===''||warning.blocked)return;
-    if(warning.level!=='NORMAL'&&!window.confirm(`${warning.message}\nConfirm this reading only after checking the pump. Admin will see the warning.`))return;
+    if(!finalConfirmation||confirming.current||busy)return;
+    if(locked||retryCapture||warning.blocked||!photo||draft===''||finalConfirmation.photo!==photo||finalConfirmation.reading!==draft||finalConfirmation.revision!==revision.current){
+      setFinalConfirmation(null);setError('This reading changed. Check the photo and number again before confirming.');return;
+    }
+    confirming.current=true;setFinalConfirmation(null);setCaptureStage('confirmation-save');
     setBusy(true);setError('');
     try {await saveReading({...row,closing:Number(draft),closingEntered:true,closingEntrySource:'cashier',photo_path:photo,ocr_detected_reading:detected,ocr_result:ocrResult,ocr_was_edited:detected!==null&&Number(draft)!==detected,readingConfirmed:true,confirmed_closing_reading:Number(draft),calculated_liters:warning.liters,reading_warning:warning.level});
     setEditing(false);
-    } catch(e){setError(e.message);} finally{setBusy(false);}
+    } catch(e){setError(e.message);} finally{confirming.current=false;setBusy(false);}
   }
   async function editReading() {
     // A suggestion is not an official number yet. Open its editor locally;
@@ -255,7 +265,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><p>Fill the guide with all digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo||pendingPhoto?'Retake photo':'Open camera'}</button>{(!phoneView||nativeCamera)&&<label className="photo-picker">{phoneView?'Use phone camera':'Take / choose photo'}<input ref={fileInput} type="file" accept="image/*" capture={phoneView?'environment':undefined} onChange={selectPhoto} disabled={busy}/></label>}</div>
-    {busy&&<p role="status">{liveReading!==null?<>Reading found: <strong>{Number(liveReading).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. {captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':'Saving photo and reading…'}</>:captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':uploading?(liveStatus==='error'?'Automatic reading stopped. Saving your photo; no retake is needed to retry the reader.':'Uploading photo and saving its backup. Automatic reading runs separately…'):'Photo saved. Automatic reading in progress. You can photograph the next pump.'} <small>{elapsed} seconds total</small></p>}
+    {busy&&<p role="status">{captureStage==='confirmation-save'?<>Saving your confirmed reading: <strong>{draft}</strong>…</>:liveReading!==null?<>Reading found: <strong>{Number(liveReading).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. {captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':'Saving photo and reading…'}</>:captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':uploading?(liveStatus==='error'?'Automatic reading stopped. Saving your photo; no retake is needed to retry the reader.':'Uploading photo and saving its backup. Automatic reading runs separately…'):'Photo saved. Automatic reading in progress. You can photograph the next pump.'} <small>{elapsed} seconds total</small></p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {retryCapture&&!busy&&<button type="button" className="primary" onClick={()=>resumeCapture(retryCapture)}>Retry saving {retryCapture.saved?'reading':'photo'}</button>}
     {retryCapture&&!busy&&detected!==null&&<p role="status">Reading found on this device: <strong>{Number(detected).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. Waiting to save online.</p>}
@@ -265,9 +275,11 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
     {photo&&!busy&&!retryCapture&&!row.readingConfirmed&&(retryReadingCapture||detected===null)&&<button type="button" className="secondary" onClick={retryAutomaticReading}>Retry automatic reading</button>}
     {photo&&!busy&&!retryCapture&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&!retryCapture&&<div className="reading-confirm">{detected!==null&&!editing&&<p className="reading-check-question"><strong>Are these the right numbers?</strong></p>}{editing?<MeterReadingEditor photo={photo} label={`${row.pump} ${row.nozzle} ${opening?'opening':change?'price-change':'closing'} reading`} value={draft} onChange={setDraft}/>:detected!==null&&<label>Detected reading<input aria-label={`${row.pump} ${row.nozzle} ${opening?'opening':change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly/></label>}
       {draft!==''&&<p className={warning.level==='NORMAL'?'neutral':'warning-box'}>{!opening&&<>{warning.liters.toLocaleString('en-PH')} {change?'L since opening':'L metered'} · {warning.level}<br/></>}{warning.message}</p>}
-      <div className="demo-actions">{(detected!==null||editing)&&<button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={confirm}>{editing?'Save corrected reading':'Yes, confirm reading'}</button>}{!editing&&<button type="button" className="secondary" onClick={editReading}>{detected===null?'Enter number manually':'Edit number'}</button>}</div>
+      <div className="demo-actions">{(detected!==null||editing)&&<button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={askToConfirm}>{editing?'Save corrected reading':'Yes, confirm reading'}</button>}{!editing&&<button type="button" className="secondary" onClick={editReading}>{detected===null?'Enter number manually':'Edit number'}</button>}</div>
     </div>}</>}
     {!change&&!opening&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
+    {finalConfirmation&&<ReadingFinalConfirmation reading={finalConfirmation.reading} pump={`${row.pump} · ${row.nozzle}`} shift={`${report.date} · ${report.shiftId.replace('shift-','Shift ')}`}
+      warning={warning.level!=='NORMAL'?warning.message:''} onCancel={()=>setFinalConfirmation(null)} onConfirm={confirm}/>}
   </article>;
 }
 function ReaderPreparation(){

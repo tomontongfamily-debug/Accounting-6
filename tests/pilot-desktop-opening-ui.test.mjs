@@ -66,7 +66,7 @@ test('The desktop opens October 5 Shift 2 and retains all eight phone-confirmed 
         try {await page.getByText('8 / 8 nozzles complete',{exact:true}).waitFor({timeout:5000});}
         catch(error){console.log(JSON.stringify({text:await page.locator('body').innerText(),pumps:state.reports[key].pumpRows}));throw error;}
         assert.deepEqual(state.reports[key].pumpRows,expectedPumps);
-        assert.equal(await page.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+        assert.equal(await page.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
       } else assert.match(await shift.innerText(),/Complete opening setup first/);
       assert.deepEqual(errors,[]);await context.close();
     }

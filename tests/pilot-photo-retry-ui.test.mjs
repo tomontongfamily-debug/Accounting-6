@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
@@ -40,12 +41,12 @@ for(const stage of ['photo','pump-reading'])for(const failure of ['unavailable',
   await expect(retry).toBeVisible();
   await expect(card.getByRole('alert')).toContainText('station server');
   assert.ok((await card.locator('.totalizer-photo').getAttribute('src')).startsWith('data:image/jpeg'));
-  assert.equal(await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+  assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
   assert.equal(await card.getByRole('button',{name:'Enter number manually',exact:true}).count(),0);
   await expect(page.getByLabel('Shift to photograph')).toBeDisabled();
   assert.equal(stage==='photo'?photoAttempts:readingAttempts,1,'Do not automatically double the failed station read');
   failing=false;await retry.click();
-  await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+  await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
   await expect(card).toContainText('Automatic reading: 1.2 seconds. Photo transfer and server saving are separate.');
   assert.equal(await page.evaluate(()=>globalThis.recognitionCalls),1);
   assert.equal(uploads.size,1,'Retrying the reading must not upload another photo');
@@ -53,7 +54,7 @@ for(const stage of ['photo','pump-reading'])for(const failure of ['unavailable',
   assert.equal(readingAttempts,stage==='photo'?1:2);
   const saved=state.reports[key].pumpRows[0];
   assert.equal(saved.readingConfirmed,false);assert.equal(saved.ocr_detected_reading,10010);assert.equal(saved.ocr_result.durationMs,1234);
-  await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
+  await confirmPumpReading(card);
   await expect(card.getByText('✓ Complete',{exact:true})).toBeVisible();
   assert.equal(state.reports[key].pumpRows[0].closing,10010);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);

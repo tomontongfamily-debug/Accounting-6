@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
@@ -53,14 +54,14 @@ for(const failure of ['upload-before-commit','lost-photo-response','lost-reading
   const retry=card.getByRole('button',{name:failure==='lost-reading-response'?'Retry saving reading':'Retry saving photo',exact:true});
   await expect(retry).toBeVisible();await expect(card.locator('header')).toContainText('Save pending');assert.ok((await card.locator('.totalizer-photo').getAttribute('src')).startsWith('data:image/jpeg'));
   await expect(phone.getByLabel('Shift to photograph')).toBeDisabled();
-  failing=false;await retry.click();await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+  failing=false;await retry.click();await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
   await expect(card.locator('header')).toContainText('Photo saved · Confirm reading');
   assert.equal(uploads.size,1);assert.equal(new Set(requests.map(r=>JSON.stringify(r))).size,1,'Every retry has the exact original request ID, revision and payload');
   assert.equal(await phone.evaluate(()=>globalThis.recognitionCalls),1);
   await desktop.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await expect(desktopCard.locator('.totalizer-photo')).toHaveAttribute('src',state.reports[key].pumpRows[0].photo_path);
   await expect.poll(()=>desktopCard.locator('.totalizer-photo').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
-  await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();await expect(card.getByText('✓ Complete',{exact:true})).toBeVisible();
+  await confirmPumpReading(card);await expect(card.getByText('✓ Complete',{exact:true})).toBeVisible();
   await desktop.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(desktopCard.getByText(/Reading confirmed and saved/)).toBeVisible();
   assert.equal(state.reports[key].pumpRows[0].closing,10010);assert.equal(state.reports[key].actualCashCounted,200);assert.deepEqual(errors,[]);
  }finally{await browser.close();}

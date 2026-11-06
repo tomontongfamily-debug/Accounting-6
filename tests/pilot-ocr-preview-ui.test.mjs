@@ -42,21 +42,21 @@ for(const failPhoto of [false,true])test(`a local reading appears during a held 
   await capturePumpCamera(page,card);
   await expect(card.getByRole('status')).toContainText('Reading found: 10,010.00');
   assert.ok((await card.locator('.totalizer-photo').getAttribute('src')).startsWith('data:image/jpeg'));
-  assert.equal(await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+  assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
   assert.notEqual(state.reports[key].pumpRows[0].readingConfirmed,true);
   assert.equal(uploads.size,0);
   if(!failPhoto)await card.screenshot({path:'../../outputs/Pump-OCR-immediate-preview.png'});
   releasePhoto();
   if(failPhoto){
    await expect(card.getByRole('alert')).toContainText('Photo could not be saved');
-   assert.equal(await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+   assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
    assert.equal(await card.locator('.totalizer-photo').count(),0);
    assert.equal(uploads.size,0);
   }else{
    await expect.poll(()=>readingSaveStarted).toBe(true);
-   assert.equal(await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+   assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
    releaseReading();
-   await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+   await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
    assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
    assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,10010);
   }

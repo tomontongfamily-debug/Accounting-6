@@ -7,12 +7,14 @@ import {completedPhotoOcrEvidence} from './ocr-evidence.js';
 // the network, and no account, station photo or signed URL is used.
 window.__fueltechPilotConfig={mode:'shadow',start_date:'2026-11-06'};
 const editDemo=new URLSearchParams(location.search).get('edit')==='1';
+const confirmDemo=editDemo&&new URLSearchParams(location.search).get('confirm')==='1';
+const verifyConfirmation=confirmDemo&&new URLSearchParams(location.search).get('verify')==='1';
 const report={branch:'Latency demo',date:'2026-11-06',shiftId:'shift-2',pilotRevision:1,
   pumpRows:(editDemo?[1]:[1,2]).map(number=>({id:'isolated-'+number,pump:'Pump '+number,nozzle:'Regular',product:'Regular',opening:10000,closing:'',readingRevision:0,readingConfirmed:false}))};
 const calls=[],shown=new Map(),started=performance.now();
 const evidence=document.getElementById('evidence'),cards=document.getElementById('cards');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let errors=[],complete=false;
+let errors=[],complete=false,confirmationAudit='',demoGeneration=0;
 window.fetch=async(url,options)=>{
   if(url!=='/api/pilot/action')throw Error('Network blocked in isolated fixture.');
   const {route,input,mode}=JSON.parse(options.body);
@@ -39,12 +41,12 @@ const media={getUserMedia:async()=>drawing.captureStream(20)};
 Object.defineProperty(navigator,'mediaDevices',{value:media,configurable:true});
 const recognize=async()=>{await delay(500);return {reading:10010.12,attempt:{status:'detected',version:'SIMULATED-reader',durationMs:500,completedAt:new Date().toISOString()}};};
 if(editDemo){
-  Object.assign(report.pumpRows[0],{photo_path:drawing.toDataURL('image/jpeg',.95),ocr_detected_reading:10070.12,ocr_result:{status:'detected',version:'SIMULATED-reader',durationMs:500},readingRevision:1});
+  Object.assign(report.pumpRows[0],{photo_path:drawing.toDataURL('image/jpeg',.95),ocr_detected_reading:confirmDemo?10010.12:10070.12,ocr_result:{status:'detected',version:'SIMULATED-reader',durationMs:500},readingRevision:1});
   document.querySelector('h1').textContent='Check and edit a meter reading';
-  document.querySelector('body>p').textContent='Isolated app demo. The sample photo says 10010.12; the simulated OCR suggestion is wrong. Tap Edit number to compare and correct it. No station records are changed.';
+  document.querySelector('body>p').textContent=confirmDemo?'Isolated app demo. Check the sample reading, then confirm a second time. No station records are changed.':'Isolated app demo. The sample photo says 10010.12; the simulated OCR suggestion is wrong. Tap Edit number to compare and correct it. No station records are changed.';
 }
 function update(){
-  if(editDemo){evidence.textContent='App demo · sample photo and simulated OCR\nEdit the number using the enlarged photo.';return;}
+  if(editDemo){evidence.textContent='App demo · sample photo and simulated OCR\n'+(confirmationAudit||'Edit the number using the enlarged photo.')+(errors.length?'\nERROR: '+errors.join('; '):'');return;}
   for(const card of cards.querySelectorAll('[data-pump-row-id]')){
     if([...card.querySelectorAll('[role=status]')].some(node=>node.textContent.includes('Reading found:'))&&!shown.has(card.dataset.pumpRowId))shown.set(card.dataset.pumpRowId,Math.round(performance.now()-started));
   }
@@ -55,9 +57,10 @@ function update(){
 }
 const observer=new MutationObserver(update);observer.observe(cards,{subtree:true,childList:true,characterData:true,attributes:true});
 const root=createRoot(cards);
-root.render(<>{report.pumpRows.map(row=><PhotoReading key={row.id} row={row} report={report} recognize={recognize} onConfirm={async(next,savedPhoto,options)=>{
+function renderDemo(){root.render(<>{report.pumpRows.map(row=><PhotoReading key={row.id+':'+demoGeneration} row={row} report={report} recognize={recognize} onConfirm={async(next,savedPhoto,options)=>{
   const saved=savedPhoto||await savePumpReading(report,next,options);return saved.report.pumpRows.find(item=>item.id===next.id);
-}}/>)}</>);
+}}/>)}</>);}
+renderDemo();
 async function until(predicate){const end=performance.now()+10000;while(!predicate()){if(performance.now()>end)throw Error('Fixture control did not become ready.');await delay(50);}}
 async function run(){
   try{
@@ -71,4 +74,26 @@ async function run(){
   }catch(error){errors.push(error.message);complete=true;update();}
 }
 const tick=setInterval(()=>{if(complete){clearInterval(tick);return;}if(performance.now()-started>45000){errors.push('Fixture exceeded 45 seconds.');complete=true;}update();},200);
-if(editDemo){complete=true;update();}else run();
+async function runConfirmationDemo(){
+  const first=()=>[...cards.querySelectorAll('button')].find(button=>button.textContent==='Yes, confirm reading');
+  const dialog=()=>cards.querySelector('dialog[open]');
+  const check=(condition,message)=>{if(!condition)throw Error(message);};
+  try{
+    await until(()=>first());first().click();await until(()=>dialog());
+    check(calls.length===0&&!report.pumpRows[0].readingConfirmed,'First confirmation must not save.');
+    if(verifyConfirmation){
+      const draft=cards.querySelector('input[inputmode=decimal]').value;
+      dialog().querySelector('.reading-final-cancel').click();await until(()=>!dialog());
+      check(calls.length===0&&!report.pumpRows[0].readingConfirmed,'Cancel must not save.');
+      check(cards.querySelector('input[inputmode=decimal]').value===draft,'Cancel must retain the draft.');
+      first().click();await until(()=>dialog());dialog().querySelector('.reading-final-sure').click();
+      await until(()=>report.pumpRows[0].readingConfirmed&&!dialog());
+      check(calls.length===1&&calls[0].route==='/api/demo/pump-reading','Final confirmation must save exactly once.');
+      Object.assign(report.pumpRows[0],{readingConfirmed:false,closing:'',closingEntered:false});
+      demoGeneration++;renderDemo();await until(()=>first());first().click();await until(()=>dialog());
+      confirmationAudit='PASS · first press: 0 saves · cancel: 0 saves · final green button: 1 save (isolated fixture).';
+    }
+  }catch(error){errors.push(error.message);}
+  update();
+}
+if(editDemo){complete=true;update();if(confirmDemo)runConfirmationDemo();}else run();

@@ -31,3 +31,8 @@ export async function capturePumpCamera(page,card) {
   },rowId);
   await card.getByRole('button',{name:'Capture photo',exact:true}).click();
 }
+
+export async function confirmPumpReading(card){
+  await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/}).click();
+  await card.getByRole('dialog',{name:'Are you really sure?',exact:true}).getByRole('button',{name:"I'm really sure",exact:true}).click();
+}
