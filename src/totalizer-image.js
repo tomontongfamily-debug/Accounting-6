@@ -133,9 +133,33 @@ export function readingWithVisibleDecimal(symbols,components,format){
   const text=digits.map(s=>s.text).join('');return Number(text.slice(0,decimal)+'.'+text.slice(decimal));
 }
 
-// Longer totalizers need nine independently segmented physical cells. Merely
-// allowing an extra OCR digit would also admit a frame mistaken for a leading 1.
-export function supportedTotalizerReading(symbols,components,segments){
+// Short and long displays need the same independently read physical cells and
+// visible two-place decimal. Do not infer missing zeros or accept a cropped
+// prefix simply because its remaining digits form a plausible smaller reading.
+export function corroboratedShortTotalizerSymbols(symbols,components,segments,image){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  if(digits.length===6||digits.length===7){
+    const format={integerDigits:digits.length-2,decimalPlaces:2};
+    if(segments.length!==digits.length||segments.some((symbol,index)=>symbol.text!=='?'&&symbol.text!==digits[index].text))return null;
+    // OCR sometimes returns overlapping character boxes when two strokes
+    // touch. The independent cell boxes establish geometry and decimal position.
+    const physical=segments.map((symbol,index)=>({...symbol,text:digits[index].text,confidence:Math.min(symbol.confidence,digits[index].confidence)}));
+    const shorter=readingWithVisibleDecimal(physical,components,format);
+    if(shorter===null)return null;
+    if(segments.every((symbol,index)=>symbol.text===digits[index].text))return physical;
+    // A thresholded stroke can be weak even when local grayscale contrast is
+    // decisive. Use the independent physical cell boxes, then verify every
+    // digit's seven original-image strokes; an OCR box never defines a cell.
+    return image&&verifyLcdDigits(physical,image.gray,image.width,image.height,[],{requireEveryDigit:true})?physical:null;
+  }
+  return null;
+}
+export function supportedTotalizerReading(symbols,components,segments,image){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  if(digits.length===6||digits.length===7){
+    const physical=corroboratedShortTotalizerSymbols(symbols,components,segments,image);
+    return physical?readingWithVisibleDecimal(physical,components,{integerDigits:digits.length-2,decimalPlaces:2}):null;
+  }
   const regular=readingWithVisibleDecimal(symbols,components,{integerDigits:6,decimalPlaces:2});
   if(regular!==null)return segments.length===9?null:regular;
   const longer=readingWithVisibleDecimal(symbols,components,{integerDigits:7,decimalPlaces:2});
@@ -146,7 +170,7 @@ export function supportedTotalizerReading(symbols,components,segments){
 // OCR confidence is not independent evidence: multiple passes can confidently
 // agree on a frame edge or a damaged LCD digit. Corroborate every suggested
 // digit against the seven physical strokes, otherwise request human review.
-export function verifyLcdDigits(symbols,gray,width,height,segments=[]){
+export function verifyLcdDigits(symbols,gray,width,height,segments=[],{requireEveryDigit=false}={}){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   const body=digits.filter(s=>s.text!=='1');
   if(body.length<3)return false;
@@ -178,7 +202,7 @@ export function verifyLcdDigits(symbols,gray,width,height,segments=[]){
     }
     if(votes.size>1||votes.size===1&&!votes.has(symbol.text))return false;
     const independentlyRead=segments.some(s=>s.text===symbol.text&&Math.abs((s.bbox.x0+s.bbox.x1-box.x0-box.x1)/2)<h*.25&&Math.abs(s.bbox.y1-box.y1)<h*.15);
-    if((index===0||symbol.text==='1'||index>=digits.length-2)&&(votes.get(symbol.text)||0)<2&&!independentlyRead)return false;
+    if((requireEveryDigit||index===0||symbol.text==='1'||index>=digits.length-2)&&(votes.get(symbol.text)||0)<2&&!independentlyRead)return false;
   }
   return true;
 }
@@ -194,10 +218,30 @@ export function segmentDisplaySymbols(mask,width,region){
     if(!last||c.x>last.right+h*.09)groups.push({left:c.x,right:c.x+c.width,top:c.y,bottom:c.y+c.height});
     else{last.right=Math.max(last.right,c.x+c.width);last.top=Math.min(last.top,c.y);last.bottom=Math.max(last.bottom,c.y+c.height);}
   }
-  const cells=groups.filter(g=>g.bottom-g.top>=h*.7);
+  let cells=groups.filter(g=>g.bottom-g.top>=h*.7);
   if(cells.length<4)return [];
   const widths=cells.filter(g=>g.right-g.left>h*.35).map(g=>g.right-g.left).sort((a,b)=>a-b),w=widths[Math.floor(widths.length/2)];
   if(!w)return [];
+  // Nearby horizontal strokes can merge two cell groups in the binary mask.
+  // Split only a group approximately twice its independently measured peers,
+  // at a narrow low-ink valley, and retain both full-height physical cells.
+  cells=cells.flatMap(g=>{
+    const span=g.right-g.left;
+    if(span<w*1.7||span>w*2.8)return [g];
+    const middle=(g.left+g.right)/2,radius=Math.max(1,Math.floor(w*.18));
+    let split=-1,minimum=Infinity;
+    for(let x=Math.floor(middle)-radius;x<=Math.ceil(middle)+radius;x++){
+      let ink=0;for(let y=g.top;y<g.bottom;y++)ink+=mask[y*width+x]||0;
+      const score=ink+Math.abs(x-middle)*.01;if(score<minimum){minimum=score;split=x;}
+    }
+    if(split<0||minimum>h*.2)return [g];
+    const halves=[[g.left,split],[split,g.right]].map(([left,right])=>{
+      const parts=rowComponents(mask,width,left,right,g.top,g.bottom).filter(c=>c.area>=h*.4&&c.height>=h*.1);
+      if(!parts.length)return null;
+      return {left:Math.min(...parts.map(c=>c.x)),right:Math.max(...parts.map(c=>c.x+c.width)),top:Math.min(...parts.map(c=>c.y)),bottom:Math.max(...parts.map(c=>c.y+c.height))};
+    });
+    return halves.every(c=>c&&c.bottom-c.top>=h*.7&&c.right-c.left>=w*.65&&c.right-c.left<=w*1.35)?halves:[g];
+  });
   const positions=[[.5,.06],[.85,.25],[.85,.75],[.5,.94],[.15,.75],[.15,.25],[.5,.5]];
   return cells.map(g=>{
     const gh=g.bottom-g.top,gw=g.right-g.left,left=gw<h*.3?g.right-w:g.left,cw=gw<h*.3?w:gw;
