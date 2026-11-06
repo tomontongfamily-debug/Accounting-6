@@ -3,7 +3,7 @@ import {prepareAdvancedTotalizer} from './totalizer-reader-client.js';
 import {createAutomaticReaderPreparation} from './automatic-reader-preparation.js';
 import {TOTALIZER_VERSION} from './ocr-evidence.js';
 import {OCR_ASSET_VERSION} from './ocr-assets.js';
-import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,CALIBRATION_BYTES} from './ocr-phone-batch.js';
+import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES} from './ocr-phone-batch.js';
 import {analyzeTotalizerFrame} from './totalizer-frame-client.js';
 
 // This entry point intentionally imports no station client or report mutation.
@@ -87,7 +87,10 @@ preparation.start();renderPreparation();
 function renderCompact(){
   byId('compact-status').textContent=currentPhoto?`${autoPhase} · ${currentPhoto.index}/${currentPhoto.total} ${currentPhoto.name} · ${Math.round(performance.now()-currentPhoto.started)} ms`:autoPhase;
   byId('compact-preparation').textContent=`Setup: primary ${primaryReadyMs===null?'pending':primaryReadyMs+' ms'} · enhanced ${advancedReadyMs===null?'pending':advancedReadyMs+' ms'} (from page open)`;
-  byId('compact-probe').textContent=calibration?.status==='complete'?`96 KiB probe: ${calibration.wallMs} ms · ${calibration.measuredMbps?.toFixed(3)??'?'} Mbps · ${calibration.limitAssessment}`:calibration?.status==='error'?'Probe failed; network limit unverified':calibration?.status==='running'?'96 KiB network probe running…':'Probe not run; network label unverified';
+  const probeBytes=calibration?.expectedByteCount??autoConfig?.probeBytes??CALIBRATION_BYTES;
+  const probeLabel=probeBytes>=1024*1024?`${probeBytes/(1024*1024)} MiB`:`${probeBytes/1024} KiB`;
+  byId('compact-probe').textContent=calibration?.status==='complete'?`${probeLabel}: adjusted lower bound ${calibration.burstAdjustedBodyMbps?.toFixed(3)??'?'} Mbps · ${calibration.limitAssessment}`:calibration?.status==='error'?'Probe failed; network limit unverified':calibration?.status==='running'?`${probeLabel} network probe running…`:'Probe not run; network label unverified';
+  if(calibration?.status==='complete')byId('compact-probe').append(document.createElement('br'),`Raw whole probe: ${calibration.wallMs} ms · ${calibration.measuredMbps?.toFixed(3)??'?'} Mbps · body ${calibration.bodyMs?.toFixed(1)??'?'} ms / minimum ${calibration.theoreticalMinimumBodyMs?.toFixed(1)??'?'} ms`);
 }
 renderCompact();
 setInterval(()=>{
@@ -130,11 +133,23 @@ function appendResult(entry){
     const last=entry.trace.at(-1),passes=entry.trace.filter(event=>event.stage==='primary-pass');
     const texts=[...new Set(passes.map(event=>event.symbols.map(symbol=>symbol.text||'?').join('')))];
     const detailRow=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;
-    cell.textContent=`Trace: ${last.reason||last.stage} · OCR ${texts.slice(0,5).join(' / ')||'no digits'} · ${passes.filter(event=>event.confidenceAccepted).length}/${passes.length} confidence passes`;
+    const value=number=>number===null||number===undefined?'∅':String(number),flag=boolean=>boolean?'1':'0';
+    const lines=[`STOP ${last.reason||last.stage} · ${passes.filter(event=>event.confidenceAccepted).length}/${passes.length} confidence passes`,
+      `OCR ${texts.slice(0,5).join(' / ')||'no digits'}`];
+    for(const layout of entry.trace.filter(event=>event.stage==='layout').slice(0,4))lines.push(`L${layout.regionIndex}.${layout.layoutIndex} physical ${layout.segments.length} cells: ${layout.segments.map(symbol=>symbol.text||'?').join('')}`);
+    lines.push('mode/grow/pad[s=sensitive]; min=digit confidence C=overall A=confidence gate G=geometry V=value P=physical verify B=physical boxes D=6int decimal; ∅=null');
+    for(const pass of passes.slice(0,8)){
+      const digits=pass.symbols.filter(symbol=>/^\d$/.test(symbol.text)),confidences=digits.map(symbol=>symbol.confidence).filter(Number.isFinite);
+      lines.push(`${pass.mode}/${pass.grow}/${pass.pad}${pass.sensitive?'s':''} ${pass.symbols.map(symbol=>symbol.text||'?').join('')||'∅'} min${confidences.length?Math.min(...confidences):'∅'} C${value(pass.confidence)} A${flag(pass.confidenceAccepted)} G${value(pass.geometryValue)} V${value(pass.value)} P${flag(pass.physicalVerified)} B${flag(pass.physicalBoxesUsed)} D${value(pass.sixIntegerDecimal)}`);
+    }
+    const primary=entry.trace.findLast(event=>event.stage==='primary-result');
+    if(primary)lines.push(`PRIMARY reads=${JSON.stringify(primary.readings)} V${value(primary.value)} verified=${value(primary.verified)} evidence=${flag(primary.hasPhysicalEvidence)} long=${flag(primary.longDisplay)}`);
+    cell.style.whiteSpace='pre-wrap';cell.style.fontFamily='monospace';cell.style.fontSize='10px';cell.style.lineHeight='1.25';cell.textContent=lines.join('\n');
     detailRow.append(cell);byId('compact-results').append(detailRow);
     const details=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('pre');
-    summary.textContent=`Reader trace: ${entry.file.name} (${entry.trace.length}/120 events)`;
-    text.style.whiteSpace='pre-wrap';text.style.fontSize='11px';text.textContent=JSON.stringify(entry.trace,null,2);
+    const packet=entry.trace.length>40?[...entry.trace.slice(0,39),last]:entry.trace;
+    summary.textContent=`Reader trace: ${entry.file.name} (${packet.length}/${entry.trace.length} events shown; export retains up to120)`;
+    text.style.whiteSpace='pre-wrap';text.style.fontSize='10px';text.textContent=JSON.stringify(packet,null,2);
     details.append(summary,text);item.append(details);
   }
 }
@@ -227,19 +242,20 @@ async function waitForReader(level){
     autoPhase=`Waiting for ${level} reader`;await pause(200);
   }
 }
-async function probeNetwork(expectedIngressBytesPerSecond){
-  const started=performance.now(),url=new URL('/ocr-test/calibration.bin',location.origin);
+async function probeNetwork(expectedIngressBytesPerSecond,expectedByteCount=CALIBRATION_BYTES){
+  const request=calibrationRequest(expectedByteCount);
+  const started=performance.now(),url=new URL(request.path,location.origin);
   url.searchParams.set('probe',crypto.randomUUID());
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
-  calibration={status:'running'};renderCompact();
+  calibration={status:'running',expectedByteCount};renderCompact();
   try{
-    const response=await fetch(url,{cache:'no-store',credentials:'omit',signal:controller.signal});
+    const response=await fetch(url,{cache:'no-store',credentials:'omit',headers:request.headers,signal:controller.signal});
     if(!response.ok)throw Error('Calibration download failed.');
     const bytes=(await response.arrayBuffer()).byteLength;
-    if(bytes!==CALIBRATION_BYTES)throw Error('Calibration file size did not match.');
+    const responseEvidence=validateCalibrationResponse({status:response.status,contentRange:response.headers.get('Content-Range'),contentLength:response.headers.get('Content-Length'),bytes,expectedByteCount});
     const resource=performance.getEntriesByName(url.href).at(-1);
-    calibration={status:'complete',...calibrationMetrics({bytes,wallMs:Math.round(performance.now()-started),resource,expectedIngressBytesPerSecond})};
-  }catch(error){calibration={status:'error',error:recordError('Network probe',error),limitAssessment:'not-verifiable'};}
+    calibration={status:'complete',...calibrationMetrics({bytes,wallMs:Math.round(performance.now()-started),resource,expectedByteCount,expectedIngressBytesPerSecond}),response:responseEvidence};
+  }catch(error){calibration={status:'error',expectedByteCount,error:recordError('Network probe',error),limitAssessment:'not-verifiable'};}
   finally{clearTimeout(timer);renderCompact();}
 }
 async function automaticBatch(config){
@@ -258,7 +274,7 @@ async function automaticBatch(config){
     await waitForReader(config.waitFor);
     const until=performance.now()+config.startDelayMs;
     while(performance.now()<until){autoPhase=`Ready for network limit · batch in ${Math.ceil((until-performance.now())/1000)} s`;await pause(200);}
-    autoPhase='Measuring network delivery';await probeNetwork(config.expectedIngressBytesPerSecond);
+    autoPhase='Measuring network delivery';await probeNetwork(config.expectedIngressBytesPerSecond,config.probeBytes);
     await runBatch(batch,{targetMs:30000,networkLabel:config.networkLabel,deviceNote:config.deviceNote,trace:config.trace});
   }catch(error){recordError('Automatic batch',error);autoPhase='Automatic batch stopped';}
   finally{byId('test-controls').disabled=false;byId('read-photos').disabled=!selected.length;renderCompact();}

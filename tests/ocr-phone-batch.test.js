@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,CALIBRATION_BYTES} from '../src/ocr-phone-batch.js';
+import {gzipSync} from 'node:zlib';
+import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES,LARGE_CALIBRATION_BYTES,CALIBRATION_BYTE_CHOICES,ANDROID_INGRESS_BURST_BYTES,CALIBRATION_LIMIT_TOLERANCE} from '../src/ocr-phone-batch.js';
 
 const signed='https://chqinknijqtixeenhtvu.supabase.co/storage/v1/object/sign/fueltech-pilot-photos/station/photo.jpg?token=private-example';
 const fragment=value=>'#batch='+encodeURIComponent(JSON.stringify(value));
@@ -50,19 +51,98 @@ test('optional trace is disabled by default and explicitly enabled with a boolea
  const value=valid();assert.equal(parsePhoneBatch(fragment(value)).trace,false);
  value.trace=true;assert.equal(parsePhoneBatch(fragment(value)).trace,true);
 });
-test('calibration reports wall/body throughput separately and conservatively checks a requested limit',()=>{
- const resource={startTime:50,fetchStart:50,requestStart:60,responseStart:100,responseEnd:1100,encodedBodySize:CALIBRATION_BYTES,decodedBodySize:CALIBRATION_BYTES,transferSize:CALIBRATION_BYTES+300,workerStart:0};
- const metrics=calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,resource,expectedIngressBytesPerSecond:CALIBRATION_BYTES});
- assert.equal(metrics.bodyMs,1000);assert.equal(metrics.measuredMbps,.65536);assert.equal(metrics.bodyMbps,.786432);
- assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');assert.equal(metrics.observedToRequestedRatio,1);
- assert.equal(calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,resource,expectedIngressBytesPerSecond:1000}).limitAssessment,'requested-limit-not-observed');
- assert.equal(calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,resource,expectedIngressBytesPerSecond:1000000}).limitAssessment,'slower-than-requested');
- assert.equal(calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,resource:{...resource,transferSize:0},expectedIngressBytesPerSecond:1000}).limitAssessment,'not-verifiable');
- assert.equal(calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,expectedIngressBytesPerSecond:1000}).limitAssessment,'not-verifiable');
- assert.equal(calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:1200,resource}).limitAssessment,'not-requested');
- assert.ok(!JSON.stringify(metrics).includes('url'));
+test('probe sizes default to 96 KiB and accept only the supported numeric choices',()=>{
+ assert.equal(parsePhoneBatch(fragment(valid())).probeBytes,CALIBRATION_BYTES);
+ assert.deepEqual(CALIBRATION_BYTE_CHOICES,[98304,262144,1048576]);
+ for(const probeBytes of CALIBRATION_BYTE_CHOICES){
+  const config=parsePhoneBatch(fragment({...valid(),probeBytes}));
+  assert.equal(config.probeBytes,probeBytes);assert.equal(safePhoneBatch(config).probeBytes,probeBytes);
+ }
+ for(const probeBytes of [null,0,131072,262145,16777216,'262144',true,[]])assert.throws(()=>parsePhoneBatch(fragment({...valid(),probeBytes})));
+});
+test('only the 256 KiB request uses an exact prefix range from the 1 MiB fixture',()=>{
+ assert.deepEqual(calibrationRequest(),{path:'/ocr-test/calibration.bin',expectedByteCount:98304,totalByteCount:98304,headers:{}});
+ assert.deepEqual(calibrationRequest(262144),{path:'/ocr-test/calibration-large.bin',expectedByteCount:262144,totalByteCount:1048576,headers:{Range:'bytes=0-262143'}});
+ assert.deepEqual(calibrationRequest(1048576),{path:'/ocr-test/calibration-large.bin',expectedByteCount:1048576,totalByteCount:1048576,headers:{}});
+ assert.throws(()=>calibrationRequest(131072));
+});
+test('calibration accepts full and ranged responses only with the exact requested bytes',()=>{
+ for(const expectedByteCount of [CALIBRATION_BYTES,LARGE_CALIBRATION_BYTES]){
+  const response=validateCalibrationResponse({status:200,contentRange:null,contentLength:String(expectedByteCount),bytes:expectedByteCount,expectedByteCount});
+  assert.equal(response.contentLength,expectedByteCount);assert.equal(response.requestedRange,null);
+ }
+ const response=validateCalibrationResponse({status:206,contentRange:'bytes 0-262143/1048576',contentLength:'262144',bytes:262144,expectedByteCount:262144});
+ assert.deepEqual(response,{status:206,contentRange:'bytes 0-262143/1048576',contentLength:262144,requestedRange:'bytes=0-262143',totalByteCount:1048576});
+ // A streaming response can omit Content-Length; its actual byte count and
+ // the range total are still checked before measurements are accepted.
+ assert.equal(validateCalibrationResponse({status:206,contentRange:'bytes 0-262143/1048576',contentLength:null,bytes:262144,expectedByteCount:262144}).contentLength,null);
+});
+test('calibration rejects ignored ranges, malformed headers and truncated or oversized bodies',()=>{
+ const ranged={status:206,contentRange:'bytes 0-262143/1048576',contentLength:'262144',bytes:262144,expectedByteCount:262144};
+ for(const change of [
+  {status:200},{status:416},{contentRange:null},{contentRange:'bytes 1-262144/1048576'},
+  {contentRange:'bytes 0-262143/262144'},{contentRange:'bytes 0-262143/*'},
+  {contentLength:'1048576'},{contentLength:'2.62144e5'},{contentLength:''},
+  {bytes:262143},{bytes:1048576},
+ ])assert.throws(()=>validateCalibrationResponse({...ranged,...change}));
+ assert.throws(()=>validateCalibrationResponse({status:206,contentRange:'bytes 0-98303/98304',contentLength:'98304',bytes:98304}));
+ assert.throws(()=>validateCalibrationResponse({status:200,contentRange:'bytes 0-98303/98304',contentLength:'98304',bytes:98304}));
+});
+const resourceTiming=(bytes,bodyMs)=>({startTime:50,fetchStart:50,requestStart:60,responseStart:100,responseEnd:100+bodyMs,encodedBodySize:bytes,decodedBodySize:bytes,transferSize:bytes+300,workerStart:0});
+const close=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-8,`${actual} != ${expected}`);
+test('calibration keeps raw wall/body rates and the Android burst-adjusted lower bound separately',()=>{
+ const bytes=LARGE_CALIBRATION_BYTES,rate=125000,minimumMs=(bytes-ANDROID_INGRESS_BURST_BYTES)/rate*1000;
+ const metrics=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:7800,resource:resourceTiming(bytes,minimumMs),expectedIngressBytesPerSecond:rate});
+ assert.equal(metrics.bytes,1048576);assert.equal(metrics.expectedByteCount,1048576);
+ close(metrics.bodyMs,7340.032);close(metrics.theoreticalMinimumBodyMs,7340.032);
+ close(metrics.measuredMbps,1048576*8/7800/1000);close(metrics.bodyMbps,1/.875);close(metrics.burstAdjustedBodyMbps,1);
+ close(metrics.observedToRequestedRatio,1);assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');
+ assert.equal(metrics.burstModel.assumedBurstBytes,131072);assert.equal(metrics.burstModel.upperRateTolerance,1.3);
+ assert.match(metrics.burstModel.source,/android\.googlesource\.com/);assert.match(metrics.burstModel.rateMeaning,/lower bound/);
+ assert.match(metrics.interpretation,/without proving enforcement/);
+});
+test('a 96 KiB probe cannot issue a cap verdict while the initial 128 KiB burst covers it',()=>{
+ const resource=resourceTiming(CALIBRATION_BYTES,10);
+ const metrics=calibrationMetrics({bytes:CALIBRATION_BYTES,wallMs:760,resource,expectedIngressBytesPerSecond:125000});
+ close(metrics.measuredMbps,98304*8/760/1000);assert.ok(metrics.bodyMbps>50);
+ assert.equal(metrics.burstAdjustedBodyMbps,0);assert.equal(metrics.theoreticalMinimumBodyMs,0);
+ assert.equal(metrics.limitAssessment,'not-verifiable');assert.equal(metrics.observedToRequestedRatio,null);
+ const boundary=calibrationMetrics({bytes:ANDROID_INGRESS_BURST_BYTES,expectedByteCount:ANDROID_INGRESS_BURST_BYTES,wallMs:100,resource:resourceTiming(ANDROID_INGRESS_BURST_BYTES,1),expectedIngressBytesPerSecond:1});
+ assert.equal(boundary.burstAdjustedBodyMbps,0);assert.equal(boundary.limitAssessment,'not-verifiable');
+});
+test('a slow 256 KiB probe includes the fixed burst rather than treating it as one second of credit',()=>{
+ const bytes=262144,rate=16000,resource=resourceTiming(bytes,8192);
+ const metrics=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:8500,resource,expectedIngressBytesPerSecond:rate});
+ close(metrics.bodyMbps,.256);close(metrics.burstAdjustedBodyMbps,.128);close(metrics.theoreticalMinimumBodyMs,8192);
+ assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');
+});
+test('the adjusted cap check uses 30 percent tolerance and detects a 100 Mbps body under a requested 50 Mbps cap',()=>{
+ assert.equal(CALIBRATION_LIMIT_TOLERANCE,1.3);
+ const bytes=LARGE_CALIBRATION_BYTES,rate=125000,remaining=bytes-ANDROID_INGRESS_BURST_BYTES;
+ const assess=ratio=>calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:10000,resource:resourceTiming(bytes,remaining/rate/ratio*1000),expectedIngressBytesPerSecond:rate});
+ assert.equal(assess(1.29).limitAssessment,'consistent-with-requested-limit');
+ assert.equal(assess(1.31).limitAssessment,'requested-limit-not-observed');
+ assert.equal(assess(.19).limitAssessment,'slower-than-requested');
+ const fast=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:150,resource:resourceTiming(bytes,bytes/12500000*1000),expectedIngressBytesPerSecond:6250000});
+ close(fast.bodyMbps,100);close(fast.burstAdjustedBodyMbps,87.5);close(fast.observedToRequestedRatio,1.75);
+ assert.equal(fast.limitAssessment,'requested-limit-not-observed');
+});
+test('a cap verdict requires exact fixture bytes and usable transfer timing, but raw evidence remains available',()=>{
+ const bytes=LARGE_CALIBRATION_BYTES,resource=resourceTiming(bytes,8000),input={bytes,expectedByteCount:bytes,wallMs:8500,resource,expectedIngressBytesPerSecond:125000};
+ for(const change of [
+  {bytes:bytes-1},{expectedByteCount:CALIBRATION_BYTES},{resource:undefined},
+  {resource:{...resource,transferSize:0}},{resource:{...resource,encodedBodySize:bytes-1}},
+  {resource:{...resource,responseEnd:100}},{resource:{...resource,responseEnd:99}},
+  {resource:{...resource,responseStart:NaN}},{expectedIngressBytesPerSecond:0},
+ ])assert.equal(calibrationMetrics({...input,...change}).limitAssessment,'not-verifiable');
+ assert.equal(calibrationMetrics({...input,expectedIngressBytesPerSecond:null}).limitAssessment,'not-requested');
 });
 test('calibration fixture is exactly 96 KiB and not a compressible placeholder',()=>{
  const bytes=fs.readFileSync(new URL('../public/ocr-test/calibration.bin',import.meta.url));
  assert.equal(bytes.length,CALIBRATION_BYTES);assert.equal(new Set(bytes).size,256);
+});
+test('large calibration fixture is exactly 1 MiB and resists compression',()=>{
+ const bytes=fs.readFileSync(new URL('../public/ocr-test/calibration-large.bin',import.meta.url));
+ assert.equal(bytes.length,LARGE_CALIBRATION_BYTES);assert.equal(new Set(bytes).size,256);
+ assert.ok(gzipSync(bytes).length>bytes.length*.99);
 });
