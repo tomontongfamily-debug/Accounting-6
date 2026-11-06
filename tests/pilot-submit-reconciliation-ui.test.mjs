@@ -43,7 +43,7 @@ for(const action of ['cash-check','cash-recount'])test(`${action} recovers a sta
   await page.getByLabel('Six-digit branch PIN').fill('000000');await page.getByRole('button',{name:'Proceed',exact:true}).click();
   await page.locator('.cashier-shift-card').first().click();
   await page.getByRole('button',{name:'Open Review and Submit',exact:true}).click();
-  if(action==='cash-recount')await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).fill('2');
+  if(action==='cash-recount')await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).fill('3');
   const button=page.getByRole('button',{name:action==='cash-check'?'Check my cash count':'Confirm final recount',exact:true});
   const sent=page.waitForRequest(r=>r.url().endsWith('/api/pilot/action')&&r.postDataJSON()?.route===`/api/demo/${action}`);
   await button.click();await sent;
@@ -53,7 +53,7 @@ for(const action of ['cash-check','cash-recount'])test(`${action} recovers a sta
   const refresh=page.getByRole('button',{name:'Refresh saved shift',exact:true});
   assert.equal(await refresh.isEnabled(),true);
   await refresh.click();
-  const expected=action==='cash-recount'?2000:1000;
+  const expected=action==='cash-recount'?3000:1000;
   if(action==='cash-recount')await page.getByText('✓ Final recount recorded. Admin will review the submitted result.',{exact:true}).waitFor();
   else await page.getByRole('button',{name:'Confirm final recount',exact:true}).waitFor();
   assert.equal(state.reports[key].actualCashCounted,expected);
@@ -108,7 +108,7 @@ test('Submit explains unfinished cash reconciliation, focuses the next action, a
   await page.getByRole('button',{name:'Submit Shift Report',exact:true}).click();
   assert.equal(await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).evaluate(e=>e===document.activeElement),true);
   assert.equal(submits,0);assert.equal(state.reports[key].confirmed,false);
-  await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).fill('1');
+  await page.getByLabel('Final recount ₱1000 quantity',{exact:true}).fill('3');
   await page.getByRole('button',{name:'Confirm final recount',exact:true}).click();
   await page.getByText('✓ Final recount recorded. Admin will review the submitted result.',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Go to cash reconciliation',exact:true}).count(),0);
@@ -118,7 +118,7 @@ test('Submit explains unfinished cash reconciliation, focuses the next action, a
   const response=await submitted;
   assert.equal(response.status(),200,JSON.stringify(await response.json()));
   await page.getByRole('button',{name:'Submit Shift Report',exact:true}).waitFor({state:'detached'});
-  assert.equal(submits,1);assert.equal(state.reports[key].confirmed,true);assert.equal(state.reports[key].actualCashCounted,1000);
+  assert.equal(submits,1);assert.equal(state.reports[key].confirmed,true);assert.equal(state.reports[key].actualCashCounted,3000);
   assert.deepEqual(errors,[]);
  }finally{await browser.close();await new Promise(r=>server.httpServer.close(r));}
 });

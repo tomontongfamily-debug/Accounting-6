@@ -1,4 +1,5 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
+import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from './error-reduction.ts';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
@@ -62,7 +63,7 @@ const RANKING_RANGE_OPTIONS = ["Daily", "Weekly", "Monthly", "Quarterly", "Yearl
 const MOBILE_PERFORMANCE_PERIODS = ["Shift", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly", "All-time"];
 const BASELINE_MESSAGE = "No previous closing record found. Enter and confirm the starting opening values before this report can be counted.";
 const REVIEW_LITERS_THRESHOLD = 10000;
-const REVIEW_CASH_VARIANCE_THRESHOLD = 1500;
+const REVIEW_CASH_VARIANCE_THRESHOLD = 3000;
 const REVIEW_CASH_OVERAGE_THRESHOLD = 100;
 const ENTRY_REVIEW_HINT_THRESHOLD = 5000;
 const CASH_SHORTAGE_ALERT_THRESHOLD = 100;
@@ -3762,6 +3763,7 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
+    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance)){setSubmitReportError(HIGH_SHORTAGE_MESSAGE);return;}
     if (activeReport.confirmed) {
       setSyncMessage(`This report is locked${activeReport.serverMeta?.reportId ? ` as ${activeReport.serverMeta.reportId}` : ""}. Request an admin correction to change it.`);
       return;

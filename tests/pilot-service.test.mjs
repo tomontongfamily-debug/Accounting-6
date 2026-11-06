@@ -33,10 +33,10 @@ test('POS-enabled reading and cash actions return saved revisions through recoun
  report=await act('/api/demo/cash-confirm',{report,denominations:{1000:1}});
  assert.equal(report.pilotCashRevision,1);
  report=await act('/api/demo/cash-check',{report});assert.equal(report.cashReviewState,'recount');
- report=await act('/api/demo/cash-recount',{report,denominations:{1000:1}});assert.equal(report.cashReviewState,'final');
+ report=await act('/api/demo/cash-recount',{report,denominations:{1000:3}});assert.equal(report.cashReviewState,'final');
  report=await act('/api/reports/save',{report:{...report,cashierName:'POS test cashier'}});
  report=await act('/api/reports/save',{report,operation:'submit'});
- assert.equal(report.confirmed,true);assert.equal(report.actualCashCounted,1000);assert.equal(report.cashierName,'POS test cashier');
+ assert.equal(report.confirmed,true);assert.equal(report.actualCashCounted,3000);assert.equal(report.cashierName,'POS test cashier');
 });
 
 test('Roles, station scope, stale desktop drafts and nozzle revisions',async()=>{
@@ -114,13 +114,13 @@ test('Cash denominations, mandatory all-nozzle photos, submission lock, deposit 
   }
   report=(await act(cashier,'/api/demo/cash-check',{report})).report;
   assert.equal(report.cashReviewState,'recount');
-  report=(await act(cashier,'/api/demo/cash-recount',{report,denominations:{1000:1,200:2}})).report;
+  report=(await act(cashier,'/api/demo/cash-recount',{report,denominations:{1000:3,200:2}})).report;
   report=(await act(cashier,'/api/reports/save',{report:{...report,actualCashCounted:999999},operation:'submit'})).report;
-  assert.equal(report.actualCashCounted,1400);assert.equal(report.confirmed,true);
+  assert.equal(report.actualCashCounted,3400);assert.equal(report.confirmed,true);
   await assert.rejects(act(cashier,'/api/reports/save',{report}),/locked/);
   const available=await act(manager,'/api/demo/deposits',{branch:'Liloan',date:'2026-09-24'});
   assert.equal(available.coverage.reports.length,1);assert.equal(available.coverage.reports[0].key,key);
-  const input={branch:'Liloan',depositDate:'2026-09-24',bank:'Test bank',reference:'TEST-ONLY-1',amount:1400,coveredReportKeys:[key],carryoverSourceIds:[],reviewedCoveredCash:1400,reviewedCarryover:0};
+  const input={branch:'Liloan',depositDate:'2026-09-24',bank:'Test bank',reference:'TEST-ONLY-1',amount:3400,coveredReportKeys:[key],carryoverSourceIds:[],reviewedCoveredCash:3400,reviewedCarryover:0};
   const deposit=(await act(manager,'/api/demo/deposit-submit',input)).deposit;
   await assert.rejects(act(manager,'/api/demo/deposit-submit',{...input,reference:'TEST-ONLY-2'}),/no longer available/);
   await assert.rejects(act(admin,'/api/demo/deposit-verify',{id:deposit.id,action:'confirm'}),/role/);
