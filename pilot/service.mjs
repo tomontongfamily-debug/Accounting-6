@@ -1,3 +1,4 @@
+import { pendingVouchersForReport } from '../src/pending-vouchers.js';
 import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
@@ -169,6 +170,7 @@ function coverage(branch,date) {
 }
 function exposeReport(report,session) {
   const r=structuredClone(authoritative(report));
+  if(session.role!=='Approver')r.pendingVouchers=pendingVouchersForReport(database,r);
   const sourceIssues=(database.sourceAlerts||[]).filter(a=>(a.reportKey===keyOf(r)||a.reportKeys?.includes(keyOf(r))));
   if(sourceIssues.length) r.checkDetails=[...(r.checkDetails||[]),...sourceIssues.filter(a=>!(r.checkDetails||[]).some(i=>i.id===a.id))];
   if(r.date>=stationStartDate(database,r.branch)) r.pilot=true;
@@ -529,6 +531,10 @@ function validatePriceReadingOrder(report,change) {
       database.priceBook[input.branch][key]=prices;
       syncUnsubmittedPrices(database,input.branch,input.date,input.coverage==='Shift'?input.shiftId:'shift-1');
       audit('fuel-price-changed',session,{date:input.date,prices,pricePatch:input.pricePatch});save();return send({ok:true,prices});
+    }
+    if(route==='/api/demo/cv-status') {
+      const report=database.reports[input.reportKey];if(!report)reject('Saved shift not found.',404);
+      branchAccess(session,report.branch);return send({ok:true,report:exposeReport(report,session)});
     }
     if(route==='/api/demo/deposits') {
       requireRole(session,'Manager','Admin','Approver');const branch=input.branch||session.branch;branchAccess(session,branch);

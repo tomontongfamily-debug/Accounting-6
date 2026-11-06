@@ -11,7 +11,7 @@ import { accountingTiming, dateOffset } from './integrations.mjs';
 import { sameReviewIssues } from './review-issues.mjs';
 
 export function initialState(reportRows, priceRows, config) {
-  const state={mode:config.mode,startDate:config.start_date,reports:{},priceBook:{Liloan:{}},photos:{},deposits:[],audit:[],noDepositDays:[0],pay:[],po:[],cvCashEvents:[],sourceAlerts:[]};
+  const state={mode:config.mode,startDate:config.start_date,reports:{},priceBook:{Liloan:{}},photos:{},deposits:[],audit:[],noDepositDays:[0],pay:[],po:[],cvCashEvents:[],cvPendingVouchers:[],sourceAlerts:[]};
   for(const row of priceRows) {
     if(row.branch!=='Liloan') throw Error('Unexpected station in pilot prices');
     state.priceBook.Liloan[row.coverage==='Shift'?`${row.effective_date}__${row.shift_id}`:row.effective_date]=row.prices;

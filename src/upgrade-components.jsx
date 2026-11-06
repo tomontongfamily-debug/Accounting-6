@@ -7,6 +7,7 @@ import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning } 
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
 import { midShiftPumpKey, midShiftReadingValue } from './mid-shift-price-change.js';
+import { PendingVouchers } from './pending-vouchers.jsx';
 import { CashDenominations } from './cash-denominations.jsx';
 import { ShiftReasons, reasonLabel } from './shift-health.jsx';
 import { ManagerDepositCards } from './deposit-cards.jsx';
@@ -274,7 +275,7 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
   const done=rows.filter(row=>readingComplete(photoRow(row))).length;
   return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change photos confirmed</strong></p><p>Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it.</p>{!report.confirmed&&<ReaderPreparation/>}<div className="reading-grid">{rows.map(row=><PhotoReading key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} row={photoRow(row)} report={report} change={change} onBusy={onBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={(next,savedPhoto,options)=>onReading(change,next,savedPhoto,options)}/>)}</div></div>;
 }
-export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=false}) {
+export function CashConfirmation({report,onSaved,onCountsChange,onReload,onRefreshVouchers,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
   const reconciliation=review?compute(report):null;
@@ -287,7 +288,7 @@ export function CashConfirmation({report,onSaved,onCountsChange,onReload,review=
     {busy&&<p role="status">Waiting for the station server to verify the saved shift…</p>}
     {unusuallySmall&&<p className="warning-box" role="alert">Physical cash recorded: <strong>{php(reconciliation.actualCashCounted)}</strong>. Expected cash: <strong>{php(reconciliation.expectedCash)}</strong>. Check that all notes and coins were included, including cash set aside for deposit. Recount the actual cash; do not change it just to match the expected amount.</p>}
     {!review&&<><CashDenominations counts={denominations} onChange={onCountsChange} disabled={report.cashCountConfirmed||busy} label="End-of-shift cash count"/>{report.cashCountConfirmed?<p>✓ Physical cash confirmed: <strong>{php(report.actualCashCounted)}</strong>{!report.cashDenominations&&' · Earlier count has no denomination breakdown.'}</p>:<button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-confirm')}>Confirm physical cash</button>}</>}
-    {review&&<><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'?<><p className="warning-box">Please recount your physical cash.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your confirmed count is locked. A requested recount can be confirmed once.</small></>}
+    {review&&<><PendingVouchers report={report} onRefresh={onRefreshVouchers}/><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'?<><p className="warning-box">Please recount your physical cash.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your confirmed count is locked. A requested recount can be confirmed once.</small></>}
     {error&&<p className="error" role="alert">{error}</p>}
     {stale&&onReload&&<div><p>Reload the saved shift details, then check and confirm again. Your entered cash quantities will be kept; an already confirmed count stays locked.</p><button type="button" className="secondary" disabled={busy} onClick={reload}>{review?'Refresh saved shift':'Refresh shift, keep my cash count'}</button></div>}
   </div>;
