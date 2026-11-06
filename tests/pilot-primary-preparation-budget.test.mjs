@@ -32,11 +32,13 @@ test('a slow primary transfer does not spend the engine-start budget or duplicat
   const first=reader.prepareTotalizer(),second=reader.prepareTotalizer();await started;
   assert.equal(workers.filter(w=>w.url.includes('/worker.min.js')).length,0,'Engine starts only after verified downloads finish');
   captureHasRegion=true;
-  const capture=reader.detectTotalizerResult({width:1,height:1,data:new Uint8ClampedArray(4)});
+  const trace=[];
+  const capture=reader.detectTotalizerResult({width:1,height:1,data:new Uint8ClampedArray(4)},{onTrace:event=>{trace.push(event);throw Error('diagnostic observer failure');}});
   // Flush the worker response so this capture is awaiting the shared download.
   for(let step=0;step<12;step++)await Promise.resolve();
   t.mock.timers.tick(30001);
   const outcome=await capture;assert.equal(outcome.reading,null);assert.equal(outcome.attempt.reason,'recognition-timeout');
+  assert.equal(trace.at(-1).stage,'final');assert.equal(trace.at(-1).reason,'recognition-timeout');
   assert.deepEqual(invalidations,[{primary:true,advanced:true,reason:'recognition-timeout'}],'Expired foreground work invalidates readiness exactly once');
   assert.equal(coreSignal.aborted,false,'An expired capture must not abort automatic preparation for the next photo');
   t.mock.timers.tick(65000);
