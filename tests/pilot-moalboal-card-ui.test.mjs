@@ -20,14 +20,14 @@ test('built cashier screen offers a separate terminal card total only in Moalboa
     state.reports[key]=r;
     for(const p of r.pumpRows)state.photos[p.photo_path]={branch,reportKey:key,rowId:p.id};
    }
-   const page=await browser.newPage({viewport:{width:1280,height:1000},timezoneId:'Asia/Manila'}),errors=[];
+   const page=await browser.newPage({viewport:{width:1280,height:1000},timezoneId:'Asia/Manila'}),errors=[];let cvRefreshes=0;
    page.on('pageerror',e=>errors.push(e.message));await page.clock.install({time:new Date('2026-11-05T02:00:00Z')});
    await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;let result,status=200;
     if(path==='/api/pilot/photo')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg"/>'});
     if(path==='/api/pilot/config')result={ok:true,mode:'live',start_date:state.startDate,branches:[branch],stationStarts:state.stationStarts};
     else if(path.startsWith('/api/auth/'))result={ok:true,role:'Cashier',branch,token:'cookie',expiresAt:Date.now()+3600000};
-    else if(path==='/api/pilot/action'){const body=route.request().postDataJSON();try{const out=await runAction(state,{role:'Cashier',branch},body.route,body.input,{mutationId:body.mutationId});state=out.state;result=out.result;}catch(e){status=e.status||400;result={ok:false,error:e.message};}}
+    else if(path==='/api/pilot/action'){const body=route.request().postDataJSON();if(body.route==='/api/demo/cv-status')cvRefreshes++;try{const out=await runAction(state,{role:'Cashier',branch},body.route,body.input,{mutationId:body.mutationId});state=out.state;result=out.result;}catch(e){status=e.status||400;result={ok:false,error:e.message};}}
     else result={ok:true,enabled:false};
     await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
    });
@@ -38,6 +38,10 @@ test('built cashier screen offers a separate terminal card total only in Moalboa
    const input=page.getByLabel('Debit / credit card',{exact:true});
    if(branch==='Moalboal'){
     await input.fill('7029.90');
+    await page.getByRole('button',{name:'Refresh CV approvals',exact:true}).click();
+    await expect.poll(()=>cvRefreshes).toBe(1);
+    await expect(page.getByRole('button',{name:'Refresh CV approvals',exact:true})).toBeEnabled();
+    assert.equal(await page.locator('.pending-vouchers .error').count(),0);
     await expect.poll(()=>Number(state.reports[`${branch}__2026-11-05__shift-1`].deductions.bankCard)).toBe(7029.90);
     const r=state.reports[`${branch}__2026-11-05__shift-1`];assert.equal(compute(r).deductionTotal,7029.90);assert.equal(r.onlinePay.total,0);
    }else assert.equal(await input.count(),0);

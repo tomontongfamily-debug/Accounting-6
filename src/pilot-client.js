@@ -3,7 +3,7 @@ const pendingReports=new Map();
 const REQUEST_TIMEOUT_MS=30000;
 // Match the read-only actions in pilot/repository.mjs. Unknown actions remain
 // conservative: a timeout can leave their save result uncertain.
-const READ_ONLY_ROUTES=new Set(['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health']);
+const READ_ONLY_ROUTES=new Set(['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/cv-status','/api/demo/deposits','/api/demo/audit','/api/admin/system-health']);
 
 async function request(options,readOnly) {
   const controller=new AbortController();
@@ -38,7 +38,7 @@ export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.rand
   // Cash buttons and draft autosaves must observe each other's completed save.
   // Separate reports remain independent; failed requests do not stall the queue.
   if(!key)return post(route,snapshot,sessionToken,key,mutationId);
-  if(route==='/api/demo/pump-report'){
+  if(route==='/api/demo/pump-report'||route==='/api/demo/cv-status'){
     // Observe writes already queued when this poll began, but do not put a
     // slow read ahead of the next photo/confirmation. Callers reject results
     // overtaken by their local mutations; reads never advance savedRevisions.
@@ -76,7 +76,7 @@ async function post(route,input,sessionToken,key,mutationId) {
     // Scoped cash/delivery saves can read a newer shift without accepting this full draft.
     // A queued old draft must not inherit that revision and overwrite other edits.
     savedRevisions.delete(key);
-  } else if(result.report && route!=='/api/demo/pump-report') {
+  } else if(result.report && route!=='/api/demo/pump-report'&&route!=='/api/demo/cv-status') {
     const r=result.report;
     savedRevisions.set(key,Number(r.pilotRevision||0));
   }

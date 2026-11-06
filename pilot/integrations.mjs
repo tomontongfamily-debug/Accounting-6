@@ -63,9 +63,14 @@ export function normalizeSources({pay=[],po=[],cv=[]}, startDate, branch='Liloan
     // Approval controls eligibility; creation controls the Accounting shift.
     return {id:r.id,sourceVoucherId:r.id,reference:r.ref,branch,...accountingTiming(r.created_at),eventTime:r.created_at,assignmentBasis:r.funding_allocations?.length?'explicit_funding':'created_at',...(r.funding_allocations?.length?{fundingAllocations:r.funding_allocations}:{}),amount:money(r.amount),status:'APPROVED',fundingSource:r.payment_method==='fuel'?'STATION_FUEL':'STATION_CASH',...(r.payment_method==='fuel'?{fuelType:r.fuel_product,liters:Number(r.fuel_liters)}:{}),category,item:String(r.purpose||r.material||r.ref||'Cash voucher')};
   });
+  const cvPendingVouchers=unique(cv.filter(r=>r.station===station&&r.status==='pending'&&['cash','fuel'].includes(r.payment_method)).flatMap(r=>{
+    let timing;try{timing=accountingTiming(r.created_at);}catch{return [];}
+    if(timing.date<startDate)return [];
+    return [{id:r.id,reference:r.ref||r.id,branch,...timing,amount:money(r.amount),paymentType:r.payment_method,...(r.funding_allocations?.length?{fundingAllocations:r.funding_allocations}:{})}];
+  }));
   const cvExclusions=unique(cv.filter(r=>r.station===station&&['cash','fuel'].includes(r.payment_method)&&['cancelled','declined'].includes(r.status)).map(r=>({id:r.id,status:r.status})));
   const cvOutOfScope=unique(acceptedCv.filter(r=>accountingTiming(r.created_at).date<startDate).map(r=>({id:r.id,status:'created-before-pilot'})));
-  const result={pay:unique(payments).filter(r=>r.date>=startDate),po:unique(purchaseOrders).filter(r=>r.date>=startDate),cvCashEvents:unique(vouchers),cvExclusions,cvOutOfScope};
+  const result={pay:unique(payments).filter(r=>r.date>=startDate),po:unique(purchaseOrders).filter(r=>r.date>=startDate),cvCashEvents:unique(vouchers),cvPendingVouchers,cvExclusions,cvOutOfScope};
   result.sourceFingerprint=createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(result).map(([k,v])=>[k,v.sort((a,b)=>a.id.localeCompare(b.id))])))).digest('hex');
   return result;
 }
@@ -79,7 +84,7 @@ async function paged(makeQuery) {
 }
 export async function loadSources(accounting, cvClient, startDate, endDate, scope={}) {
   if(scope.branches){
-    const combined={pay:[],po:[],cvCashEvents:[],cvExclusions:[],cvOutOfScope:[]};
+    const combined={pay:[],po:[],cvCashEvents:[],cvPendingVouchers:[],cvExclusions:[],cvOutOfScope:[]};
     const sources=await Promise.all(scope.branches.filter(branch=>stationStartDate({startDate,...scope},branch)<=endDate).map(branch=>loadSources(accounting,cvClient,stationStartDate({startDate,...scope},branch),endDate,{branch})));
     for(const source of sources)for(const key of Object.keys(combined))combined[key].push(...source[key]);
     combined.sourceFingerprint=createHash('sha256').update(JSON.stringify(combined)).digest('hex');

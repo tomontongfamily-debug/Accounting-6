@@ -51,7 +51,7 @@ test('Refreshing draft reports preserves manager price-change photo evidence',()
   assert.deepEqual(state.reports[key].midShiftPriceChanges,evidence);
 });
 
-test('a CV server notification bypasses a recent source cache and preserves the closed shift count',async()=>{
+for(const refreshRoute of ['/api/realtime/config','/api/demo/cv-status'])test(`${refreshRoute} bypasses a recent CV source cache and preserves the closed shift count`,async()=>{
  const {state,key}=fixture();state.mode='live';
  const report=state.reports[key];report.confirmed=true;report.actualCashCounted=1000;
  report.cashDenominations={1000:1};report.cashCountConfirmed=true;
@@ -73,7 +73,7 @@ test('a CV server notification bypasses a recent source cache and preserves the 
  let committed;
  const db={from(table){return query(table==='fueltech_pilot_config'?{mode:'live',start_date:state.startDate}:table==='fueltech_pilot_state'?{revision:1,data:state}:table==='fueltech_pilot_receipts'?null:[]);},async rpc(_name,params){committed=params.p_data;return {data:{ok:true}};}};
  const cvClient={from(){return query([voucher]);}};
- await execute({role:'Admin',branch:'Liloan'},{route:'/api/realtime/config',mode:'live',startDate:state.startDate,mutationId:randomUUID()},{db,cvClient,posEnv:{},forceSources:true});
+ await execute({role:'Admin',branch:'Liloan'},{route:refreshRoute,input:{reportKey:key},mode:'live',startDate:state.startDate,mutationId:randomUUID()},{db,cvClient,posEnv:{},forceSources:refreshRoute==='/api/realtime/config'});
  assert.equal(committed.reports[key].purchaseRows.length,1);
  assert.equal(committed.reports[key].purchaseRows[0].sourceVoucherId,voucher.id);
  assert.equal(committed.reports[key].actualCashCounted,1000);

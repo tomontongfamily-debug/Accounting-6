@@ -79,7 +79,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   // its full evidence/history import just to load, photograph or save a shift.
   // Admin and Approver still need the complete, current all-station view.
   const usesPos=(!physicalEntryOnly||forceSources)&&(['Admin','Approver'].includes(session.role)||session.branch==='Liloan');
-  const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
+  const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/cv-status','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
   const receipt=await db.from('fueltech_pilot_receipts').select('request_hash,result').eq('mode',config.mode).eq('mutation_id',mutationId).maybeSingle();
@@ -124,7 +124,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   }
   prepareStationRollout(state,config,seedPrices);
   ensureCurrentReports(state);
-  if(forceSources||requiresFresh||(!physicalEntryOnly&&(!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000))) {
+  if(forceSources||route==='/api/demo/cv-status'||requiresFresh||(!physicalEntryOnly&&(!state.sourcesVerifiedAt||Date.now()-Date.parse(state.sourcesVerifiedAt)>60000))) {
     if(!cvClient) {
       if(!process.env.FUELTECH_CV_SERVICE_ROLE_KEY||!process.env.FUELTECH_CV_URL) throw fail('The server CV connection has not been configured.');
       cvClient=createClient(process.env.FUELTECH_CV_URL,process.env.FUELTECH_CV_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
