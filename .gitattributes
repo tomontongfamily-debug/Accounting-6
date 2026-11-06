@@ -1,0 +1,2 @@
+# Reader integrity pins must describe identical bytes on Windows and Linux.
+public/ocr/** -text

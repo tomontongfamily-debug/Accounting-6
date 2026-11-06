@@ -11,11 +11,11 @@ export const OCR_DOWNLOADS={
 // The first-pass seven-segment reader must survive a page refresh without
 // waiting on Wi-Fi again. Each phone stores only its supported LSTM core.
 export const PRIMARY_OCR_DOWNLOADS={
- worker:{path:'worker.min.js',bytes:111309,sha256:'19ee5cda4a70f74f419bc9d40f02118c415fe76b9b07494797b710d3211a5630'},
+ worker:{path:'worker.min.js',bytes:111307,sha256:'576b7df7e3393e137e51849357c9adb53fe7ac1bb69bfa06cf3d61520f182c6d'},
  language:{path:'lang/ssd_int.traineddata.gz',bytes:1302536,sha256:'a5bf958bbb16a7532ac1c46effcd25e1534af876e239c15579795ce0f48af136',decoded:{bytes:1442809,sha256:'557759383e030694420ee9f6a88e824abae4acf17f7b94415ca07e1152339339'}},
- plain:{path:'core/tesseract-core-lstm.wasm.js',bytes:3896675,sha256:'2492f0874c750bbff64752aee3ee477c986bc2e405039fcf49c109372884f9e7'},
- simd:{path:'core/tesseract-core-simd-lstm.wasm.js',bytes:3899663,sha256:'364a1d3ced9378b3610dd218b695c7bb5e63c6d9ee8cd7d76394043b22c2fff7'},
- relaxed:{path:'core/tesseract-core-relaxedsimd-lstm.wasm.js',bytes:3905958,sha256:'ab2b65f0ee7ab593c4bbcbcf6375720033732a7e96156c9d97eb56c4ccd69bb0'},
+ plain:{path:'core/tesseract-core-lstm.wasm.js',bytes:3896484,sha256:'eef5f8b2f8e20e150680b20adaec4a60babafee3adbe8a94583c81fee46e8680'},
+ simd:{path:'core/tesseract-core-simd-lstm.wasm.js',bytes:3899472,sha256:'c58b46a4c796c0b8afccf77591d5b875b6896b45d402bbce8caa6f5362447b38'},
+ relaxed:{path:'core/tesseract-core-relaxedsimd-lstm.wasm.js',bytes:3905767,sha256:'861a536cf9ef8e63cb644d57bab39c388f37f7d6b6f60024b741c5f6b39a59b3'},
 };
 let primaryPreparation;
 export function primaryCoreVariant(){
