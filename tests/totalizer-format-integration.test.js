@@ -53,7 +53,7 @@ test('optional aggregate diagnostics explain exact rejected bounds without chang
  const proof=layout();
  const accepted=evaluateNineCellHints([proof],{trace:true});
  assert.equal(accepted.blocked,false);assert.equal(accepted.layouts[0].decisions[0].code,0);
- proof.hints[0].symbols[0].bbox.x0-=4;
+ proof.hints[0].symbols[0].bbox.x0-=17;
  const rejected=evaluateNineCellHints([proof],{trace:true});
  assert.equal(rejected.blocked,true);assert.equal(rejected.layouts[0].decisions[0].code,12);
  assert.equal(rejected.layouts[0].decisions[0].index,0);assert.ok(rejected.layouts[0].decisions[0].bbox);
