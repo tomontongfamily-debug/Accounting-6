@@ -71,9 +71,14 @@ export function canDismissNineCellHint(proof={},options={}){
 
   const envelope={left:cells[0].bbox.x0,right:cells.at(-1).bbox.x1,
     top:Math.min(...cells.map(symbol=>symbol.bbox.y0)),bottom:Math.max(...cells.map(symbol=>symbol.bbox.y1))};
+  const advances=cells.slice(1).map((symbol,index)=>symbol.bbox.x1-cells[index].bbox.x1);
+  const medianAdvance=median(advances.filter(advance=>advance>0)),inkCenters=cells.map(symbol=>(symbol.bbox.x0+symbol.bbox.x1)/2);
+  if(!(medianAdvance>0))return reject(11,'cell-ranges');
   // Crop growth and OCR line fitting can include a small blank border. Bound
-  // that box spill by peer size; physical row/cell CENTER bounds stay exact.
-  const padding={x:Math.min(3,Math.max(1,Math.ceil(cellWidth*.06))),y:Math.min(8,Math.max(1,Math.ceil(cellHeight*.08)))};
+  // that box spill to a quarter of one typical cell advance (at most 16px).
+  // Physical row/cell CENTER bounds, outside digits and outer duplicates do
+  // not receive this allowance. The same border bounds each box's width.
+  const padding={x:Math.min(16,Math.max(1,Math.ceil(medianAdvance*.25))),y:Math.min(8,Math.max(1,Math.ceil(cellHeight*.08)))};
   const ranges=cells.map((symbol,index)=>({
     // An interior one occupies only the right strokes of its physical cell.
     // Peer digit width can define that cell, but must never expand the outer
@@ -82,8 +87,6 @@ export function canDismissNineCellHint(proof={},options={}){
     right:symbol.bbox.x1,
   }));
   if(ranges.some((range,index)=>range.right<=range.left||index>0&&range.left<ranges[index-1].right))return reject(11,'cell-ranges');
-  const advances=cells.slice(1).map((symbol,index)=>symbol.bbox.x1-cells[index].bbox.x1);
-  const medianAdvance=median(advances),inkCenters=cells.map(symbol=>(symbol.bbox.x0+symbol.bbox.x1)/2);
   const assignments=[];
   for(const [index,symbol]of nine.entries()){
     const box=symbol.bbox;
