@@ -117,10 +117,11 @@ test('joined short-display cells and mixed contrast use independent physical box
  assert.equal(readingWithVisibleDecimal(detected,components,{integerDigits:4,decimalPlaces:2}),null);
  assert.equal(supportedTotalizerReading(detected,components,physical),null,'Weak binary-mask digits alone cannot establish the result');
  const aligned=corroboratedShortTotalizerSymbols(detected,components,physical,{gray,width,height});
- assert.ok(aligned,JSON.stringify({physical,components:components.filter(c=>c.y>=120&&c.y<132&&c.width<20),candidate:readingWithVisibleDecimal(physical.map((s,i)=>({...s,text:text[i]})),components,{integerDigits:4,decimalPlaces:2}),verified:verifyLcdDigits(physical.map((s,i)=>({...s,text:text[i]})),gray,width,height,[],{requireEveryDigit:true})}));
+ assert.ok(aligned,'Every cell has a unique independently verified grayscale stroke pattern');
  assert.equal(supportedTotalizerReading(detected,components,physical,{gray,width,height}),7808.55);
  assert.deepEqual(aligned.map(s=>s.bbox),physical.map(s=>s.bbox),'Final verification retains independent cell geometry');
  assert.equal(verifyLcdDigits(aligned,gray,width,height,[],{requireEveryDigit:true}),true);
+ assert.equal(supportedTotalizerReading(detected,[...components,{x:214,y:121,width:8,height:8,area:64}],physical,{gray,width,height}),null,'Conflicting decimal evidence cannot be resolved from OCR text');
  const wrong=structuredClone(detected);wrong[0].text='1';
  assert.equal(supportedTotalizerReading(wrong,components,physical,{gray,width,height}),null,'Original top-bar evidence rejects the conflicting leading digit');
  const missing=gray.slice(),middle=physical[2].bbox;
