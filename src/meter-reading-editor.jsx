@@ -1,31 +1,10 @@
 import {useEffect,useRef,useState} from 'react';
-import {analyzeTotalizerFrame} from './totalizer-frame-client.js';
-import {meterPhotoRegion} from './meter-photo-region.js';
+import {useMeterPhotoPreview} from './meter-photo-preview.js';
 
 export function MeterReadingEditor({photo,label,value,onChange}){
-  const [crop,setCrop]=useState(''),[fitted,setFitted]=useState(false),[zoom,setZoom]=useState(1),[full,setFull]=useState(false);
+  const {src:crop,fitted}=useMeterPhotoPreview(photo);
+  const [zoom,setZoom]=useState(1),[full,setFull]=useState(false);
   const editor=useRef(null),input=useRef(null),viewport=useRef(null);
-  useEffect(()=>{
-    let active=true;setCrop('');setFitted(false);setZoom(1);setFull(false);
-    const image=new Image();image.src=photo;
-    (async()=>{
-      try{
-        await image.decode();if(!active)return;
-        const scale=Math.min(1,1280/Math.max(image.naturalWidth,image.naturalHeight));
-        const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
-        const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,canvas.width,canvas.height);
-        const {analysis}=await analyzeTotalizerFrame(context.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height);
-        if(!active)return;
-        const region=meterPhotoRegion(analysis.regions,canvas.width,canvas.height);
-        if(region){
-          const preview=document.createElement('canvas');preview.width=Math.max(1,Math.round(region.width*image.naturalWidth));preview.height=Math.max(1,Math.round(region.height*image.naturalHeight));
-          preview.getContext('2d').drawImage(image,region.x*image.naturalWidth,region.y*image.naturalHeight,region.width*image.naturalWidth,region.height*image.naturalHeight,0,0,preview.width,preview.height);
-          setCrop(preview.toDataURL('image/png'));setFitted(true);
-        }
-      }catch{ /* The full photo and manual zoom remain available. */ }
-    })();
-    return()=>{active=false;};
-  },[photo]);
   useEffect(()=>{
     const align=()=>{
       editor.current?.style.setProperty('--reading-view-height',`${window.visualViewport?.height||window.innerHeight}px`);
