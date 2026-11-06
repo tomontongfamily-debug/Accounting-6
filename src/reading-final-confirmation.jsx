@@ -4,6 +4,18 @@ import {useMeterPhotoPreview} from './meter-photo-preview.js';
 export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCancel,onConfirm}){
   const dialog=useRef(null),cancel=useRef(null),title=useId(),description=useId();
   const preview=useMeterPhotoPreview(photo),[photoReady,setPhotoReady]=useState(false),[photoFailed,setPhotoFailed]=useState(false);
+  const [secondsRemaining,setSecondsRemaining]=useState(3);
+  useEffect(()=>{
+    setSecondsRemaining(3);
+    if(!photoReady||photoFailed)return;
+    const availableAt=performance.now()+3000;
+    const timer=setInterval(()=>{
+      const seconds=Math.max(0,Math.ceil((availableAt-performance.now())/1000));
+      setSecondsRemaining(seconds);
+      if(seconds===0)clearInterval(timer);
+    },100);
+    return()=>clearInterval(timer);
+  },[photoReady,photoFailed]);
   useEffect(()=>{
     document.activeElement?.blur?.();
     const element=dialog.current;
@@ -25,7 +37,9 @@ export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCan
     {warning&&<p className="warning-box">{warning}<br/>Admin will see this warning.</p>}
     <div className="reading-final-actions">
       <button ref={cancel} type="button" className="reading-final-cancel" onClick={onCancel}>Cancel and double-check</button>
-      <button type="button" className="reading-final-sure" disabled={!photoReady||photoFailed} onClick={onConfirm}>I'm really sure</button>
+      {photoReady&&!photoFailed&&secondsRemaining===0?
+        <button type="button" className="reading-final-sure" onClick={onConfirm}>I'm really sure</button>:
+        <div className="reading-final-countdown" role="status">{photoReady&&!photoFailed?`Review the photo · ${secondsRemaining} ${secondsRemaining===1?'second':'seconds'}`:'Waiting for the photo…'}</div>}
     </div>
   </dialog>;
 }
