@@ -4,11 +4,11 @@ import {canDismissNineCellHint} from '../src/totalizer-format-evidence.js';
 import {totalizerRegions,withoutDisplayFrame,segmentDisplaySymbols,readingWithVisibleDecimal} from '../src/totalizer-image.js';
 
 const patterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
-function fixture(text='15117097',offset=0){
+function fixture(text='15117097',offset=0,wideOnes=false){
   const width=650+offset,height=180,gray=new Uint8Array(width*height).fill(190),top=30,left=65+offset,pitch=65;
   const strokes=[[8,0,28,10],[34,8,8,36],[34,56,8,38],[8,90,28,10],[1,56,8,38],[1,8,8,36],[8,45,28,10]];
   for(const [index,digit]of [...text].entries())for(const [segment,on]of [...patterns[Number(digit)]].entries())if(on==='1'){
-    const [x0,y0,w,h]=strokes[segment];
+    const [x0,y0,w,h]=wideOnes&&digit==='1'?(segment===1?[33,8,12,36]:[29,56,12,38]):strokes[segment];
     for(let y=top+y0;y<top+y0+h;y++)for(let x=left+index*pitch+x0;x<left+index*pitch+x0+w;x++)gray[y*width+x]=105;
   }
   const decimal={x:left+(text.length-3)*pitch+49,y:top+91,width:8,height:8};
@@ -40,14 +40,66 @@ test('only a proven interior split dismisses an OCR hint across different values
     assert.equal(proof.physical.symbols.map(symbol=>symbol.text).join(''),text);
   }
 });
+
+function paddedProof(text='15117097',offset=0){
+  const proof=splitAt(fixture(text,offset,true));
+  for(const {bbox}of proof.hint.symbols){bbox.x0--;bbox.x1++;bbox.y0-=2;bbox.y1+=2;}
+  if(text.startsWith('1')){
+    const first=proof.physical.symbols[0].bbox,box=proof.hint.symbols[0].bbox;
+    // An OCR line box can include adjacent blank space around a narrow one,
+    // while its center still lies on that same physical first digit.
+    box.x0=first.x0-2;box.x1=first.x1+14;box.y0=first.y0-1;
+    box.y1=Math.max(...proof.physical.symbols.map(symbol=>symbol.bbox.y1))+6;
+  }
+  return proof;
+}
+test('bounded OCR box borders retain exact physical center ranges across different meters',()=>{
+  for(const [text,offset]of [['15117097',0],['12063876',23],['92683075',31]]){
+    assert.equal(canDismissNineCellHint(paddedProof(text,offset)),true,text);
+  }
+});
+test('padding cannot absorb outside centers, oversized glyphs, or extra first/final cells',()=>{
+  const changes=[
+    proof=>{const first=proof.physical.symbols[0].bbox;Object.assign(proof.hint.symbols[0].bbox,{x0:first.x0-2,x1:first.x0+1});},
+    proof=>{const top=Math.min(...proof.physical.symbols.map(symbol=>symbol.bbox.y0));Object.assign(proof.hint.symbols[2].bbox,{y0:top-7,y1:top-1});},
+    proof=>{const box=proof.hint.symbols[2].bbox,center=(box.x0+box.x1)/2;box.x0=center-40;box.x1=center+40;},
+    proof=>{proof.hint.symbols[0].bbox.x0=proof.physical.symbols[0].bbox.x0-4;},
+    proof=>{proof.hint.symbols.at(-1).bbox.y1=Math.max(...proof.physical.symbols.map(symbol=>symbol.bbox.y1))+9;},
+  ];
+  for(const change of changes){const proof=paddedProof();change(proof);assert.equal(canDismissNineCellHint(proof),false);}
+  for(const index of [0,7]){
+    const proof=fixture('15117097',0,true),box=proof.physical.symbols[index].bbox;
+    const duplicate={text:proof.physical.symbols[index].text,confidence:99,bbox:{x0:box.x0+1,x1:box.x1-1,y0:box.y0+1,y1:box.y1-1}};
+    proof.hint.symbols.splice(index,0,duplicate);
+    let code;assert.equal(canDismissNineCellHint(proof,{onDecision:event=>{code=event.code;}}),false);
+    assert.equal(code,14,'Even a contained outer duplicate must retain the nine-cell guard');
+  }
+});
+test('a wide merged physical one cannot hide two glyphs inside an inferred normal-width cell',()=>{
+  const proof=fixture(),{gray,width}=proof.physical.image,index=2,left=65+index*65,top=30;
+  for(let y=top;y<top+100;y++)for(let x=left;x<left+65;x++)gray[y*width+x]=190;
+  for(const [x0,y0,w,h]of [[54,8,10,36],[54,56,10,38],[1,8,63,2]]){
+    for(let y=top+y0;y<top+y0+h;y++)for(let x=left+x0;x<left+x0+w;x++)gray[y*width+x]=105;
+  }
+  const analysis=totalizerRegions(gray,width,proof.physical.image.height);
+  proof.physical.symbols=segmentDisplaySymbols(withoutDisplayFrame(analysis.mask,width,proof.physical.region),width,proof.physical.region);
+  assert.equal(proof.physical.symbols.map(symbol=>symbol.text).join(''),'15117097','The widened binary cell can still uniquely resemble one');
+  assert.ok(proof.physical.symbols[index].bbox.x1-proof.physical.symbols[index].bbox.x0>41*1.35);
+  proof.agreeingPasses[0].symbols=structuredClone(proof.physical.symbols);
+  proof.hint.symbols=structuredClone(proof.physical.symbols);
+  proof.hint.symbols[index].bbox={x0:left+54,x1:left+64,y0:top+8,y1:top+94};
+  splitAt(proof,index);
+  let code;assert.equal(canDismissNineCellHint(proof,{onDecision:event=>{code=event.code;}}),false);
+  assert.equal(code,10,'Independent physical cell width must reject the merge before OCR-center assignment');
+});
 test('a real extra leading glyph remains guarded, including before a narrow first one',()=>{
   for(const extra of ['1','8']){
     const proof=fixture(),first=proof.physical.symbols[0].bbox;
     proof.hint.symbols.unshift({text:extra,confidence:99,bbox:{x0:first.x0-35,x1:first.x0-10,y0:first.y0,y1:first.y1}});
     assert.equal(canDismissNineCellHint(proof),false);
   }
-  const proof=splitAt(fixture());proof.hint.symbols[0].bbox.x0--;
-  assert.equal(canDismissNineCellHint(proof),false,'The outer physical ink envelope has no inferred leading-cell padding');
+  const proof=splitAt(fixture());proof.hint.symbols[0].bbox.x0-=4;
+  assert.equal(canDismissNineCellHint(proof),false,'Box spill is capped; it cannot add an inferred leading cell');
 });
 test('physical nine-cell and unknown-cell evidence cannot be dismissed',()=>{
   const nine=fixture('115117097');
@@ -113,7 +165,7 @@ test('optional diagnostic decisions report numeric gates without changing accept
   const accepted=splitAt(fixture()),events=[];
   assert.equal(canDismissNineCellHint(accepted,{onDecision:event=>events.push(event)}),true);
   assert.deepEqual(events,[{code:0,reason:'proven-split'}]);
-  const outside=splitAt(fixture());outside.hint.symbols[0].bbox.x0--;
+  const outside=splitAt(fixture());outside.hint.symbols[0].bbox.x0-=4;
   const rejected=[];
   assert.equal(canDismissNineCellHint(outside,{onDecision:event=>rejected.push(event)}),false);
   assert.equal(rejected.length,1);assert.equal(rejected[0].code,12);assert.equal(rejected[0].reason,'envelope');

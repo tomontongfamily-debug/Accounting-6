@@ -263,8 +263,8 @@ async function probeNetwork(expectedIngressBytesPerSecond,expectedByteCount=CALI
     const response=await fetch(url,{cache:'no-store',credentials:'omit',headers:request.headers,signal:controller.signal});
     if(!response.ok)throw Error('Calibration download failed.');
     const bytes=(await response.arrayBuffer()).byteLength;
-    const responseEvidence=validateCalibrationResponse({status:response.status,contentRange:response.headers.get('Content-Range'),contentLength:response.headers.get('Content-Length'),bytes,expectedByteCount});
     const resource=performance.getEntriesByName(url.href).at(-1);
+    const responseEvidence=validateCalibrationResponse({status:response.status,contentRange:response.headers.get('Content-Range'),contentLength:response.headers.get('Content-Length'),contentEncoding:response.headers.get('Content-Encoding'),encodedBodySize:resource?.encodedBodySize,bytes,expectedByteCount});
     calibration={status:'complete',...calibrationMetrics({bytes,wallMs:Math.round(performance.now()-started),resource,expectedByteCount,expectedIngressBytesPerSecond}),response:responseEvidence};
   }catch(error){calibration={status:'error',expectedByteCount,error:recordError('Network probe',error),limitAssessment:'not-verifiable'};}
   finally{clearTimeout(timer);renderCompact();}

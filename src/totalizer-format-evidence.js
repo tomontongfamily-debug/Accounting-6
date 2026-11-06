@@ -57,20 +57,27 @@ export function canDismissNineCellHint(proof={},options={}){
   const cells=segmentDisplaySymbols(withoutDisplayFrame(analysis.mask,width,region),width,region);
   if(cells.length!==8||cells.some((symbol,index)=>!isDigit(symbol)||symbol.text!==physical.symbols[index].text||
     !sameBox(symbol.bbox,physical.symbols[index].bbox)))return reject(7,'raw-proof');
+  const bodies=cells.filter(symbol=>symbol.text!=='1');
+  const bodyWidths=bodies.map(symbol=>symbol.bbox.x1-symbol.bbox.x0);
+  if(bodyWidths.length<3)return reject(10,'cell-width');
+  const cellWidth=median(bodyWidths),cellHeight=median(bodies.map(symbol=>symbol.bbox.y1-symbol.bbox.y0));
+  // A merged pair cannot become a single wide physical "1" merely because
+  // the ordinary grayscale verifier reconstructs a one's width from peers.
+  if(cells.some(symbol=>symbol.bbox.x1-symbol.bbox.x0>cellWidth*1.35))return reject(10,'cell-width');
   if(readingWithVisibleDecimal(cells,analysis.components,{integerDigits:6,decimalPlaces:2})===null||
     !verifyLcdDigits(cells,gray,width,height,cells))return reject(8,'decimal-or-gray-proof');
   const text=cells.map(symbol=>symbol.text).join('');
   if(!Array.isArray(agreeingPasses)||!agreeingPasses.some(pass=>qualifiedPass(pass,physical,text,width,height)))return reject(9,'qualified-pass');
 
-  const bodyWidths=cells.filter(symbol=>symbol.text!=='1').map(symbol=>symbol.bbox.x1-symbol.bbox.x0);
-  if(bodyWidths.length<3)return reject(10,'cell-width');
-  const cellWidth=median(bodyWidths);
   const envelope={left:cells[0].bbox.x0,right:cells.at(-1).bbox.x1,
     top:Math.min(...cells.map(symbol=>symbol.bbox.y0)),bottom:Math.max(...cells.map(symbol=>symbol.bbox.y1))};
+  // Crop growth and OCR line fitting can include a small blank border. Bound
+  // that box spill by peer size; physical row/cell CENTER bounds stay exact.
+  const padding={x:Math.min(3,Math.max(1,Math.ceil(cellWidth*.06))),y:Math.min(8,Math.max(1,Math.ceil(cellHeight*.08)))};
   const ranges=cells.map((symbol,index)=>({
     // An interior one occupies only the right strokes of its physical cell.
     // Peer digit width can define that cell, but must never expand the outer
-    // ink envelope and absorb a real faint leading ninth digit.
+    // center envelope and absorb a real faint leading ninth digit.
     left:index>0&&symbol.text==='1'?symbol.bbox.x1-cellWidth:symbol.bbox.x0,
     right:symbol.bbox.x1,
   }));
@@ -78,8 +85,11 @@ export function canDismissNineCellHint(proof={},options={}){
   const assignments=[];
   for(const [index,symbol]of nine.entries()){
     const box=symbol.bbox;
-    if(box.x0<envelope.left||box.x1>envelope.right||box.y0<envelope.top||box.y1>envelope.bottom)return reject(12,'envelope',()=>({index,bbox:{...box},envelope:{...envelope}}));
-    const matching=ranges.flatMap((range,index)=>box.x0>=range.left&&box.x1<=range.right?[index]:[]);
+    if(box.x0<envelope.left-padding.x||box.x1>envelope.right+padding.x||box.y0<envelope.top-padding.y||box.y1>envelope.bottom+padding.y)return reject(12,'envelope',()=>({index,bbox:{...box},envelope:{...envelope},padding:{...padding}}));
+    const center={x:(box.x0+box.x1)/2,y:(box.y0+box.y1)/2};
+    if(center.x<envelope.left||center.x>envelope.right||center.y<envelope.top||center.y>envelope.bottom)return reject(16,'center-envelope',()=>({index,bbox:{...box},envelope:{...envelope},center}));
+    if(box.x1-box.x0>cellWidth+2*padding.x||box.y1-box.y0>cellHeight+2*padding.y)return reject(17,'oversized-glyph',()=>({index,bbox:{...box},envelope:{...envelope},padding:{...padding}}));
+    const matching=ranges.flatMap((range,index)=>center.x>=range.left&&center.x<=range.right?[index]:[]);
     if(matching.length!==1||assignments.length&&matching[0]<assignments.at(-1))return reject(13,'cell-mapping',()=>({index,bbox:{...box},matchingCells:[...matching]}));
     assignments.push(matching[0]);
   }
