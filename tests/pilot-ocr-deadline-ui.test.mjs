@@ -31,7 +31,9 @@ test('primary protocol is compatible, startup and recognition are bounded, and o
   const page=await browser.newPage();page.on('pageerror',error=>errors.push(error.message));
   if(mode)await page.addInitScript(primaryWorkerFixture,mode);
   else await page.addInitScript(()=>{globalThis.__unhandled=[];addEventListener('unhandledrejection',e=>{globalThis.__unhandled.push(String(e.reason));e.preventDefault();});});
-  await page.goto(origin+'/ocr/neural/README.md');return page;
+  await page.goto(origin+'/ocr/neural/README.md');
+  if(mode)await page.evaluate(async()=>{await(await import('/src/ocr-downloads.js')).preparePrimaryReaderFiles();});
+  return page;
  }
  try{
   const protocol=await pageFor('protocol');
@@ -44,10 +46,11 @@ test('primary protocol is compatible, startup and recognition are bounded, and o
    const native=globalThis.__primaryWorkers[0],messages=native.calls;
    session.terminate();
    return {actions:messages.map(x=>x.action),load:messages[0].payload,language:messages[1].payload,initialize:messages[2].payload,
+    languageCode:messages[1].payload.langs[0].code,languageBytes:messages[1].payload.langs[0].data.byteLength,
     output:messages.at(-1).payload.output,png:[...messages.at(-1).payload.image.slice(0,8)],terminations:native.terminations,unhandled:globalThis.__unhandled};
   });
   assert.deepEqual(calls.actions,['load','loadLanguage','initialize','setParameters','setParameters','recognize']);
-  assert.equal(calls.load.options.lstmOnly,true);assert.equal(calls.language.langs,'ssd_int');assert.equal(calls.language.options.gzip,true);
+  assert.equal(calls.load.options.lstmOnly,true);assert.equal(calls.languageCode,'ssd_int');assert.ok(calls.languageBytes>=1302536);assert.equal(calls.language.options.gzip,true);
   assert.deepEqual(calls.initialize,{langs:'ssd_int',oem:1,config:{}});assert.deepEqual(calls.output,{text:true,blocks:true});
   assert.deepEqual(calls.png,[137,80,78,71,13,10,26,10]);assert.equal(calls.terminations,1);assert.deepEqual(calls.unhandled,[]);await protocol.close();
 

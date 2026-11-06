@@ -10,7 +10,7 @@ import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, da
 import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
 import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
-import { mergeOcrEvidence, TOTALIZER_VERSION } from '../src/ocr-evidence.js';
+import { mergeOcrEvidence, pendingOcrAttempt } from '../src/ocr-evidence.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -485,7 +485,7 @@ function validatePriceReadingOrder(report,change) {
       let readingRevision;
       if(input.replaceReading){
         readingRevision=Number(previous?.readingRevision||0)+1;
-        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:{status:'pending',version:TOTALIZER_VERSION},ocr_was_edited:false,readingRevision};
+        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:pendingOcrAttempt(),ocr_was_edited:false,readingRevision};
         if(change){
           const pumpKey=midShiftPumpKey(photoRow);
           change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;

@@ -1,9 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readingWithVisibleDecimal,supportedTotalizerReading,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
+import {readingWithVisibleDecimal,supportedTotalizerReading,corroboratedShortTotalizerSymbols,segmentDisplaySymbols,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
 
 const symbols=text=>[...text].map((text,i)=>({text,confidence:95,bbox:{x0:20+i*60,x1:60+i*60,y0:20,y1:120}}));
 const dot=index=>({x:20+index*60-15,y:110,width:8,height:9,area:65});
+
+test('four- and five-integer displays require exact independent digits and a visible two-place decimal',()=>{
+ for(const [text,integerDigits,value] of [['780855',4,7808.55],['1780855',5,17808.55],['007855',4,78.55]]){
+  const detected=symbols(text),physical=symbols(text);
+  assert.equal(supportedTotalizerReading(detected,[dot(integerDigits)],physical),value);
+  assert.equal(supportedTotalizerReading(detected,[],physical),null,'No decimal can be inferred from the number of digits');
+  assert.equal(supportedTotalizerReading(detected,[dot(integerDigits-1),dot(integerDigits)],physical),null,'Conflicting visible decimals require review');
+  assert.equal(supportedTotalizerReading(detected,[dot(integerDigits)],physical.slice(1)),null,'Every visible digit needs independent cell evidence');
+  const uncertain=structuredClone(physical);uncertain[0].text='?';
+  assert.equal(supportedTotalizerReading(detected,[dot(integerDigits)],uncertain),null);
+  const conflicting=structuredClone(physical);conflicting[1].text=String((Number(conflicting[1].text)+1)%10);
+  assert.equal(supportedTotalizerReading(detected,[dot(integerDigits)],conflicting),null,'Disagreeing readers cannot supply a short totalizer');
+  const lowConfidence=structuredClone(detected);lowConfidence[2].confidence=50;
+  assert.equal(supportedTotalizerReading(lowConfidence,[dot(integerDigits)],physical),null);
+ }
+ const six=symbols('780855');
+ assert.equal(supportedTotalizerReading(six,[dot(3)],six),null,'A three-place decimal cannot be rounded into two');
+ assert.equal(supportedTotalizerReading(six,[dot(5)],six),null,'A one-place decimal cannot be padded into two');
+ assert.equal(supportedTotalizerReading(six,[dot(4)],symbols('00780855')),null,'Do not infer hidden leading zero cells');
+ assert.equal(supportedTotalizerReading(symbols('80855'),[dot(3)],symbols('780855')),null,'Do not drop a leading physical digit');
+ assert.equal(supportedTotalizerReading(symbols('1780855'),[dot(5)],symbols('01780855')),null,'A cropped six-integer meter is not a five-integer meter');
+});
 
 test('seven integer digits require all nine independent cells and the visible two-place decimal',()=>{
  const nine=symbols('123456789');
@@ -64,6 +86,48 @@ test('Local contrast retains dark digits under a broad lighting gradient',()=>{
 });
 
 const patterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
+
+function joinedShortDisplay(){
+ const width=440,height=180,gray=new Uint8Array(width*height).fill(180),text='780855',lefts=[50,110,170,218,278,338];
+ const boxes=[[8,0,28,14],[34,16,8,28],[34,66,8,28],[8,86,28,14],[1,66,8,28],[1,16,8,28],[8,43,28,14]];
+ for(const [index,digit] of [...text].entries())for(const [segment,on] of [...patterns[Number(digit)]].entries())if(on==='1'){
+  const [left,top,w,h]=boxes[segment];
+  for(let y=top;y<top+h;y++)for(let x=left;x<left+w;x++){
+   // These strokes are weaker than the mask threshold, but their measured
+   // contrast still exceeds the independent grayscale stroke requirement.
+   const faint=index===0&&segment===2&&y<78||index===3&&segment===1&&y>=24;
+   gray[(30+y)*width+lefts[index]+x]-=faint?9:40;
+  }
+ }
+ for(let y=121;y<129;y++)for(let x=264;x<272;x++)gray[y*width+x]-=40;
+ const {mask,components}=totalizerRegions(gray,width,height);
+ const region={x:48,y:30,width:335,height:101,bandHeight:96};
+ return {gray,width,height,mask,components,region,text};
+}
+
+test('joined short-display cells and mixed contrast use independent physical boxes and every original-image digit',()=>{
+ const image=joinedShortDisplay(),{gray,width,height,components,region,text}=image;
+ const physical=segmentDisplaySymbols(image.mask,width,region);
+ assert.equal(physical.length,6,'A narrow whitespace valley separates the neighboring zero/eight cells');
+ assert.equal(physical[0].text,'?');assert.equal(physical[3].text,'?');
+ const detected=physical.map((s,index)=>({...s,text:text[index],confidence:99}));
+ // Model the overlapping OCR character boxes produced by joined strokes.
+ detected[3].bbox={...detected[3].bbox,x0:detected[2].bbox.x0+10};
+ detected[4].bbox={...detected[4].bbox,x0:detected[3].bbox.x0-2};
+ assert.equal(readingWithVisibleDecimal(detected,components,{integerDigits:4,decimalPlaces:2}),null);
+ assert.equal(supportedTotalizerReading(detected,components,physical),null,'Weak binary-mask digits alone cannot establish the result');
+ const aligned=corroboratedShortTotalizerSymbols(detected,components,physical,{gray,width,height});
+ assert.ok(aligned,JSON.stringify({physical,components:components.filter(c=>c.y>=120&&c.y<132&&c.width<20),candidate:readingWithVisibleDecimal(physical.map((s,i)=>({...s,text:text[i]})),components,{integerDigits:4,decimalPlaces:2}),verified:verifyLcdDigits(physical.map((s,i)=>({...s,text:text[i]})),gray,width,height,[],{requireEveryDigit:true})}));
+ assert.equal(supportedTotalizerReading(detected,components,physical,{gray,width,height}),7808.55);
+ assert.deepEqual(aligned.map(s=>s.bbox),physical.map(s=>s.bbox),'Final verification retains independent cell geometry');
+ assert.equal(verifyLcdDigits(aligned,gray,width,height,[],{requireEveryDigit:true}),true);
+ const wrong=structuredClone(detected);wrong[0].text='1';
+ assert.equal(supportedTotalizerReading(wrong,components,physical,{gray,width,height}),null,'Original top-bar evidence rejects the conflicting leading digit');
+ const missing=gray.slice(),middle=physical[2].bbox;
+ for(let y=middle.y0-5;y<middle.y1+5;y++)for(let x=middle.x0-5;x<middle.x1+5;x++)missing[y*width+x]=180;
+ assert.equal(supportedTotalizerReading(detected,components,physical,{gray:missing,width,height}),null,'An unreadable interior glyph cannot hide behind confidence in the other digits');
+});
+
 function faintDigit(pattern,contrast=18){
   const width=520,height=210,gray=new Uint8Array(width*height);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++)gray[y*width+x]=150+Math.round(x*.05);

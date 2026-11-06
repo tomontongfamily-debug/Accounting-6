@@ -3,11 +3,12 @@ import {analyzeTotalizerFrame,cancelTotalizerFrame} from './totalizer-frame-clie
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
 import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
 import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
-import { readingWithVisibleDecimal, supportedTotalizerReading, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
+import { readingWithVisibleDecimal, supportedTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
 
-export const TOTALIZER_TIMEOUT_MS=15000;
+export const TOTALIZER_CLEAR_TARGET_MS=20000;
+export const TOTALIZER_TIMEOUT_MS=30000;
 export const BACKGROUND_PRIMARY_TIMEOUT_MS=60000;
-let workerPromise,primarySession;
+let workerPromise,primarySession,framePreparation;
 const detectionQueue=[];
 let activeDetection;
 function resetPrimary(session,error){
@@ -25,7 +26,13 @@ function acquirePrimary({initializationTimeoutMs,background=false}={}){
   return {session:primarySession,ready:workerPromise};
 }
 export function prepareTotalizer({timeoutMs}={}){
-  try{return acquirePrimary({initializationTimeoutMs:boundedReaderTimeout(timeoutMs,BACKGROUND_PRIMARY_TIMEOUT_MS),background:true}).ready;}
+  try{
+    const ready=acquirePrimary({initializationTimeoutMs:boundedReaderTimeout(timeoutMs,BACKGROUND_PRIMARY_TIMEOUT_MS),background:true}).ready;
+    // Load the small image-analysis worker before the first capture too. A
+    // prepared reader must not pause on Wi-Fi to start its geometry check.
+    framePreparation ||= analyzeTotalizerFrame(new Uint8ClampedArray(4),1,1).catch(error=>{framePreparation=undefined;throw error;});
+    return Promise.all([ready,framePreparation]).then(([session])=>session);
+  }
   catch(error){return Promise.reject(error);}
 }
 function runNextDetection(){
@@ -35,7 +42,7 @@ function runNextDetection(){
   Promise.resolve().then(async()=>{job.check();const value=await recognizePhoto(job.data,job);job.check();job.finish(null,value);}).catch(error=>job.finish(error));
 }
 export function detectTotalizer(data,options={}){
-  const timeoutMs=boundedReaderTimeout(options.timeoutMs,TOTALIZER_TIMEOUT_MS);
+  const timeoutMs=Math.min(TOTALIZER_TIMEOUT_MS,boundedReaderTimeout(options.timeoutMs,TOTALIZER_TIMEOUT_MS));
   const job={data,options,active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs};
   let cancel;
   const cancellation=new Promise(resolve=>{cancel=resolve;});
@@ -58,7 +65,7 @@ export function detectTotalizer(data,options={}){
         // Let an explicitly/background-prepared engine finish downloading.
         // Expired captures stop awaiting it and can never begin late inference.
         if(!(job.primary?.background&&job.primary.initializing))resetPrimary(job.primary,job.error);
-        cancelTotalizerFrame();cancelAdvancedTotalizer();
+        framePreparation=undefined;cancelTotalizerFrame();cancelAdvancedTotalizer();
       }
       cancel();
       finish(job.error);
@@ -133,13 +140,15 @@ async function recognizePhoto(data,job){
             const leading=refineLeadingLcdDigit(symbols.map(s=>({...s,bbox:{x0:s.bbox.x0+region.x-crop.pad,x1:s.bbox.x1+region.x-crop.pad,y0:s.bbox.y0+region.y-crop.pad,y1:s.bbox.y1+region.y-crop.pad}})),gray,canvas.width,canvas.height);
             const translated=refineNarrowLcdDigits(leading,gray,canvas.width,canvas.height);
             const digits=translated.filter(s=>/^\d$/.test(s.text));
-            glyphs.push(...digits.filter(s=>s.confidence>=90&&!s.lcdAmbiguous));
+            const corroborated=corroboratedShortTotalizerSymbols(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height});
+            const verifiedSymbols=corroborated||translated;
+            glyphs.push(...verifiedSymbols.filter(s=>/^\d$/.test(s.text)&&s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
             if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)longDisplay=true;
-            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?supportedTotalizerReading(translated,analysis.components,segments):null;
+            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
             // Keep a physically verified alignment of the same numeric value.
             // An early crop with poor boxes must not hide a later verified pass.
-            if(value!==null&&(!evidence.has(value)||verifyLcdDigits(translated,gray,canvas.width,canvas.height,segments)))evidence.set(value,{symbols:translated,segments});
+            if(value!==null&&(!evidence.has(value)||verifyLcdDigits(verifiedSymbols,gray,canvas.width,canvas.height,segments)))evidence.set(value,{symbols:verifiedSymbols,segments});
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
             passes.push({value,confidence:result.confidence});
