@@ -31,9 +31,9 @@ test('desktop and phone managers add/remove shifts, upload one receipt, split 68
    await page.getByLabel('Add a shift',{exact:true}).selectOption(keys[1]);
    await page.getByLabel('Amount deposited',{exact:true}).fill('68000');
    for(const [i,value]of ['30000','20000','18000'].entries())await page.getByLabel('Amount from Sep 23, 2026 Shift '+(i+1),{exact:true}).fill(value);
-   const review=page.getByRole('button',{name:'Review deposit →',exact:true});assert.equal(await review.isDisabled(),true);
+   const review=page.getByRole('button',{name:'Review deposit →',exact:true});assert.equal(await review.isDisabled(),false);
    const jpeg=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=500;c.height=300;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,500,300);x.fillStyle='black';x.font='24px sans-serif';x.fillText('TEST RECEIPT PHP 68,000',20,50);return c.toDataURL('image/jpeg').split(',')[1];});
-   await page.getByLabel('Receipt photo',{exact:true}).setInputFiles({name:'receipt.jpg',mimeType:'image/jpeg',buffer:Buffer.from(jpeg,'base64')});
+   await page.getByLabel('Receipt photo (optional)',{exact:true}).setInputFiles({name:'receipt.jpg',mimeType:'image/jpeg',buffer:Buffer.from(jpeg,'base64')});
    await page.getByText(/Receipt saved/).waitFor();await expect(review).toBeEnabled();
    await page.getByLabel('Amount deposited',{exact:true}).fill('68001');await expect(review).toBeDisabled();
    await page.getByLabel('Amount deposited',{exact:true}).fill('68000');

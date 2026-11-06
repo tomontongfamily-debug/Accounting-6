@@ -5,7 +5,7 @@ import path from 'node:path';
 import {chromium} from '@playwright/test';
 import {createServer} from 'vite';
 
-test('Manager and admin cards identify covered shifts; manager records bank fees separately from the remaining difference',async()=>{
+test('Manager and admin cards identify covered shifts; managers submit without fees or receipt on phone and desktop',async()=>{
   const entry=`import React from 'react';import{createRoot}from'react-dom/client';import{ManagerDepositCards}from'/src/deposit-cards.jsx';import{AdminDepositCards}from'/src/admin-deposits.jsx';import{DepositHistoryCard}from'/src/upgrade-components.jsx';import'/src/styles.css';
     async function api(route,input){if(route==='deposit-receipt')return{receiptPath:'/api/pilot/photo?id=test-receipt'};if(route==='deposit-submit'){window.__submitted=input;return{ok:true};}return window.__deposits;}
     createRoot(document.getElementById('root')).render(window.__role==='Manager'?<ManagerDepositCards branch="Liloan" api={api} HistoryCard={DepositHistoryCard}/>:<AdminDepositCards branch="Liloan" role="Admin" api={api} HistoryCard={DepositHistoryCard}/>);`;
@@ -39,28 +39,21 @@ test('Manager and admin cards identify covered shifts; manager records bank fees
       await page.locator('.deposit-history header').getByText('Liloan · Oct 3, 2026',{exact:true}).waitFor();
       assert.match(await page.locator('.deposit-history .deposit-covered-shifts').innerText(),/Shift 1 · 4am–1pm/);
       await page.getByRole('button',{name:'← Back to deposit cards',exact:true}).click();
-      if(role==='Manager'&&width===1280){
+      if(role==='Manager'){
         await page.getByRole('checkbox',{name:'Select Oct 5, 2026 Shift 1',exact:true}).check();
         await page.getByRole('button',{name:'Create deposit (1) →',exact:true}).click();
-        await page.getByText('Bank fees / transportation (optional)',{exact:true}).click();
-        await page.getByRole('button',{name:'Add bank fee',exact:true}).click();
-        await page.getByLabel('Expense 1 amount',{exact:true}).fill('180');
-        await page.getByRole('button',{name:'Add transportation',exact:true}).click();
-        await page.getByLabel('Expense 2 amount',{exact:true}).fill('20');
-        await page.getByLabel('Reference number',{exact:true}).fill('TEST-FEES');
-        await page.getByLabel('Amount deposited',{exact:true}).fill('800');
-        const jpeg=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=10;c.height=10;return c.toDataURL('image/jpeg').split(',')[1];});
-        await page.getByLabel('Receipt photo',{exact:true}).setInputFiles({name:'receipt.jpg',mimeType:'image/jpeg',buffer:Buffer.from(jpeg,'base64')});
-        await page.getByText(/Receipt saved/).waitFor();
+        assert.equal(await page.getByText('Bank fees / transportation (optional)',{exact:true}).count(),0);
+        await page.getByLabel('Reference number',{exact:true}).fill('TEST-NO-PHOTO');
+        await page.getByLabel('Amount deposited',{exact:true}).fill('1000');
         await page.getByRole('button',{name:'Review deposit →',exact:true}).click();
-        await page.getByText('✓ The deposit amount matches the selected cash after expenses. Unused cash stays available.',{exact:true}).waitFor();
+        await page.getByText('✓ The deposit amount matches the selected cash. Unused cash stays available.',{exact:true}).waitFor();
         await page.getByRole('button',{name:'Submit for bank verification',exact:true}).click();
         await page.getByText(/Deposit sent for bank verification/).waitFor();
         const submitted=await page.evaluate(()=>window.__submitted);
         assert.deepEqual(submitted.coveredReportKeys,['Liloan__2026-10-05__shift-1']);
         assert.equal(submitted.reviewedCoveredCash,1000);
-        assert.deepEqual(submitted.adjustments.map(a=>[a.type,a.amount]),[['BANK_FEE','180'],['TRANSPORTATION','20']]);
-        assert.equal(submitted.amount,'800');
+        assert.deepEqual(submitted.adjustments,[]);assert.equal(submitted.receiptPath,'');
+        assert.equal(submitted.amount,'1000');
       }
       await page.close();
     }

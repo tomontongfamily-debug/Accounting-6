@@ -30,7 +30,6 @@ export function ManagerDepositCards({branch,api,HistoryCard}) {
   const [page,setPage]=useState('cards');
   const [historyId,setHistoryId]=useState(null);
   const [form,setForm]=useState(emptyForm);
-  const [adjustments,setAdjustments]=useState([]);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [message,setMessage]=useState('');
@@ -52,28 +51,27 @@ export function ManagerDepositCards({branch,api,HistoryCard}) {
   const count=selected.length+selectedBalances.length;
   const toggle=(value,set,id)=>set(value.includes(id)?value.filter(k=>k!==id):[...value,id]);
   let totals,calcError='';
-  try {totals=depositAmounts(cash,carry,adjustments,Number(form.amount||0),false);} catch(e) {calcError=e.message;}
+  try {totals=depositAmounts(cash,carry,[],Number(form.amount||0),false);} catch(e) {calcError=e.message;}
   const badAllocation=(value,maximum)=>!/^\d+(?:\.\d{1,2})?$/.test(String(value))||Number(value)<=0||Number(value)>maximum;
   const allocationError=selected.some(r=>badAllocation(shiftAmount(r),r.cash))||selectedBalances.some(d=>badAllocation(carryAmount(d),d.availableCash));
-  const invalid=calcError||!count||allocationError||!form.bank.trim()||!form.receiptPath||uploading||!/^\d+(?:\.\d{1,2})?$/.test(form.amount)||Number(form.amount)<=0||totals?.unexplainedDifference!==0||adjustments.some(a=>a.type==='OTHER_APPROVED_EXPENSE'&&!a.note.trim());
+  const invalid=calcError||!count||allocationError||!form.bank.trim()||uploading||!/^\d+(?:\.\d{1,2})?$/.test(form.amount)||Number(form.amount)<=0||totals?.unexplainedDifference!==0;
   const blockedDay=data?.noDepositDays.includes(new Date(`${date}T00:00:00Z`).getUTCDay());
   const selectedHistory=data?.deposits.find(d=>d.id===historyId);
-  function begin(){setForm({...emptyForm(),amount:String(cash+carry)});setAdjustments([]);setError('');setMessage('');setPage('form');}
+  function begin(){setForm({...emptyForm(),amount:String(cash+carry)});setError('');setMessage('');setPage('form');}
   async function submit(){
     setBusy(true);setError('');
     try {
-      await api('deposit-submit',{...form,branch,depositDate:date,allocationVersion:1,adjustments,coveredReportKeys:keys,carryoverSourceIds:carryIds,reportAllocations:selected.map(r=>({reportKey:r.key,amount:shiftAmount(r),availableCash:r.cash})),carryoverAllocations:selectedBalances.map(d=>({depositId:d.id,amount:carryAmount(d),availableCash:d.availableCash})),reviewedCoveredCash:cash,reviewedCarryover:carry});
+      await api('deposit-submit',{...form,branch,depositDate:date,allocationVersion:1,adjustments:[],coveredReportKeys:keys,carryoverSourceIds:carryIds,reportAllocations:selected.map(r=>({reportKey:r.key,amount:shiftAmount(r),availableCash:r.cash})),carryoverAllocations:selectedBalances.map(d=>({depositId:d.id,amount:carryAmount(d),availableCash:d.availableCash})),reviewedCoveredCash:cash,reviewedCarryover:carry});
       setMessage('Deposit sent for bank verification. Your other shifts are still available.');refresh();
     } catch(e) {setError(e.message);} finally {setBusy(false);}
   }
-  function updateAdjustment(index,field,value){setAdjustments(rows=>rows.map((row,i)=>i===index?{...row,[field]:value}:row));}
   async function uploadReceipt(file) {
     setUploading(true);setError('');
     try {const data=await receiptImage(file),saved=await api('deposit-receipt',{branch,data});setForm(f=>({...f,receiptPath:saved.receiptPath}));}
     catch(e){setError(e.message);}finally{setUploading(false);}
   }
   function suggestAmounts() {
-    let remaining=money(Number(form.amount||0)+adjustments.reduce((n,a)=>n+Number(a.amount||0),0));
+    let remaining=money(Number(form.amount||0));
     if(!Number.isFinite(remaining)||remaining<=0)return;
     const next={...amounts},nextKeys=[],nextCarry=[];
     for(const r of selected){const value=money(Math.min(remaining,r.cash));if(value>0){next[r.key]=String(value);nextKeys.push(r.key);remaining=money(remaining-value);}}
@@ -109,18 +107,17 @@ export function ManagerDepositCards({branch,api,HistoryCard}) {
       {page==='review'&&coverageDetails}
       {page==='form'?<form onSubmit={e=>{e.preventDefault();if(!invalid)setPage('review');}}>
         <div className="grid three"><label>Bank<input required value={form.bank} onChange={e=>setForm({...form,bank:e.target.value})}/></label><label>Reference number<input placeholder="Optional bank reference" value={form.reference} onChange={e=>setForm({...form,reference:e.target.value})}/></label><label>Amount deposited<input required inputMode="decimal" value={form.amount} placeholder="Enter amount on slip" onChange={e=>setForm({...form,amount:e.target.value})}/></label></div>
-        <label>Receipt photo<input type="file" accept="image/*" disabled={uploading||busy} onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)uploadReceipt(file);}}/></label>
+        <label>Receipt photo (optional)<input type="file" accept="image/*" disabled={uploading||busy} onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)uploadReceipt(file);}}/></label>
         {uploading&&<p role="status">Saving receipt photo…</p>}{form.receiptPath&&<p className="deposit-success">✓ Receipt saved · <a href={form.receiptPath} target="_blank" rel="noreferrer">View receipt</a></p>}
         {coverageDetails}
-        <details className="deposit-optional"><summary>Bank fees / transportation (optional){adjustments.length?` · ${adjustments.length} added`:''}</summary><p>Enter fees paid from the selected cash. Do not add costs already deducted through a CV. Assigned cash must match the deposit plus these fees.</p>{adjustments.map((a,i)=><div className="adjustment-row" key={i}><select aria-label={`Expense ${i+1} category`} value={a.type} onChange={e=>updateAdjustment(i,'type',e.target.value)}><option value="TRANSPORTATION">Transportation</option><option value="BANK_FEE">Bank fee</option><option value="OTHER_APPROVED_EXPENSE">Other approved expense</option></select><input aria-label={`Expense ${i+1} amount`} placeholder="Amount" inputMode="decimal" value={a.amount} onChange={e=>updateAdjustment(i,'amount',e.target.value)}/><input aria-label={`Expense ${i+1} note`} placeholder="Reason" value={a.note} onChange={e=>updateAdjustment(i,'note',e.target.value)}/><button type="button" className="secondary" onClick={()=>setAdjustments(rows=>rows.filter((_,j)=>j!==i))}>Remove</button></div>)}<div className="demo-actions">{[['BANK_FEE','Add bank fee'],['TRANSPORTATION','Add transportation'],['OTHER_APPROVED_EXPENSE','Add other expense']].map(([type,label])=><button key={type} type="button" className="secondary" onClick={()=>setAdjustments(rows=>[...rows,{type,amount:'',note:''}])}>{label}</button>)}</div></details>
-        {form.amount!==''&&totals&&totals.unexplainedDifference!==0&&<p className="warning-box" role="status">Assign {php(Math.abs(totals.unexplainedDifference))} {totals.unexplainedDifference>0?'less':'more'} from the selected shifts so the bank amount matches after fees.</p>}
+        <p>Record bank fees and transportation through CV.</p>
+        {form.amount!==''&&totals&&totals.unexplainedDifference!==0&&<p className="warning-box" role="status">Assign {php(Math.abs(totals.unexplainedDifference))} {totals.unexplainedDifference>0?'less':'more'} from the selected shifts so the bank amount matches.</p>}
         {calcError&&<p className="error" role="alert">{calcError}</p>}
         <div className="deposit-form-footer"><span>Expected on bank slip <b>{totals?php(totals.expected):'—'}</b></span><button type="submit" className="primary" disabled={!!invalid}>Review deposit →</button></div>
       </form>:<>
-        <dl className="deposit-review"><div><dt>Bank</dt><dd>{form.bank}</dd></div><div><dt>Reference</dt><dd>{form.reference}</dd></div><div><dt>Expenses / fees</dt><dd>{php(cash+carry-totals.expected)}</dd></div><div><dt>Expected deposit</dt><dd>{php(totals.expected)}</dd></div><div><dt>Amount on bank slip</dt><dd><strong>{php(form.amount)}</strong></dd></div></dl>
-        {adjustments.map((a,i)=><p key={i}>{a.type.replaceAll('_',' ')} · {php(a.amount)}{a.note?` · ${a.note}`:''}</p>)}
-        <p className="deposit-success">✓ The deposit amount matches the selected cash after expenses. Unused cash stays available.</p>
-        <p><a href={form.receiptPath} target="_blank" rel="noreferrer">View saved bank receipt</a></p>
+        <dl className="deposit-review"><div><dt>Bank</dt><dd>{form.bank}</dd></div><div><dt>Reference</dt><dd>{form.reference}</dd></div><div><dt>Expected deposit</dt><dd>{php(totals.expected)}</dd></div><div><dt>Amount on bank slip</dt><dd><strong>{php(form.amount)}</strong></dd></div></dl>
+        <p className="deposit-success">✓ The deposit amount matches the selected cash. Unused cash stays available.</p>
+        {form.receiptPath&&<p><a href={form.receiptPath} target="_blank" rel="noreferrer">View saved bank receipt</a></p>}
         <div className="deposit-form-footer"><button type="button" className="secondary" disabled={busy} onClick={()=>setPage('form')}>← Edit details</button><button type="button" className="confirm-button" disabled={busy||!!invalid} onClick={submit}>{busy?'Submitting…':'Submit for bank verification'}</button></div>
       </>}
     </div>}

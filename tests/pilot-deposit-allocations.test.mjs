@@ -38,7 +38,7 @@ test('one receipt covers 30k + 20k + 18k; unused amounts stay available and conc
  assert.equal(f.state.reports[f.keys[0]].depositCoverage.remaining,30000);
 });
 
-test('allocations require owned receipt, exact deposit plus fees, valid cents and current positive source balances',async()=>{
+test('optional receipts remain owned; allocations match the deposit and fees use CV',async()=>{
  const f=await setup();let input=await f.input([30000]);
  await assert.rejects(f.act(f.manager,'/api/demo/deposit-submit',{...input,receiptPath:'/missing'}),/receipt/);
  await assert.rejects(f.act(f.manager,'/api/demo/deposit-submit',{...input,amount:31000}),/must match/);
@@ -48,7 +48,8 @@ test('allocations require owned receipt, exact deposit plus fees, valid cents an
  const photo=f.state.photos[input.receiptPath];f.state.photos[input.receiptPath]={...photo,branch:'Moalboal'};
  await assert.rejects(f.act(f.manager,'/api/demo/deposit-submit',input),/receipt/);f.state.photos[input.receiptPath]=photo;
  input={...input,amount:29800,adjustments:[{type:'BANK_FEE',amount:200}]};
- const {deposit}=await f.act(f.manager,'/api/demo/deposit-submit',input);assert.equal(deposit.expected,29800);
+ await assert.rejects(f.act(f.manager,'/api/demo/deposit-submit',input),/through CV/);
+ input={...input,amount:30000,adjustments:[]};await f.act(f.manager,'/api/demo/deposit-submit',input);
  const again=await f.input([1000]);again.reportAllocations[0].availableCash=10000;again.receiptPath=input.receiptPath;
  await assert.rejects(f.act(f.manager,'/api/demo/deposit-submit',again),/receipt/);
  const zero=await setup();zero.state.reports[zero.keys[0]].actualCashCounted=0;
@@ -85,4 +86,11 @@ test('Moalboal terminal card amount reduces cash once, survives refresh and requ
  assert.equal(changed.result.report.cashReviewState,'');assert.equal(compute(changed.result.report).deductionTotal,900);
  const other=fixture();await assert.rejects(runAction(other.state,other.cashier,'/api/reports/save',{report:{...other.report,deductions:{bankCard:760}}}),/only in Moalboal/);
  const negative=await assert.rejects(runAction(save.state,session,'/api/reports/save',{report:{...report,deductions:{bankCard:-1}}}),/non-negative/);void negative;
+});
+
+test('deposit submits without a receipt and preserves old fee records',async()=>{
+ const f=await setup();const input=await f.input([30000]);delete input.receiptPath;
+ const legacy={id:'legacy-fee',branch:'Liloan',status:'rejected',coveredReportKeys:[],carryoverSourceIds:[],bank:'PNB',reference:'HISTORY',amount:800,adjustments:[{type:'BANK_FEE',amount:200}]};f.state.deposits.push(legacy);
+ const {deposit}=await f.act(f.manager,'/api/demo/deposit-submit',input);
+ assert.equal(deposit.amount,30000);assert.equal(deposit.receiptPath,undefined);assert.equal(deposit.unexplainedDifference,0);assert.deepEqual(deposit.adjustments,[]);assert.deepEqual(f.state.deposits.find(d=>d.id==='legacy-fee'),legacy);
 });
