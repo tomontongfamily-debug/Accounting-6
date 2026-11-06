@@ -1,6 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('overlapping reads share one request without blocking a new write or reusing another account or shift',async()=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};
+ const {pilotPost,clearPilotReadCache}=await import('../src/pilot-client.js?shared-reads');
+ const calls=[],release=[];
+ globalThis.fetch=async(_url,options)=>{
+  const envelope=JSON.parse(options.body);calls.push(envelope);
+  if(envelope.route==='/api/demo/pump-report')await new Promise(resolve=>release.push(resolve));
+  return {ok:true,status:200,json:async()=>({ok:true,report:{pilotRevision:8}})};
+ };
+ try {
+  const input={reportKey:'Liloan__2026-11-06__shift-1'};
+  const first=pilotPost('/api/demo/pump-report',input,'account-a');
+  assert.equal(pilotPost('/api/demo/pump-report',input,'account-a'),first);
+  const second=pilotPost('/api/demo/pump-report',input,'account-b');
+  const third=pilotPost('/api/demo/pump-report',{reportKey:'Barili__2026-11-06__shift-1'},'account-a');
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,3);
+  await pilotPost('/api/demo/pump-reading',{reportKey:input.reportKey},'account-a');
+  assert.equal(calls.length,4,'A poll cannot delay a reading save');
+  const afterWrite=pilotPost('/api/demo/pump-report',input,'account-a');
+  assert.notEqual(afterWrite,first,'A read after a write cannot reuse a pre-write response');
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,5);
+  release.splice(0).forEach(resolve=>resolve());await Promise.all([first,second,third,afterWrite]);
+  const fresh=pilotPost('/api/demo/pump-report',input,'account-a');
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,6,'Completed reads are not cached');release.shift()();await fresh;
+  const oldSession=pilotPost('/api/demo/pump-report',input,'cookie');
+  clearPilotReadCache();
+  const newSession=pilotPost('/api/demo/pump-report',input,'cookie');
+  assert.notEqual(oldSession,newSession,'An account switch cannot share a pending cookie-authenticated response');
+  await new Promise(resolve=>setImmediate(resolve));release.splice(0).forEach(resolve=>resolve());await Promise.all([oldSession,newSession]);
+ } finally {globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('an explicit retry sends the original photo request ID and exact body after an uncertain save',async()=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};

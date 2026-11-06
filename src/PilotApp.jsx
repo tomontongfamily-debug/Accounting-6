@@ -7,6 +7,8 @@ import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
 import { additionalReviewFlags } from './accounting-review.js';
 import {FuelLeakLoss} from './fuel-leak-loss.jsx';
+import {ReturnedCalibration} from './returned-calibration.jsx';
+import {validateReturnedCalibration} from './fuel-leak-loss.js';
 import { PosRedemptions } from './pos-redemptions.jsx';
 import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
 import AdminReportAlerts from './admin-report-alerts.jsx';
@@ -14,7 +16,7 @@ import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
 import { readStationSession } from './station-routing.js';
 import { loadStorePages } from './store-pages.js';
 import { createStoreRefreshQueue } from './store-refresh.js';
-import { pilotPost } from './pilot-client.js';
+import { pilotPost, clearPilotReadCache } from './pilot-client.js';
 import { openingReady, pilotOpeningSlot } from './pilot-opening.js';
 import { loadReportsWithDraftSync } from "./demo-report-load.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -3023,6 +3025,7 @@ export default function App() {
     } catch {
       // Ignore private browser storage errors.
     }
+    clearPilotReadCache();
 
     if (!accessAllowed || !sessionToken) {
       setStore(emptyStore());
@@ -3099,7 +3102,7 @@ export default function App() {
       }
     }
 
-    const storeRefreshQueue=createStoreRefreshQueue(refreshOnlineStore);
+    const storeRefreshQueue=createStoreRefreshQueue(refreshOnlineStore,{minIntervalMs:5000});
     storeRefreshQueue.refresh();
 
     loadRealtimeConfig(sessionToken)
@@ -3925,6 +3928,8 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
+    const calibrationError=validateReturnedCalibration(activeReport);
+    if(calibrationError){setSubmitReportError(calibrationError);setSyncMessage(calibrationError);return;}
     if (activeReport.confirmed) {
       setSyncMessage(`This report is locked${activeReport.serverMeta?.reportId ? ` as ${activeReport.serverMeta.reportId}` : ""}. Request an admin correction to change it.`);
       return;
@@ -4615,6 +4620,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
+    !reportCompleted(report)?validateReturnedCalibration(report):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
     !reportCompleted(report) && !report.cashCountConfirmed ? "Confirm physical cash in Step 1 before submitting." : "",
     !reportCompleted(report) && report.cashCountConfirmed && !report.cashReviewState ? "Cash reconciliation is required. Press Check my cash count before submitting." : "",
@@ -4643,7 +4649,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   const [cashierNameDraft, setCashierNameDraft] = useState(report.cashierName || "");
   const [cashierNameError, setCashierNameError] = useState("");
   const [cashVoucherError, setCashVoucherError] = useState("");
-  const wizardSteps = ["Cash on Hand", "Pump Register", "Payments, Deductions and Other Sales", "Reference Inventory and Deliveries", "Review and Submit"];
+  const wizardSteps = ["Cash on Hand", "Pump Register", "Payments, Deductions and Other Sales", "Calibration, Inventory and Deliveries", "Review and Submit"];
 
   useEffect(() => {
     setWizardStep((report.baselineMissing || report.baselineReport) ? 1 : reportCompleted(report) ? wizardSteps.length - 1 : readSavedWizardStep(report, wizardSteps.length - 1));
@@ -4711,6 +4717,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   }
 
   function attemptSubmitReport() {
+    if(validateReturnedCalibration(report)){setWizardStep(3);return;}
     if (!report.cashCountConfirmed) { setWizardStep(0); return; }
     if (report.pumpRows.some(row => !readingComplete(row))) { setWizardStep(1); return; }
     if (!report.cashReviewState || (report.recountRequired && report.cashReviewState !== "final")) { goToCashReview(); return; }
@@ -4833,17 +4840,19 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
       </>}
 
       {wizardStep === 3 && (
+      <>
+      <ReturnedCalibration report={report} onChange={(index,value)=>patchReport(["tankRows",index,"calibration"],value)} />
+      <FuelLeakLoss report={report} onChange={rows => patchReport(["root", "fuelLeakLosses"], rows)} />
       <Section title="Reference Inventory">
         <TankDeliveries key={reportKey(report.branch,report.date,report.shiftId)} report={report} onSave={onSaveDelivery} />
         <p className="neutral">Reference inventory only. Tank differences do not create a financial error. Sales come from pump readings.</p>
-        <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Calibration", "Fuel Leak Loss (L)", "Current Actual Dip", "Before Tank Loss", "Underground Tank Difference"]} minWidth="980px">
+        <Table headers={["Tank", "Previous Shift Dip", "Delivery", "Pull-Out", "Fuel Leak Loss (L)", "Current Actual Dip", "Before Tank Loss", "Underground Tank Difference"]} minWidth="980px">
           {result.tankRows.map((row, index) => (
             <tr key={row.id}>
               <td><b>{row.tank}</b></td>
               <td><b className="read-only-value">{liter(row.opening)}</b></td>
               <td><b>{liter(row.delivery)}</b></td>
               <td><NumberInput ghostZero value={row.pullOut} onChange={(value) => patchReport(["tankRows", index, "pullOut"], value)} /></td>
-              <td><NumberInput ghostZero value={row.calibration} onChange={(value) => patchReport(["tankRows", index, "calibration"], value)} /></td>
               <td><b>{liter(row.leakLossLiters)}</b></td>
               <td><NumberInput ghostZero value={row.actualDip} onChange={(value) => patchReport(["tankRows", index, "actualDip"], value)} /></td>
               <td>{liter(row.unadjustedVariance)}</td>
@@ -4851,8 +4860,8 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
             </tr>
           ))}
         </Table>
-        <FuelLeakLoss report={report} onChange={rows => patchReport(["root", "fuelLeakLosses"], rows)} />
       </Section>
+      </>
       )}
 
       {wizardStep === 2 && (
@@ -4947,6 +4956,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
             <div className="warning-box form-space">
               <b>Cannot submit yet</b>
               {submitBlockers.map((warning) => <p key={warning}>{warning}</p>)}
+              {validateReturnedCalibration(report)&&<button type="button" className="secondary" onClick={()=>setWizardStep(3)}>Check returned calibration</button>}
               {submitBlockers.some((warning) => warning.includes("End-of-shift cash count")) && (
                 <button type="button" className="secondary" onClick={() => setWizardStep(0)}>Go to Physical Cash</button>
               )}
@@ -7176,7 +7186,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
             <details className="details-panel admin-report-details-panel">
               <summary>Underground Tanks</summary>
               <FuelLeakLoss report={selectedAdminReport} />
-              <Table headers={["Product", "Opening", "Delivery", "Pullout", "Calibration", "Fuel Leak Loss (L)", "Actual Dip", "Before Tank Loss", "Difference"]} minWidth="820px">
+              <Table headers={["Product", "Opening", "Delivery", "Pullout", "Returned Calibration (L)", "Fuel Leak Loss (L)", "Actual Dip", "Before Tank Loss", "Difference"]} minWidth="820px">
                 {selectedAdminReportResult.tankRows.map((row) => (
                   <tr key={row.id}>
                     <td><b>{row.product}</b></td>

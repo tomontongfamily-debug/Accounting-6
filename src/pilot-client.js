@@ -1,5 +1,10 @@
 const savedRevisions=new Map();
 const pendingReports=new Map();
+const pendingReads=new Map();
+let mutationSequence=0;
+// Cookie-authenticated logins share the literal token "cookie". Explicitly
+// invalidate read sharing at every account / role / station transition.
+export function clearPilotReadCache(){pendingReads.clear();mutationSequence++;}
 const REQUEST_TIMEOUT_MS=30000;
 // Match the read-only actions in pilot/repository.mjs. Unknown actions remain
 // conservative: a timeout can leave their save result uncertain.
@@ -35,15 +40,21 @@ export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.rand
   const reportKey=input.report?`${input.report.branch}__${input.report.date}__${input.report.shiftId}`:input.reportKey;
   const key=reportKey?`${cfg?.mode}:${cfg?.start_date}:${reportKey}`:'';
   const snapshot=structuredClone(input);
+  // Two panels polling the same saved shift share one in-flight read. Include
+  // the account and full input so different stations, pages and force-refresh
+  // requests never reuse another scope's response. This is not a stale cache.
+  if(READ_ONLY_ROUTES.has(route)) {
+    const readKey=JSON.stringify([cfg?.mode,cfg?.start_date,sessionToken,route,snapshot,mutationSequence]);
+    if(pendingReads.has(readKey))return pendingReads.get(readKey);
+    const read=(key?pendingReports.get(key)||Promise.resolve():Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
+    pendingReads.set(readKey,read);
+    read.finally(()=>{if(pendingReads.get(readKey)===read)pendingReads.delete(readKey);}).catch(()=>{});
+    return read;
+  }
+  mutationSequence++;
   // Cash buttons and draft autosaves must observe each other's completed save.
   // Separate reports remain independent; failed requests do not stall the queue.
   if(!key)return post(route,snapshot,sessionToken,key,mutationId);
-  if(route==='/api/demo/pump-report'||route==='/api/demo/cv-status'){
-    // Observe writes already queued when this poll began, but do not put a
-    // slow read ahead of the next photo/confirmation. Callers reject results
-    // overtaken by their local mutations; reads never advance savedRevisions.
-    return (pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
-  }
   const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
   pendingReports.set(key,request);
   request.finally(()=>{if(pendingReports.get(key)===request)pendingReports.delete(key);}).catch(()=>{});
