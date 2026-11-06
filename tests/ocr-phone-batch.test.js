@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {gzipSync} from 'node:zlib';
-import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES,LARGE_CALIBRATION_BYTES,CALIBRATION_BYTE_CHOICES,ANDROID_INGRESS_BURST_BYTES,CALIBRATION_LIMIT_TOLERANCE} from '../src/ocr-phone-batch.js';
+import {parsePhoneBatch,safePhoneBatch,repeatPhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES,LARGE_CALIBRATION_BYTES,CALIBRATION_BYTE_CHOICES,ANDROID_INGRESS_BURST_BYTES,CALIBRATION_LIMIT_TOLERANCE} from '../src/ocr-phone-batch.js';
 
 const signed='https://chqinknijqtixeenhtvu.supabase.co/storage/v1/object/sign/fueltech-pilot-photos/station/photo.jpg?token=private-example';
 const fragment=value=>'#batch='+encodeURIComponent(JSON.stringify(value));
@@ -50,6 +50,24 @@ test('synthetic glare is labelled separately and expects safe no-reading rather 
 test('optional trace is disabled by default and explicitly enabled with a boolean',()=>{
  const value=valid();assert.equal(parsePhoneBatch(fragment(value)).trace,false);
  value.trace=true;assert.equal(parsePhoneBatch(fragment(value)).trace,true);
+});
+test('automatic repeats default to one and accept only one to three numeric trials',()=>{
+ assert.equal(parsePhoneBatch(fragment(valid())).repeat,1);
+ for(const repeat of [1,2,3]){
+  const config=parsePhoneBatch(fragment({...valid(),repeat}));assert.equal(config.repeat,repeat);assert.equal(safePhoneBatch(config).repeat,repeat);
+ }
+ for(const repeat of [null,0,-1,4,1.5,'3',true,[]])assert.throws(()=>parsePhoneBatch(fragment({...valid(),repeat})));
+});
+test('repeated trials preserve source files and metadata while keeping cases in the same order for every trial',()=>{
+ const fileA={name:'A.jpg'},fileB={name:'B.jpg'};
+ const batch=[{file:fileA,expected:151170.97,difficulty:'easy'},{file:fileB,expected:7808.55,difficulty:'extreme (simulated)',expectedOutcome:'no-reading',transformation:{synthetic:true}}];
+ const trials=repeatPhoneBatch(batch,3);
+ assert.equal(trials.length,6);assert.deepEqual(trials.map(entry=>[entry.file.name,entry.trial]),[['A.jpg',1],['B.jpg',1],['A.jpg',2],['B.jpg',2],['A.jpg',3],['B.jpg',3]]);
+ assert.ok(trials.every(entry=>entry.trialCount===3));assert.equal(trials[4].file,fileA);assert.equal(trials[5].file,fileB);
+ assert.equal(trials[5].expectedOutcome,'no-reading');assert.equal(trials[5].transformation,batch[1].transformation);
+ assert.ok(batch.every(entry=>entry.trial===undefined));assert.notEqual(trials[0],batch[0]);
+ assert.equal(repeatPhoneBatch(batch).length,2);assert.deepEqual(repeatPhoneBatch([],3),[]);
+ assert.throws(()=>repeatPhoneBatch(batch,4));
 });
 test('probe sizes default to 96 KiB and accept only the supported numeric choices',()=>{
  assert.equal(parsePhoneBatch(fragment(valid())).probeBytes,CALIBRATION_BYTES);

@@ -6,6 +6,7 @@ import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotali
 import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, supportedTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
 import {createTotalizerTracer,traceSymbols,traceCandidates} from './totalizer-trace.js';
+import {canDismissNineCellHint} from './totalizer-format-evidence.js';
 
 export const TOTALIZER_CLEAR_TARGET_MS=20000;
 export const TOTALIZER_TIMEOUT_MS=30000;
@@ -19,6 +20,22 @@ function invalidatePreparedReader(error){
 }
 const detectionQueue=[];
 let activeDetection;
+export function evaluateNineCellHints(layouts,{trace=false}={}){
+  // A real ninth physical cell always blocks the eight-cell fallback. OCR-only
+  // hints can be dismissed solely by proof from this exact layout and its own
+  // qualified passes; evidence from another crop or number row cannot help.
+  const evaluated=layouts.map(({physical,hints,agreeingPasses})=>{
+    const decisions=trace?[]:undefined;
+    const dismissed=hints.map((hint,hintIndex)=>{
+      if(physical.symbols.length===9){if(trace)decisions.push({hintIndex,code:2,reason:'physical-nine-cells'});return false;}
+      const proof={physical,hint,agreeingPasses};
+      return trace?canDismissNineCellHint(proof,{onDecision:event=>decisions.push({hintIndex,...event})}):canDismissNineCellHint(proof);
+    });
+    return {regionIndex:physical.regionId,layoutIndex:physical.layoutId,physicalCount:physical.symbols.length,
+      hintCount:hints.length,qualifiedEightPasses:agreeingPasses.length,dismissed,...(trace?{decisions}:{})};
+  });
+  return {blocked:evaluated.some(layout=>layout.physicalCount===9||layout.dismissed.some(dismissed=>!dismissed)),layouts:evaluated};
+}
 function resetPrimary(session,error,notify=true){
   if(!session)return;
   const current=primarySession===session;
@@ -138,8 +155,8 @@ async function recognizePhoto(data,job){
   let worker;
   try{
     worker=await job.wait(primary.ready);job.check();
-    const readings=new Set(),evidence=new Map(),glyphs=[];
-    let sensitiveMask,longDisplay=false;
+    const readings=new Set(),evidence=new Map(),glyphs=[],layoutEvidence=[];
+    let sensitiveMask;
     for(const [regionIndex,primary]of analysis.regions.entries()){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
@@ -147,7 +164,8 @@ async function recognizePhoto(data,job){
         const clean=withoutDisplayFrame(analysis.mask,canvas.width,region);
         const segments=segmentDisplaySymbols(clean,canvas.width,region);
         if(job.tracing)job.trace('layout',{regionIndex,layoutIndex,box:{x:region.x,y:region.y,width:region.width,height:region.height},segments:traceSymbols(segments)});
-        if(segments.length===9)longDisplay=true;
+        const format={physical:{regionId:regionIndex,layoutId:layoutIndex,region,symbols:segments,components:analysis.components,image:{gray,width:canvas.width,height:canvas.height}},hints:[],agreeingPasses:[]};
+        layoutEvidence.push(format);
         const votes=new Map(),agreed=new Set();
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
           // Retain the original row boundaries. Re-detecting them on a more
@@ -172,7 +190,10 @@ async function recognizePhoto(data,job){
             const verifiedSymbols=corroborated||translated;
             glyphs.push(...verifiedSymbols.filter(s=>/^\d$/.test(s.text)&&s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
-            if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)longDisplay=true;
+            // Wait until all existing crops finish before evaluating an OCR-only
+            // ninth digit. A later qualified pass can prove two glyph boxes
+            // split one of the same eight physical cells, without adding a vote.
+            if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)format.hints.push({regionId:regionIndex,layoutId:layoutIndex,symbols:translated});
             const confidenceAccepted=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous);
             let value=confidenceAccepted?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
             if(job.tracing)job.trace('primary-pass',{regionIndex,layoutIndex,grow,pad,sensitive:!!sensitive,mode,
@@ -186,6 +207,7 @@ async function recognizePhoto(data,job){
             if(value!==null&&(!evidence.has(value)||verifyLcdDigits(verifiedSymbols,gray,canvas.width,canvas.height,segments)))evidence.set(value,{symbols:verifiedSymbols,segments});
             if(region!==primary&&digits.length<primaryDigits)value=null;
             if(region===primary&&value!==null&&result.confidence>=80)primaryDigits=Math.max(primaryDigits,digits.length);
+            if(value!==null&&digits.length===8)format.agreeingPasses.push({regionId:regionIndex,layoutId:layoutIndex,symbols:translated,confidence:result.confidence});
             passes.push({value,confidence:result.confidence});
             if(value!==null&&(result.confidence>=90||verifiedLeading))votes.set(value,(votes.get(value)||0)+1);
           }
@@ -201,6 +223,8 @@ async function recognizePhoto(data,job){
     }
     const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
     const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
+    const formatEvidence=evaluateNineCellHints(layoutEvidence,{trace:job.tracing}),longDisplay=formatEvidence.blocked;
+    job.trace('format-evidence',formatEvidence);
     job.trace('primary-result',{readings:[...readings],value,hasPhysicalEvidence:!!candidate,verified,longDisplay});
     if(verified!==null){job.decision='primary-physical-verified';return verified;}
     // The existing neural/grid fallback fits eight cells. It cannot establish
