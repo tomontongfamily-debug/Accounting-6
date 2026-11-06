@@ -20,6 +20,8 @@ export function parsePhoneBatch(fragment){
  try{raw=JSON.parse(decodeURIComponent(fragment.slice(7)));}catch{throw invalid();}
  if(!raw||typeof raw!=='object'||!Array.isArray(raw.sources)||raw.sources.length<1||raw.sources.length>4)throw invalid();
  const waitFor=raw.waitFor??'enhanced',startDelayMs=raw.startDelayMs??0;
+ const repeat=raw.repeat===undefined?1:raw.repeat;
+ if(!Number.isInteger(repeat)||repeat<1||repeat>3)throw invalid();
  if(raw.trace!==undefined&&typeof raw.trace!=='boolean')throw invalid();
  if(!['enhanced','primary','none'].includes(waitFor)||!Number.isInteger(startDelayMs)||startDelayMs<0||startDelayMs>60000)throw invalid();
  const rate=raw.expectedIngressBytesPerSecond??null;
@@ -46,12 +48,16 @@ export function parsePhoneBatch(fragment){
   }catch{throw invalid();}
   return {name,difficulty:stress==='extreme-glare'?'extreme (simulated)':difficulty,expected,stress,expectedOutcome,url:url.href};
  });
- return {sources,waitFor,startDelayMs,trace:raw.trace===true,networkLabel:raw.networkLabel===undefined?'not-recorded':redactDiagnosticText(text(raw.networkLabel,80)),
+ return {sources,waitFor,startDelayMs,repeat,trace:raw.trace===true,networkLabel:raw.networkLabel===undefined?'not-recorded':redactDiagnosticText(text(raw.networkLabel,80)),
   deviceNote:raw.deviceNote===undefined?'':redactDiagnosticText(text(raw.deviceNote,180)),expectedIngressBytesPerSecond:rate,probeBytes};
 }
 export function safePhoneBatch(config){
  if(!config)return null;
  return {...config,sources:config.sources.map(({name,difficulty,expected,stress,expectedOutcome})=>({name,difficulty,expected,stress,expectedOutcome}))};
+}
+export function repeatPhoneBatch(batch,repeat=1){
+ if(!Array.isArray(batch)||!Number.isInteger(repeat)||repeat<1||repeat>3)throw invalid();
+ return Array.from({length:repeat},(_,index)=>batch.map(entry=>({...entry,trial:index+1,trialCount:repeat}))).flat();
 }
 export function redactDiagnosticText(value){
  return String(value).replace(/https?:\/\/[^\s"'<>]+/gi,'[URL omitted]').replace(/token\s*[=:]\s*[^\s&,;]+/gi,'token=[omitted]');

@@ -1,4 +1,4 @@
-export const TOTALIZER_VERSION='lcd-durable-local-7';
+export const TOTALIZER_VERSION='lcd-format-evidence-8';
 export const OCR_ATTEMPT_TIMEOUT_MS=30000;
 
 export function pendingOcrAttempt(now=Date.now()){

@@ -51,6 +51,13 @@ Desktop browser timings are evidence for that test environment, not guaranteed
 latencies for every cashier phone. Four/five-digit integer displays require the
 same physical-digit and visible two-place decimal checks as longer totalizers.
 
+An OCR pass can split one narrow LCD digit into two glyphs. OCR-derived nine-cell
+hints are evaluated after all existing crop passes. An independently verified
+eight-cell row, its visible six-plus-two decimal and a qualified agreeing OCR
+pass may explain an interior split. Every physical nine-cell row and every
+unexplained extra glyph still blocks the eight-cell fallback. Explaining a split
+adds no reading or vote; the existing grid/neural consensus remains required.
+
 ## Real-phone acceptance testing
 
 `/ocr-phone-check.html` loads the same production OCR modules without station

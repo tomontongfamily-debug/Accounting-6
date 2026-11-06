@@ -3,7 +3,7 @@ import {prepareAdvancedTotalizer} from './totalizer-reader-client.js';
 import {createAutomaticReaderPreparation} from './automatic-reader-preparation.js';
 import {TOTALIZER_VERSION} from './ocr-evidence.js';
 import {OCR_ASSET_VERSION} from './ocr-assets.js';
-import {parsePhoneBatch,safePhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES} from './ocr-phone-batch.js';
+import {parsePhoneBatch,safePhoneBatch,repeatPhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES} from './ocr-phone-batch.js';
 import {analyzeTotalizerFrame} from './totalizer-frame-client.js';
 
 // This entry point intentionally imports no station client or report mutation.
@@ -125,7 +125,8 @@ function appendResult(entry){
   item.textContent=`${entry.file.name}: ${reading}\n${milliseconds(entry.measuredDurationMs)} · target ${milliseconds(entry.targetMs)} · ${entry.readWithinTarget?'reading within target':'no successful reading within target'}\n${accuracy}`;
   byId('results').append(item);renderResults();
   const row=document.createElement('tr');
-  for(const value of [`${entry.difficulty||'—'}: ${entry.file.name}`,entry.outcome==='error'?entry.attempt?.reason||'error':entry.outcome,entry.reading??'—',entry.measuredDurationMs,entry.safetyOutcome==='safe-refusal'?'SAFE REFUSAL':entry.expectedOutcome==='no-reading'?'FAIL':entry.matchesExpectedNumber===null?'unverified':entry.matchesExpectedNumber?'MATCH':'FAIL']){
+  const compactCase=entry.automatic&&entry.trialCount>1?`${entry.difficulty||'—'} #${entry.trial}`:`${entry.difficulty||'—'}: ${entry.file.name}`;
+  for(const value of [compactCase,entry.outcome==='error'?entry.attempt?.reason||'error':entry.outcome,entry.reading??'—',entry.measuredDurationMs,entry.safetyOutcome==='safe-refusal'?'SAFE REFUSAL':entry.expectedOutcome==='no-reading'?'FAIL':entry.matchesExpectedNumber===null?'unverified':entry.matchesExpectedNumber?'MATCH':'FAIL']){
     const cell=document.createElement('td');cell.textContent=String(value);row.append(cell);
   }
   byId('compact-results').append(row);
@@ -144,6 +145,15 @@ function appendResult(entry){
     }
     const primary=entry.trace.findLast(event=>event.stage==='primary-result');
     if(primary)lines.push(`PRIMARY reads=${JSON.stringify(primary.readings)} V${value(primary.value)} verified=${value(primary.verified)} evidence=${flag(primary.hasPhysicalEvidence)} long=${flag(primary.longDisplay)}`);
+    const format=entry.trace.findLast(event=>event.stage==='format-evidence');
+    if(format){
+      const bounds=box=>('left'in box?['left','right','top','bottom']:['x0','x1','y0','y1']).map(key=>Math.round(box[key]*10)/10).join(',');
+      for(const layout of format.layouts.slice(0,4)){
+        const reasons=(layout.decisions||[]).map(decision=>`h${decision.hintIndex}:c${decision.code}/${decision.reason}${decision.index===undefined?'':' i'+decision.index}${decision.matchingCells?' cells['+decision.matchingCells.join(',')+']':''}${decision.bbox?' box['+bounds(decision.bbox)+']':''}${decision.envelope?' env['+bounds(decision.envelope)+']':''}`).join('; ');
+        lines.push(`FMT L${layout.regionIndex}.${layout.layoutIndex} physical${layout.physicalCount} qualified${layout.qualifiedEightPasses} hints${layout.hintCount} dismissed[${layout.dismissed.map(flag).join(',')}] blocked${flag(format.blocked)} ${reasons}`);
+      }
+      lines.push('FMT i=glyph/cell index; box=[x0,x1,y0,y1], env=[left,right,top,bottom].');
+    }
     cell.style.whiteSpace='pre-wrap';cell.style.fontFamily='monospace';cell.style.fontSize='10px';cell.style.lineHeight='1.25';cell.textContent=lines.join('\n');
     detailRow.append(cell);byId('compact-results').append(detailRow);
     const details=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('pre');
@@ -153,16 +163,17 @@ function appendResult(entry){
     details.append(summary,text);item.append(details);
   }
 }
-async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false}={}){
+async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false,repeat=1,automatic=false}={}){
   if(running||!batch.length)return;
+  const attempts=repeatPhoneBatch(batch,repeat);
   targetMs??=Number(byId('target-ms').value);networkLabel??=byId('network-label').value;deviceNote??=byId('device-note').value.trim();
   running=true;autoPhase='Reading photos';byId('test-controls').disabled=true;byId('read-photos').disabled=true;
   try{
-    for(const [index,{file,expected,difficulty='unspecified',expectedOutcome='detected',transformation=null}]of batch.entries()){
+    for(const [index,{file,expected,difficulty='unspecified',expectedOutcome='detected',transformation=null,trial,trialCount}]of attempts.entries()){
       const started=performance.now();let url;
-      currentPhoto={index:index+1,total:batch.length,name:file.name,started};
+      currentPhoto={index:index+1,total:attempts.length,name:file.name,started};
       const entry={startedAt:new Date().toISOString(),file:{name:file.name,type:file.type,bytes:file.size,lastModified:file.lastModified},
-        expected,expectedOutcome,difficulty,transformation,targetMs:difficulty==='easy'?20000:targetMs,deadlineMs:TOTALIZER_TIMEOUT_MS,networkLabel,deviceNote,networkAtStart:network(),
+        expected,expectedOutcome,difficulty,transformation,trial,trialCount,automatic,targetMs:difficulty==='easy'?20000:targetMs,deadlineMs:TOTALIZER_TIMEOUT_MS,networkLabel,deviceNote,networkAtStart:network(),
         preparationAtStart:{...preparation.getSnapshot()},primaryReadyMs,advancedReadyMs};
       if(trace)entry.trace=[];
       try{
@@ -183,8 +194,8 @@ async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false}={})
       entry.accurateWithinTarget=expectedOutcome==='no-reading'?false:expected===null?null:entry.matchesExpectedNumber&&entry.readWithinTarget;
       appendResult(entry);currentPhoto=null;
     }
-    autoPhase=`Batch complete · ${batch.length} photos`;
-    byId('message').textContent=`Finished ${batch.length} photo(s). Review readings against the originals; download JSON to keep the evidence.`;
+    autoPhase=`Batch complete · ${attempts.length} readings · ${repeat} trial(s)/photo`;
+    byId('message').textContent=`Finished ${attempts.length} reading attempt(s). Review readings against the originals; download JSON to keep the evidence.`;
   }catch(error){recordError('Batch',error);autoPhase='Batch stopped';byId('message').textContent='The batch stopped. Completed results and errors remain available below.';}
   finally{currentPhoto=null;running=false;byId('test-controls').disabled=false;byId('read-photos').disabled=!selected.length;renderCompact();}
 }
@@ -246,7 +257,7 @@ async function probeNetwork(expectedIngressBytesPerSecond,expectedByteCount=CALI
   const request=calibrationRequest(expectedByteCount);
   const started=performance.now(),url=new URL(request.path,location.origin);
   url.searchParams.set('probe',crypto.randomUUID());
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),25000);
   calibration={status:'running',expectedByteCount};renderCompact();
   try{
     const response=await fetch(url,{cache:'no-store',credentials:'omit',headers:request.headers,signal:controller.signal});
@@ -275,7 +286,7 @@ async function automaticBatch(config){
     const until=performance.now()+config.startDelayMs;
     while(performance.now()<until){autoPhase=`Ready for network limit · batch in ${Math.ceil((until-performance.now())/1000)} s`;await pause(200);}
     autoPhase='Measuring network delivery';await probeNetwork(config.expectedIngressBytesPerSecond,config.probeBytes);
-    await runBatch(batch,{targetMs:30000,networkLabel:config.networkLabel,deviceNote:config.deviceNote,trace:config.trace});
+    await runBatch(batch,{targetMs:30000,networkLabel:config.networkLabel,deviceNote:config.deviceNote,trace:config.trace,repeat:config.repeat,automatic:true});
   }catch(error){recordError('Automatic batch',error);autoPhase='Automatic batch stopped';}
   finally{byId('test-controls').disabled=false;byId('read-photos').disabled=!selected.length;renderCompact();}
 }
