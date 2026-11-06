@@ -82,16 +82,25 @@ export function canDismissNineCellHint(proof={},options={}){
     right:symbol.bbox.x1,
   }));
   if(ranges.some((range,index)=>range.right<=range.left||index>0&&range.left<ranges[index-1].right))return reject(11,'cell-ranges');
+  const advances=cells.slice(1).map((symbol,index)=>symbol.bbox.x1-cells[index].bbox.x1);
+  const medianAdvance=median(advances),inkCenters=cells.map(symbol=>(symbol.bbox.x0+symbol.bbox.x1)/2);
   const assignments=[];
   for(const [index,symbol]of nine.entries()){
     const box=symbol.bbox;
     if(box.x0<envelope.left-padding.x||box.x1>envelope.right+padding.x||box.y0<envelope.top-padding.y||box.y1>envelope.bottom+padding.y)return reject(12,'envelope',()=>({index,bbox:{...box},envelope:{...envelope},padding:{...padding}}));
     const center={x:(box.x0+box.x1)/2,y:(box.y0+box.y1)/2};
     if(center.x<envelope.left||center.x>envelope.right||center.y<envelope.top||center.y>envelope.bottom)return reject(16,'center-envelope',()=>({index,bbox:{...box},envelope:{...envelope},center}));
-    if(box.x1-box.x0>cellWidth+2*padding.x||box.y1-box.y0>cellHeight+2*padding.y)return reject(17,'oversized-glyph',()=>({index,bbox:{...box},envelope:{...envelope},padding:{...padding}}));
     const matching=ranges.flatMap((range,index)=>center.x>=range.left&&center.x<=range.right?[index]:[]);
     if(matching.length!==1||assignments.length&&matching[0]<assignments.at(-1))return reject(13,'cell-mapping',()=>({index,bbox:{...box},matchingCells:[...matching]}));
-    assignments.push(matching[0]);
+    const cell=matching[0];
+    // An OCR character box can include the blank advance after its ink. Use
+    // ONE local right-edge pitch, capped by the row's typical pitch, rather
+    // than ink width. Narrow ones must not inflate pitch via their centers.
+    const localAdvance=Math.min(Math.max(...[advances[cell-1],advances[cell]].filter(Number.isFinite)),medianAdvance*1.35);
+    const maximumWidth=Math.max(cellWidth,localAdvance)+2*padding.x;
+    if(box.x1-box.x0>maximumWidth||box.y1-box.y0>cellHeight+2*padding.y)return reject(17,'oversized-glyph',()=>({index,bbox:{...box},envelope:{...envelope},padding:{...padding},maximumWidth}));
+    if(inkCenters.some((x,other)=>other!==cell&&x>=box.x0&&x<=box.x1))return reject(18,'neighbor-center',()=>({index,bbox:{...box},matchingCells:[cell]}));
+    assignments.push(cell);
   }
   const mapped=cells.map((_,index)=>nine.filter((_,position)=>assignments[position]===index));
   const split=mapped.flatMap((symbols,index)=>symbols.length===2?[index]:[]);

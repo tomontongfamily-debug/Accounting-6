@@ -71,15 +71,16 @@ test('repeated trials preserve source files and metadata while keeping cases in 
 });
 test('probe sizes default to 96 KiB and accept only the supported numeric choices',()=>{
  assert.equal(parsePhoneBatch(fragment(valid())).probeBytes,CALIBRATION_BYTES);
- assert.deepEqual(CALIBRATION_BYTE_CHOICES,[98304,262144,1048576]);
+ assert.deepEqual(CALIBRATION_BYTE_CHOICES,[98304,196608,262144,1048576]);
  for(const probeBytes of CALIBRATION_BYTE_CHOICES){
   const config=parsePhoneBatch(fragment({...valid(),probeBytes}));
   assert.equal(config.probeBytes,probeBytes);assert.equal(safePhoneBatch(config).probeBytes,probeBytes);
  }
  for(const probeBytes of [null,0,131072,262145,16777216,'262144',true,[]])assert.throws(()=>parsePhoneBatch(fragment({...valid(),probeBytes})));
 });
-test('only the 256 KiB request uses an exact prefix range from the 1 MiB fixture',()=>{
+test('192 KiB and 256 KiB requests use exact prefix ranges from the 1 MiB fixture',()=>{
  assert.deepEqual(calibrationRequest(),{path:'/ocr-test/calibration.bin',expectedByteCount:98304,totalByteCount:98304,headers:{}});
+ assert.deepEqual(calibrationRequest(196608),{path:'/ocr-test/calibration-large.bin',expectedByteCount:196608,totalByteCount:1048576,headers:{Range:'bytes=0-196607'}});
  assert.deepEqual(calibrationRequest(262144),{path:'/ocr-test/calibration-large.bin',expectedByteCount:262144,totalByteCount:1048576,headers:{Range:'bytes=0-262143'}});
  assert.deepEqual(calibrationRequest(1048576),{path:'/ocr-test/calibration-large.bin',expectedByteCount:1048576,totalByteCount:1048576,headers:{}});
  assert.throws(()=>calibrationRequest(131072));
@@ -158,6 +159,15 @@ test('a slow 256 KiB probe includes the fixed burst rather than treating it as o
  const bytes=262144,rate=16000,resource=resourceTiming(bytes,8192);
  const metrics=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:8500,resource,expectedIngressBytesPerSecond:rate});
  close(metrics.bodyMbps,.256);close(metrics.burstAdjustedBodyMbps,.128);close(metrics.theoreticalMinimumBodyMs,8192);
+ assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');
+});
+test('a 192 KiB slow probe retains range validation and measures beyond the Android burst',()=>{
+ const bytes=196608,rate=16000,bodyMs=4096;
+ const response=validateCalibrationResponse({status:206,contentRange:'bytes 0-196607/1048576',contentLength:String(bytes),bytes,expectedByteCount:bytes});
+ assert.equal(response.requestedRange,'bytes=0-196607');
+ assert.throws(()=>validateCalibrationResponse({status:206,contentRange:'bytes 0-196608/1048576',contentLength:String(bytes),bytes,expectedByteCount:bytes}));
+ const metrics=calibrationMetrics({bytes,expectedByteCount:bytes,wallMs:4500,resource:resourceTiming(bytes,bodyMs),expectedIngressBytesPerSecond:rate});
+ close(metrics.bodyMbps,.384);close(metrics.burstAdjustedBodyMbps,.128);close(metrics.theoreticalMinimumBodyMs,4096);
  assert.equal(metrics.limitAssessment,'consistent-with-requested-limit');
 });
 test('the adjusted cap check uses 30 percent tolerance and detects a 100 Mbps body under a requested 50 Mbps cap',()=>{
