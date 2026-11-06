@@ -82,16 +82,25 @@ async function runConfirmationDemo(){
     await until(()=>first());first().click();await until(()=>dialog());
     check(calls.length===0&&!report.pumpRows[0].readingConfirmed,'First confirmation must not save.');
     if(verifyConfirmation){
+      await until(()=>dialog()?.querySelector('img')?.complete&&dialog()?.querySelector('img')?.naturalWidth>0);
+      const reviewStarted=performance.now();
+      check(!dialog().querySelector('.reading-final-sure'),'Final button must be hidden while review starts.');
+      await delay(2500);
+      check(!dialog().querySelector('.reading-final-sure')&&calls.length===0,'Final button must stay hidden during the three-second review.');
+      await until(()=>dialog()?.querySelector('.reading-final-sure'));
+      check(performance.now()-reviewStarted>=2900,'Final button appeared before three seconds of photo review.');
       const draft=cards.querySelector('input[inputmode=decimal]').value;
       dialog().querySelector('.reading-final-cancel').click();await until(()=>!dialog());
       check(calls.length===0&&!report.pumpRows[0].readingConfirmed,'Cancel must not save.');
       check(cards.querySelector('input[inputmode=decimal]').value===draft,'Cancel must retain the draft.');
-      first().click();await until(()=>dialog());await until(()=>!dialog()?.querySelector('.reading-final-sure')?.disabled);dialog().querySelector('.reading-final-sure').click();
+      first().click();await until(()=>dialog());
+      check(!dialog().querySelector('.reading-final-sure'),'Reopening must restart the review delay.');
+      await until(()=>dialog()?.querySelector('.reading-final-sure'));dialog().querySelector('.reading-final-sure').click();
       await until(()=>report.pumpRows[0].readingConfirmed&&!dialog());
       check(calls.length===1&&calls[0].route==='/api/demo/pump-reading','Final confirmation must save exactly once.');
       Object.assign(report.pumpRows[0],{readingConfirmed:false,closing:'',closingEntered:false});
       demoGeneration++;renderDemo();await until(()=>first());first().click();await until(()=>dialog());
-      confirmationAudit='PASS · first press: 0 saves · cancel: 0 saves · final green button: 1 save (isolated fixture).';
+      confirmationAudit='PASS · 3-second review · reopening restarts delay · first press: 0 saves · cancel: 0 saves · final green button: 1 save (isolated fixture).';
     }
   }catch(error){errors.push(error.message);}
   update();
