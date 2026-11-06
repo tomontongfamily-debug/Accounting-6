@@ -604,18 +604,19 @@ function validatePriceReadingOrder(report,change) {
         });
         covered.coveredCash=money(reportAllocations.reduce((n,a)=>n+a.amount,0));
         covered.previousCarryover=money(carryoverAllocations.reduce((n,a)=>n+a.amount,0));
-        const receipt=database.photos[input.receiptPath];
-        if(!receipt||receipt.kind!=='bank-receipt'||receipt.branch!==input.branch||(receipt.depositId&&database.deposits.some(d=>d.id===receipt.depositId&&d.status!=='rejected')))reject('Upload a receipt photo for this deposit.');
-        allocationData={allocationVersion:1,reportAllocations,carryoverAllocations,receiptPath:input.receiptPath};
+        const receipt=input.receiptPath?database.photos[input.receiptPath]:null;
+        if(input.receiptPath&&(!receipt||receipt.kind!=='bank-receipt'||receipt.branch!==input.branch||(receipt.depositId&&database.deposits.some(d=>d.id===receipt.depositId&&d.status!=='rejected'))))reject('Upload a receipt photo for this deposit.');
+        allocationData={allocationVersion:1,reportAllocations,carryoverAllocations,...(input.receiptPath?{receiptPath:input.receiptPath}:{})};
       }
       if((input.reviewedCoveredCash!==undefined&&amount(input.reviewedCoveredCash)!==covered.coveredCash)||(input.reviewedCarryover!==undefined&&amount(input.reviewedCarryover)!==covered.previousCarryover)) reject('The selected cash amount changed. Refresh and review it before submitting.',409);
-      const adjustments=(input.adjustments||[]).map(a=>({type:a.type,amount:amount(a.amount),note:String(a.note||'').trim()}));
-      if(adjustments.some(a=>!['TRANSPORTATION','BANK_FEE','OTHER_APPROVED_EXPENSE'].includes(a.type)||(a.type==='OTHER_APPROVED_EXPENSE'&&!a.note))) reject('Use a supported adjustment category and describe other approved expenses.');
-      if(explicit&&(amount(input.amount)<=0||depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),false).unexplainedDifference!==0))reject('Shift amounts must match the deposit plus any fees. Adjust the amounts or remove a shift.');
+      if(input.adjustments!==undefined&&!Array.isArray(input.adjustments))reject('Invalid deposit details.');
+      if(input.adjustments?.length)reject('Record bank fees and transportation through CV, then refresh the available shift cash.');
+      const adjustments=[];
+      if(explicit&&(amount(input.amount)<=0||depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),false).unexplainedDifference!==0))reject('Shift amounts must match the deposit amount. Adjust the amounts or remove a shift.');
       if(!explicit&&input.partial&&!String(input.note||'').trim()) reject('Explain the partial deposit.');
       const deposit={id:randomUUID(),branch:input.branch,depositDate:input.depositDate,bank:input.bank.trim(),reference:input.reference.trim(),amount:amount(input.amount),partial:explicit?false:!!input.partial,note:String(input.note||''),...allocationData,manager:session.role,status:'pending',coveredReportKeys:covered.reports.map(r=>r.key),carryoverSourceIds:covered.carryoverSourceIds,coveredCash:covered.coveredCash,previousCarryover:covered.previousCarryover,adjustments,...depositAmounts(covered.coveredCash,covered.previousCarryover,adjustments,amount(input.amount),explicit?false:!!input.partial)};
       database.deposits.push(deposit);
-      if(explicit)database.photos[input.receiptPath]={...database.photos[input.receiptPath],depositId:deposit.id};
+      if(explicit&&input.receiptPath)database.photos[input.receiptPath]={...database.photos[input.receiptPath],depositId:deposit.id};
       for(const report of covered.reports) database.reports[report.key].depositCoverage={id:deposit.id,status:'pending',remaining:money(Math.max(0,Number(database.reports[report.key].actualCashCounted||0)-reservedReportCash(report.key,Number(database.reports[report.key].actualCashCounted||0),database.deposits)))};
       const anchor=covered.reports.at(-1)?.key || database.deposits.find(d=>d.id===covered.carryoverSourceIds[0])?.anchorKey;
       deposit.anchorKey=anchor;
