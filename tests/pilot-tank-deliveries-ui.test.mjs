@@ -36,7 +36,7 @@ test('cashier saves three fuels in one delivery, safely retries a lost response,
   await r.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
  });
  const url=`http://127.0.0.1:${server.httpServer.address().port}/pilot/cashier`;
- async function open(login=true){await page.goto(url);if(login){await page.getByLabel('Six-digit branch PIN').fill('000000');await page.getByRole('button',{name:'Proceed',exact:true}).click();}await page.locator('.cashier-shift-card').first().click();await page.getByRole('button',{name:'Open Reference Inventory and Deliveries',exact:true}).click();}
+ async function open(login=true){await page.goto(url);if(login){await page.getByLabel('Six-digit branch PIN').fill('000000');await page.getByRole('button',{name:'Proceed',exact:true}).click();}await page.locator('.cashier-shift-card').first().click();await page.getByRole('button',{name:'Open Calibration, Inventory and Deliveries',exact:true}).click();}
  await open();const section=page.getByRole('region',{name:'Fuel deliveries'});
  const tank=page.locator('.cashier-wizard-step table tbody tr').first().locator('input').last();await tank.fill('123');
  await section.getByLabel('Driver name',{exact:true}).fill('Test Driver');await section.getByLabel('Delivery time',{exact:true}).fill('10:30');

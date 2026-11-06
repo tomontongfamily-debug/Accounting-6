@@ -136,17 +136,22 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>persistPumpPhoto(db,path,image,context,backupPhoto)});
   if(!loaded.data||outcome.changed||!isDeepStrictEqual(before,JSON.parse(JSON.stringify(outcome.state)))) {
     const persisted=JSON.parse(JSON.stringify(outcome.state));
-    const saved=await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:statePatch(loaded.data?before:{},persisted)}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result});
+    const patch=incremental?statePatch(loaded.data?before:{},persisted):null;
+    // Projection-only polling timestamps do not change a stored document.
+    // Read requests must not acquire the global commit lock or emit a realtime
+    // signal for an empty patch. Mutations still commit their idempotent receipt.
+    const needsCommit=!readOnly||!loaded.data||!patch||patch.upserts.length||patch.removals.length||patch.audit.length;
+    const saved=needsCommit?await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:patch}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result}):{data:outcome.result};
     // Re-read and revalidate after aggregate contention. Per-report/nozzle checks still
     // reject stale edits; a concurrent refresh must not make saved reports disappear.
     const conflict=['PT409','40001'].includes(saved.error?.code);
     if(conflict&&attempt<2) {
-      await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
+      await new Promise(resolve=>setTimeout(resolve,75*2**attempt+Math.floor(Math.random()*125)));
       return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1});
     }
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
-    if(saved.error) throw fail(conflict?'Another device saved first. Refresh and retry.':'The save could not be verified. Retry with the same request.',conflict?409:503);
-    storeRevision++;
+    if(saved.error) throw Object.assign(fail(conflict?'Another device saved first. Your changes are kept on this device. Load the saved shift before retrying.':'The save could not be verified. Retry with the same request.',conflict?409:503),conflict?{retryableConflict:true,saveUncertain:false}:{});
+    if(needsCommit)storeRevision++;
     if(!readOnly)return saved.data;
   }
   if(incremental&&route==='/api/demo/audit')outcome.result.nextCursor=loaded.data?.auditCursor??null;

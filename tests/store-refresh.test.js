@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createStoreRefreshQueue, refreshStore} from '../src/store-refresh.js';
 
+test('realtime feedback bursts wait for the cooldown and produce one fresh follow-up',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:10000});
+ const calls=[];const queue=createStoreRefreshQueue(async silent=>{calls.push(silent);},{minIntervalMs:5000});
+ try {
+  await queue.refresh();const pending=queue.refresh(true);
+  await new Promise(resolve=>setImmediate(resolve));
+  for(let i=0;i<20;i++)assert.equal(queue.refresh(true),pending);
+  assert.deepEqual(calls,[false]);t.mock.timers.tick(4999);await Promise.resolve();assert.equal(calls.length,1);
+  t.mock.timers.tick(1);await pending;assert.deepEqual(calls,[false,true]);
+  const stopped=queue.refresh(true);await Promise.resolve();queue.stop();await stopped;
+  t.mock.timers.tick(5000);assert.equal(calls.length,2);
+ }finally{queue.stop();t.mock.timers.reset();}
+});
+
 test('Empty or rejected offline queues need only one history download', async () => {
   let loads = 0;
   const store = {reports: {saved: {confirmed: true}}};

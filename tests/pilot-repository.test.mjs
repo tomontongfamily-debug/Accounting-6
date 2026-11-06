@@ -4,6 +4,22 @@ import { randomUUID } from 'node:crypto';
 import { execute } from '../pilot/repository.mjs';
 import { ensureCurrentReports } from '../pilot/state.mjs';
 import { fixture } from './pilot-fixture.mjs';
+import {refreshPosEvidence} from '../pilot/pos-redemptions.mjs';
+
+test('projection-only POS timestamps do not commit an empty patch or advance the saved revision',async()=>{
+ const {state,cashier}=fixture();state.mode='live';
+ state.posRedemptionSync={status:'verified',startDate:state.startDate,attemptedAt:new Date().toISOString(),verifiedAt:new Date().toISOString(),rows:[],points:[]};
+ for(let i=0;i<2;i++){ensureCurrentReports(state);await refreshPosEvidence(state,{enabled:true});}
+ for(const report of Object.values(state.reports))if(report.posRedemptions)Object.assign(report.posRedemptions,{attemptedAt:'2026-01-01T00:00:00Z',verifiedAt:'2026-01-01T00:00:00Z'});
+ const saved=JSON.parse(JSON.stringify(state));
+ let commits=0;
+ const db={from(table){
+   const result={data:table==='fueltech_pilot_config'?{mode:'live',start_date:state.startDate,storage_version:2}:null,error:null};
+   const query=new Proxy({}, {get:(_target,key)=>key==='then'?(resolve=>resolve(result)):()=>query});return query;
+  },async rpc(name){if(name==='fueltech_pilot_load_compact')return{data:{revision:12,data:structuredClone(saved)}};commits++;return{data:{ok:true}};}};
+ const result=await execute(cashier,{route:'/api/store/load',input:{paged:true},mode:'live',startDate:state.startDate,mutationId:randomUUID()},{db,posEnv:{FUELTECH_POS_REDEMPTIONS_ENABLED:'true'}});
+ assert.equal(commits,0);assert.equal(result.storeRevision,12);
+});
 
 const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,sorted(value[k])])):value;
 

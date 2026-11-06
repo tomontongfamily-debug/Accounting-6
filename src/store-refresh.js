@@ -6,10 +6,12 @@ export async function refreshStore(load, flush) {
 
 // Focus, visibility and realtime events can arrive during a slow paged load.
 // Keep one load active and combine those events into one subsequent refresh.
-export function createStoreRefreshQueue(run) {
+export function createStoreRefreshQueue(run, {minIntervalMs=0}={}) {
   let active = null;
   let queued = false;
   let stopped = false;
+  let finishedAt = -Infinity;
+  let cancelWait = () => {};
   return {
     refresh(silent = false) {
       if (stopped) return Promise.resolve();
@@ -21,7 +23,16 @@ export function createStoreRefreshQueue(run) {
         do {
           queued = false;
           if (stopped) break;
-          await run(silent);
+          const remaining=silent?Math.max(0,minIntervalMs-(Date.now()-finishedAt)):0;
+          if(remaining)await new Promise(resolve=>{
+            const timer=setTimeout(resolve,remaining);
+            cancelWait=()=>{clearTimeout(timer);resolve();};
+          });
+          cancelWait=()=>{};
+          if(stopped)break;
+          // Events arriving during the cooldown are covered by this new load.
+          queued=false;
+          try {await run(silent);} finally {finishedAt=Date.now();}
           silent = true;
         } while (queued && !stopped);
       }).finally(() => { active = null; });
@@ -30,6 +41,7 @@ export function createStoreRefreshQueue(run) {
     stop() {
       stopped = true;
       queued = false;
+      cancelWait();
     },
   };
 }

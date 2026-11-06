@@ -14,7 +14,7 @@ export function pumpMeterLiters(row) {
 }
 
 export function pumpLeakLiters(report, row) {
-  return (report.fuelLeakLosses || []).filter(loss => loss.pumpRowId === row.id && loss.product === row.product)
+  return (Array.isArray(report.fuelLeakLosses)?report.fuelLeakLosses:[]).filter(loss => loss && loss.pumpRowId === row.id && loss.product === row.product)
     .reduce((sum, loss) => sum + Math.max(0, number(loss.liters)), 0);
 }
 
@@ -33,6 +33,29 @@ export function pumpMeterSales(report, row) {
     sales+=(next-reading)*price;reading=next;price=Math.max(0,number(change.newPrice));
   }
   return sales+(number(row.closing)-reading)*price;
+}
+
+export function returnedCalibrationSummary(report) {
+  return products.map(product => {
+    const pumps=(report.pumpRows || []).filter(row=>row.product===product);
+    const meteredLiters=pumps.reduce((sum,row)=>sum+pumpMeterLiters(row),0);
+    const grossSales=pumps.reduce((sum,row)=>sum+pumpMeterSales(report,row),0);
+    const calibrationLiters=(report.tankRows || []).filter(row=>row.product===product).reduce((sum,row)=>sum+Math.max(0,number(row.calibration)),0);
+    const leakLiters=pumps.reduce((sum,row)=>sum+pumpLeakLiters(report,row),0);
+    const averagePrice=meteredLiters>0?grossSales/meteredLiters:0;
+    return {product,meteredLiters,calibrationLiters,availableLiters:Math.max(0,meteredLiters-leakLiters),salesAdjustment:Math.min(meteredLiters,calibrationLiters)*averagePrice};
+  });
+}
+
+export function validateReturnedCalibration(report) {
+  for(const row of report.tankRows || []) {
+    if(row.calibration!==''&&row.calibration!=null&&(!Number.isFinite(Number(row.calibration))||Number(row.calibration)<0))return `${row.product}: returned calibration must be a non-negative number of litres, not pesos.`;
+  }
+  for(const row of returnedCalibrationSummary(report)) {
+    if(row.calibrationLiters>row.meteredLiters+0.000001)return `${row.product}: returned calibration (${row.calibrationLiters.toFixed(2)} L) cannot exceed the pump reading difference (${row.meteredLiters.toFixed(2)} L). Enter litres returned to the tank, not pesos.`;
+    if(row.calibrationLiters>row.availableLiters+0.000001)return 'Calibration and metered leak loss cannot exceed the total pump volume.';
+  }
+  return '';
 }
 
 export function pumpSalesBreakdown(report,row) {
@@ -99,11 +122,5 @@ export function validateFuelLeakLosses(report, {requireNotes = false} = {}) {
       if (byPump.get(pump.id) > pumpMeterLiters(pump) + 0.000001) return 'Metered leak loss cannot exceed the pump reading difference.';
     }
   }
-  for (const product of products) {
-    const pumps = (report.pumpRows || []).filter(row => row.product === product);
-    const metered = pumps.reduce((sum, row) => sum + (byPump.get(row.id) || 0), 0);
-    const calibration = (report.tankRows || []).filter(row => row.product === product).reduce((sum, row) => sum + Math.max(0, number(row.calibration)), 0);
-    if (metered > 0 && metered + calibration > pumps.reduce((sum, row) => sum + pumpMeterLiters(row), 0) + 0.000001) return 'Calibration and metered leak loss cannot exceed the total pump volume.';
-  }
-  return '';
+  return validateReturnedCalibration(report);
 }
