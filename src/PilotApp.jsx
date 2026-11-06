@@ -485,7 +485,7 @@ function pointsWithdrawnFromRedemptions(report = {}) {
 }
 
 function deductionLabel(key) {
-  return key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
+  return key === "bankCard" ? "Debit / credit card" : key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
@@ -619,6 +619,7 @@ function createReport(branch, date, prices, shiftId = "shift-1", pricingMeta = {
     deductions: {
       gcash: 0,
       card: 0,
+      ...(branch === "Moalboal" ? { bankCard: 0 } : {}),
       cashRedemption: 0,
       fuelRedemption: 0,
     },
@@ -4845,6 +4846,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
       <Section title="Deductions">
         <div className="grid four">
           <AutomaticPay report={report} onSaved={onDemoSaved} />
+          {report.branch === "Moalboal" && <p className="neutral">Debit / credit card: enter the gross terminal sales total for this shift. Exclude transactions already included in automatic FuelTech Pay. Card payments reduce expected physical cash.</p>}
           {visibleDeductionEntries(report.deductions).filter(([key]) => !report.posRedemptions?.automatic || !["cashRedemption", "fuelRedemption"].includes(key)).map(([key, value]) => (
             <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} />}</Field>
           ))}

@@ -88,12 +88,23 @@ export function permittedDay(date, noDepositDays) {
 export function depositDue(report, days) {
     return permittedDay(datePlus(report.date, report.shiftId === 'shift-1' ? 0 : 1), days);
 }
+export function reservedReportCash(key, cash, deposits) {
+    const active = deposits.filter(d => d.status !== 'rejected');
+    if (active.some(d => d.allocationVersion !== 1 && d.coveredReportKeys.includes(key)))
+        return cash;
+    return money(active.reduce((sum, d) => sum + (d.reportAllocations || []).filter(a => a.reportKey === key).reduce((n, a) => n + Number(a.amount), 0), 0));
+}
+export function availableCarryover(source, deposits) {
+    const active = deposits.filter(d => d.status !== 'rejected');
+    if (active.some(d => d.allocationVersion !== 1 && d.carryoverSourceIds.includes(source.id)))
+        return 0;
+    const reserved = active.reduce((sum, d) => sum + (d.carryoverAllocations || []).filter(a => a.depositId === source.id).reduce((n, a) => n + Number(a.amount), 0), 0);
+    return money(Math.max(0, source.carryoverRemaining - reserved));
+}
 export function depositCoverage(reports, deposits, branch, date, days) {
-    const reserved = new Set(deposits.filter(d => d.status !== 'rejected').flatMap(d => d.coveredReportKeys));
-    const carryUsed = new Set(deposits.filter(d => d.status !== 'rejected').flatMap(d => d.carryoverSourceIds));
-    const covered = reports.filter(r => r.branch === branch && r.confirmed && depositDue(r, days) <= date && !reserved.has(r.key)).sort((a, b) => (a.date + a.shiftId).localeCompare(b.date + b.shiftId));
-    const carry = deposits.filter(d => d.branch === branch && d.status === 'verified' && d.depositDate <= date && d.carryoverRemaining > 0 && !carryUsed.has(d.id));
-    return { reports: covered, carryoverSourceIds: carry.map(d => d.id), coveredCash: money(covered.reduce((sum, r) => sum + r.cash, 0)), previousCarryover: money(carry.reduce((sum, d) => sum + d.carryoverRemaining, 0)) };
+    const covered = reports.filter(r => r.branch === branch && r.confirmed && depositDue(r, days) <= date).map(r => ({ ...r, originalCash: r.cash, cash: money(Math.max(0, r.cash - reservedReportCash(r.key, r.cash, deposits))) })).filter(r => r.cash > 0).sort((a, b) => (a.date + a.shiftId).localeCompare(b.date + b.shiftId));
+    const carry = deposits.filter(d => d.branch === branch && d.status === 'verified' && d.depositDate <= date).map(d => ({ ...d, availableCash: availableCarryover(d, deposits) })).filter(d => d.availableCash > 0);
+    return { reports: covered, carryoverSourceIds: carry.map(d => d.id), carryoverBalances: carry.map(d => ({ id: d.id, availableCash: d.availableCash })), coveredCash: money(covered.reduce((sum, r) => sum + r.cash, 0)), previousCarryover: money(carry.reduce((sum, d) => sum + d.availableCash, 0)) };
 }
 export function depositAmounts(coveredCash, carry, adjustments, actual, partial) {
     const costs = money(adjustments.reduce((sum, a) => sum + amount(a.amount), 0));

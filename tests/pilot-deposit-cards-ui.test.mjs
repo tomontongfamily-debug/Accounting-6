@@ -7,7 +7,7 @@ import {createServer} from 'vite';
 
 test('Manager and admin cards identify covered shifts; manager records bank fees separately from the remaining difference',async()=>{
   const entry=`import React from 'react';import{createRoot}from'react-dom/client';import{ManagerDepositCards}from'/src/deposit-cards.jsx';import{AdminDepositCards}from'/src/admin-deposits.jsx';import{DepositHistoryCard}from'/src/upgrade-components.jsx';import'/src/styles.css';
-    async function api(route,input){if(route==='deposit-submit'){window.__submitted=input;return{ok:true};}return window.__deposits;}
+    async function api(route,input){if(route==='deposit-receipt')return{receiptPath:'/api/pilot/photo?id=test-receipt'};if(route==='deposit-submit'){window.__submitted=input;return{ok:true};}return window.__deposits;}
     createRoot(document.getElementById('root')).render(window.__role==='Manager'?<ManagerDepositCards branch="Liloan" api={api} HistoryCard={DepositHistoryCard}/>:<AdminDepositCards branch="Liloan" role="Admin" api={api} HistoryCard={DepositHistoryCard}/>);`;
   const server=await createServer({cacheDir:'node_modules/.vite-deposit-cards-test',server:{host:'127.0.0.1',port:4362,strictPort:true},plugins:[{name:'deposit-card-fixture',resolveId(id){if(id==='/deposit-card-fixture.jsx')return id;},load(id){if(id==='/deposit-card-fixture.jsx')return entry;}}]});
   await server.listen();
@@ -49,8 +49,11 @@ test('Manager and admin cards identify covered shifts; manager records bank fees
         await page.getByLabel('Expense 2 amount',{exact:true}).fill('20');
         await page.getByLabel('Reference number',{exact:true}).fill('TEST-FEES');
         await page.getByLabel('Amount deposited',{exact:true}).fill('800');
+        const jpeg=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=10;c.height=10;return c.toDataURL('image/jpeg').split(',')[1];});
+        await page.getByLabel('Receipt photo',{exact:true}).setInputFiles({name:'receipt.jpg',mimeType:'image/jpeg',buffer:Buffer.from(jpeg,'base64')});
+        await page.getByText(/Receipt saved/).waitFor();
         await page.getByRole('button',{name:'Review deposit →',exact:true}).click();
-        await page.getByText('✓ The deposit amount matches the selected cash after expenses.',{exact:true}).waitFor();
+        await page.getByText('✓ The deposit amount matches the selected cash after expenses. Unused cash stays available.',{exact:true}).waitFor();
         await page.getByRole('button',{name:'Submit for bank verification',exact:true}).click();
         await page.getByText(/Deposit sent for bank verification/).waitFor();
         const submitted=await page.evaluate(()=>window.__submitted);
