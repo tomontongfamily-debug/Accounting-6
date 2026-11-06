@@ -19,6 +19,17 @@ test('564.24 L calibration against 508 L metered is rejected without changing sa
  assert.match(validateFuelLeakLosses(report),/cannot exceed/);
  assert.deepEqual(report,before);
 });
+test('fifty ten-litre calibration buckets are recorded as five hundred returned litres and excluded once',()=>{
+ const report=measuredReport(),before=compute(report);
+ report.tankRows.find(row=>row.product==='Regular').calibration=50*10;
+ assert.equal(validateReturnedCalibration(report),'');
+ assert.ok(Math.abs((before.expectedCash-compute(report).expectedCash)-500*88.30)<0.000001);
+ assert.ok(Math.abs(compute(report).fuelLiters.Regular-8)<0.000001);
+});
+test('tank dip, inventory deliveries and pull-outs remain reference-only for expected cash',()=>{
+ const report=measuredReport(),expected=compute(report).expectedCash;
+ for(const field of ['opening','actualDip','delivery','pullOut']){const copy=structuredClone(report);copy.tankRows.forEach(row=>row[field]=12345);assert.equal(compute(copy).expectedCash,expected,field);}
+});
 test('valid calibration shows the same monetary adjustment as the financial engine, including a price change',()=>{
  const report=measuredReport(),pump=report.pumpRows.find(row=>row.product==='Regular');
  report.midShiftBasePrices={...report.prices};report.midShiftPriceChanges=[{id:'price',product:'Regular',effectiveTime:'09:00',newPrice:90,readings:{[pump.id]:10254}}];

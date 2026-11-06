@@ -1,6 +1,9 @@
 // Generated from src/error-reduction.ts by scripts/build-pilot-domain.mjs.
 export const ERROR_CATEGORIES = ['CASH_VARIANCE', 'PUMP_READING', 'PUMP_OCR_CORRECTION', 'ONLINE_PAY', 'PO', 'REDEMPTION', 'MANUAL_DEDUCTION', 'FUEL_PRICE', 'MID_SHIFT_PRICE', 'TANK_DELIVERY', 'BANK_DEPOSIT', 'BANK_VERIFIER', 'OTHER'];
 export function money(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+export const SHORTAGE_LIMIT = 3000;
+export const HIGH_SHORTAGE_MESSAGE = 'Report has high negative variance. Review the report entries before submitting. If the entries are correct, contact your manager.';
+export function isHighShortage(variance) { return Number.isFinite(variance) && money(variance) < -SHORTAGE_LIMIT; }
 export const CASH_DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
 export function denominationTotal(counts) {
     if (!counts || typeof counts !== 'object' || Array.isArray(counts) || !Object.values(counts).some(v => v !== '' && v != null))
@@ -130,11 +133,11 @@ export function automaticTransactions(rows, report) {
 }
 export function cashNeedsRecount(counted, expected) {
     const variance = money(counted - expected);
-    return variance > 100 || variance < -1500;
+    return variance > 100 || isHighShortage(variance);
 }
 export function reportIssues(report, cashVariance) {
     const issues = [...(report.integrationIssues || [])];
-    if (cashVariance > 100 || cashVariance < -1500)
+    if (cashVariance > 100 || isHighShortage(cashVariance))
         issues.push({ category: 'CASH_VARIANCE', detail: `Physical cash variance: ${money(cashVariance).toFixed(2)}.` });
     for (const row of report.pumpRows) {
         const warning = readingWarning(row);

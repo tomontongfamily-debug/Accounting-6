@@ -8,6 +8,8 @@ import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.
 import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 import { saveLivePilotCorrection } from "../../pilot/repository.mjs";
 import { validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
+import {compute} from '../../src/accounting-engine.js';
+import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from '../../pilot/domain.mjs';
 import { midShiftReadingIssues } from "../../src/mid-shift-price-change.js";
 
 const LEASE_MS = 2 * 60_000;
@@ -118,6 +120,8 @@ export function validateSubmission(report) {
       if (!validNumber(row.amount) || Number(row.amount) <= 0) return "Every cash voucher needs an amount greater than zero.";
     }
   }
+  const totals=compute({...report,coke:report.coke||{},purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],deductions:report.deductions||{}});
+  if(!report.baselineReport&&isHighShortage(totals.cashVariance))return HIGH_SHORTAGE_MESSAGE;
   return "";
 }
 

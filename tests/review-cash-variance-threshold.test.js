@@ -4,8 +4,8 @@ import test from "node:test";
 
 const appSource = fs.readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 
-test("overages above 100 and shortages below negative 1,500 are check required", () => {
-  assert.match(appSource, /const REVIEW_CASH_VARIANCE_THRESHOLD = 1500;/);
+test("overages above 100 and shortages below negative 3,000 are check required", () => {
+  assert.match(appSource, /const REVIEW_CASH_VARIANCE_THRESHOLD = 3000;/);
   assert.match(appSource, /const REVIEW_CASH_OVERAGE_THRESHOLD = 100;/);
   assert.match(
     appSource,

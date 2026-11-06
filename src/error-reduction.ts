@@ -6,6 +6,9 @@ export type Deposit = { id: string; branch: string; depositDate: string; bank: s
 export type Transaction = { id: string; branch: string; date: string; shiftId: string; amount: number; status: string };
 export const ERROR_CATEGORIES = ['CASH_VARIANCE','PUMP_READING','PUMP_OCR_CORRECTION','ONLINE_PAY','PO','REDEMPTION','MANUAL_DEDUCTION','FUEL_PRICE','MID_SHIFT_PRICE','TANK_DELIVERY','BANK_DEPOSIT','BANK_VERIFIER','OTHER'];
 export function money(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+export const SHORTAGE_LIMIT = 3000;
+export const HIGH_SHORTAGE_MESSAGE = 'Report has high negative variance. Review the report entries before submitting. If the entries are correct, contact your manager.';
+export function isHighShortage(variance: number): boolean { return Number.isFinite(variance) && money(variance) < -SHORTAGE_LIMIT; }
 export const CASH_DENOMINATIONS = [1000,500,200,100,50,20,10,5,1];
 export function denominationTotal(counts: Record<string, unknown>): number {
   if(!counts || typeof counts!=='object' || Array.isArray(counts) || !Object.values(counts).some(v=>v!==''&&v!=null)) throw new Error('Enter the number of notes or coins counted. Enter 0 if there is no cash.');
@@ -113,11 +116,11 @@ export function automaticTransactions(rows: Transaction[], report: { branch: str
 }
 export function cashNeedsRecount(counted: number, expected: number): boolean {
   const variance=money(counted-expected);
-  return variance > 100 || variance < -1500;
+  return variance > 100 || isHighShortage(variance);
 }
 export function reportIssues(report: { pumpRows: Reading[]; integrationIssues?: Issue[]; checkDetails?: Issue[] }, cashVariance: number): Issue[] {
   const issues: Issue[]=[...(report.integrationIssues || [])];
-  if (cashVariance > 100 || cashVariance < -1500) issues.push({category:'CASH_VARIANCE',detail:`Physical cash variance: ${money(cashVariance).toFixed(2)}.`});
+  if (cashVariance > 100 || isHighShortage(cashVariance)) issues.push({category:'CASH_VARIANCE',detail:`Physical cash variance: ${money(cashVariance).toFixed(2)}.`});
   for (const row of report.pumpRows) {
     const warning=readingWarning(row);
     if (warning.level !== 'NORMAL') issues.push({category:'PUMP_READING',detail:`${row.pump} ${row.nozzle}: ${warning.message}`});

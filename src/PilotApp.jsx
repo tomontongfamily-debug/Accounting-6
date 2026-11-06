@@ -1,6 +1,7 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
 import AdminStoreGate from './admin-store-gate.jsx';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from './zero-sales.js';
+import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from './error-reduction.ts';
 import {requestPriceReview,midShiftPriceReviewContext} from './price-confirmation.js';
 import { configuredStations, stationStartDate, stationOpeningSlot } from './station-rollout.js';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
@@ -80,7 +81,7 @@ const RANKING_RANGE_OPTIONS = ["Daily", "Weekly", "Monthly", "Quarterly", "Yearl
 const MOBILE_PERFORMANCE_PERIODS = ["Shift", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly", "All-time"];
 const BASELINE_MESSAGE = "No previous closing record found. Enter and confirm the starting opening values before this report can be counted.";
 const REVIEW_LITERS_THRESHOLD = 10000;
-const REVIEW_CASH_VARIANCE_THRESHOLD = 1500;
+const REVIEW_CASH_VARIANCE_THRESHOLD = 3000;
 const REVIEW_CASH_OVERAGE_THRESHOLD = 100;
 const ENTRY_REVIEW_HINT_THRESHOLD = 5000;
 const CASH_SHORTAGE_ALERT_THRESHOLD = 100;
@@ -3933,6 +3934,7 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
+    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance)){setSubmitReportError(HIGH_SHORTAGE_MESSAGE);return;}
     const calibrationError=validateReturnedCalibration(activeReport);
     if(calibrationError){setSubmitReportError(calibrationError);setSyncMessage(calibrationError);return;}
     if (activeReport.confirmed) {
@@ -3995,6 +3997,7 @@ export default function App() {
   }
 
   function submitConfirmedReport(extra = {}) {
+    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance))return Promise.reject(new Error(HIGH_SHORTAGE_MESSAGE));
     return saveReport({
       ...activeReport,
       confirmed: true,
@@ -4611,6 +4614,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
+    !reportCompleted(report)&&!report.baselineReport&&isHighShortage(result.cashVariance)?HIGH_SHORTAGE_MESSAGE:'',
     !reportCompleted(report)?validateReturnedCalibration(report):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
     !reportCompleted(report) && !report.cashCountConfirmed ? "Confirm physical cash in Step 1 before submitting." : "",
@@ -4947,6 +4951,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
             <div className="warning-box form-space">
               <b>Cannot submit yet</b>
               {submitBlockers.map((warning) => <p key={warning}>{warning}</p>)}
+              {isHighShortage(result.cashVariance)&&<div className="demo-actions"><button type="button" className="secondary" onClick={()=>setWizardStep(1)}>Review pump readings</button><button type="button" className="secondary" onClick={()=>setWizardStep(2)}>Review payments and deductions</button></div>}
               {validateReturnedCalibration(report)&&<button type="button" className="secondary" onClick={()=>setWizardStep(3)}>Check returned calibration</button>}
               {submitBlockers.some((warning) => warning.includes("End-of-shift cash count")) && (
                 <button type="button" className="secondary" onClick={() => setWizardStep(0)}>Go to Physical Cash</button>

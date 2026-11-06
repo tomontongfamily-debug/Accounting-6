@@ -18,7 +18,7 @@ function validReport(closing) {
       closingEntered: true,
     }],
     tankRows: [{ tank: "Premium", actualDip: 5000 }],
-    actualCashCounted: 1000,
+    actualCashCounted: Math.max(0,closing-10000)*70,
   };
 }
 
@@ -40,6 +40,7 @@ test("server temporarily allows only Liloan Pump 1 Diesel above 1,500 liters on 
   report.branch = "Liloan";
   report.date = "2026-09-15";
   report.prices = { Diesel: 68 };
+  report.actualCashCounted=1800*68;
   report.pumpRows[0] = {
     ...report.pumpRows[0],
     id: "pump-1-diesel",

@@ -7,7 +7,7 @@ export function ReturnedCalibration({report,onChange}) {
   const summaries=returnedCalibrationSummary(report),error=validateReturnedCalibration(report);
   return <section className="section" aria-label="Returned calibration">
     <h3>Returned calibration — litres</h3>
-    <p>Enter the fuel measured through the pump and returned to the tank for testing. This reduces calculated sales and expected cash. Enter litres, not pesos. Leave 0 when there was no returned calibration.</p>
+    <p>Enter the total calibrated litres returned to the tank during this shift. Add all test buckets together; calibrated litres and returned litres are the same amount. Record the total once. This reduces calculated sales and expected cash. Enter litres, not pesos. Leave 0 when there was no calibration.</p>
     <div className="grid three">{(report.tankRows||[]).map((row,index)=>{
       const summary=summaries.find(item=>item.product===row.product);
       const otherLiters=summary.calibrationLiters-Math.max(0,Number(row.calibration)||0);
