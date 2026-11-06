@@ -1,5 +1,6 @@
 import { pendingVouchersForReport } from '../src/pending-vouchers.js';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from '../src/zero-sales.js';
+import {priceReviewError,midShiftPriceReviewContext} from '../src/price-confirmation.js';
 import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
@@ -322,6 +323,7 @@ function validatePriceReadingOrder(report,change) {
           if(sameContext&&previous.newPrice===c.newPrice) next.confirmedAt=previous.confirmedAt||'';
           if(c.confirmedAt) {
             if(next.photoRequired)validatePricePhotos({...old,midShiftPriceChanges:[next]},next);
+            if(!next.confirmedAt){const issue=priceReviewError(midShiftPriceReviewContext(old,next),input.priceReview?.[next.id]);if(issue)reject(issue);}
             if(!next.confirmedAt){next.confirmedAt=stamp();newlyConfirmed.push(next.product);}
           }
           return next;
@@ -511,6 +513,8 @@ function validatePriceReadingOrder(report,change) {
       if(change.photoRequired)validatePricePhotos(old,change);
       validatePriceReadingOrder(old,change);
       if(change.confirmedAt)return send({ok:true,report:old,alreadyConfirmed:true,priceDate:old.date,dailyPricePatch:confirmedDailyPricePatch(database,old.branch,old.date,[change.product])});
+      const reviewError=priceReviewError(midShiftPriceReviewContext(old,change),input.priceReview);
+      if(reviewError)reject(reviewError);
       const report={...old,midShiftBasePrices:old.midShiftBasePrices||old.prices,midShiftPriceChanges:old.midShiftPriceChanges.map(c=>c.id===change.id?{...c,confirmedAt:stamp()}:c),cashReviewState:'',recountRequired:false};
       const result=storeReport(report,session,'mid-shift-price-confirmed');
       const carried=carryMidShiftPrices(database,result.report,[change.product]);
@@ -536,9 +540,13 @@ function validatePriceReadingOrder(report,change) {
         prices={...previous,...input.prices,...(input.coverage==='Daily'?confirmedDailyPricePatch(database,input.branch,input.date):{})};
       }
       for(const p of SELLING_PRODUCTS)if(amount(prices[p])<=0)reject('Prices must be positive.');
+      for(const product of SELLING_PRODUCTS){
+        const issue=priceReviewError({branch:input.branch,date:input.date,coverage:input.coverage,shiftId:input.shiftId,product,previousPrice:previous[product],newPrice:prices[product]},input.priceReview?.[product]);
+        if(issue)reject(issue);
+      }
       database.priceBook[input.branch][key]=prices;
       syncUnsubmittedPrices(database,input.branch,input.date,input.coverage==='Shift'?input.shiftId:'shift-1');
-      audit('fuel-price-changed',session,{date:input.date,prices,pricePatch:input.pricePatch});save();return send({ok:true,prices});
+      audit('fuel-price-changed',session,{branch:input.branch,date:input.date,coverage:input.coverage,shiftId:input.shiftId,prices,pricePatch:input.pricePatch,priceReview:input.priceReview});save();return send({ok:true,prices});
     }
     if(route==='/api/demo/cv-status') {
       const report=database.reports[input.reportKey];if(!report)reject('Saved shift not found.',404);

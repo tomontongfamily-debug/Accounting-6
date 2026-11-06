@@ -481,7 +481,7 @@ function pointsWithdrawnFromRedemptions(report = {}) {
 }
 
 function deductionLabel(key) {
-  return key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
+  return key === "fuelRedemption" ? "Fuel Redemption (₱)" : key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
@@ -2489,13 +2489,14 @@ function BranchPinInput({ value, onChange, onSubmit }) {
   );
 }
 
-function NumberInput({ value, onChange, placeholder = "", className = "", ghostZero = false }) {
+function NumberInput({ value, onChange, placeholder = "", className = "", ghostZero = false, ariaLabel }) {
   const displayValue = ghostZero && value === 0 ? "" : value ?? "";
   return (
     <input
       className={`${className} ${ghostZero ? "ghost-zero-input" : ""}`.trim()}
       type="text"
       inputMode="decimal"
+      aria-label={ariaLabel}
       value={displayValue}
       placeholder={ghostZero ? "0" : placeholder}
       onChange={(event) => {
@@ -4676,7 +4677,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
             />
           </Field>
           {visibleDeductionEntries(report.deductions).filter(([key]) => !report.posRedemptions?.automatic || !["cashRedemption", "fuelRedemption"].includes(key)).map(([key, value]) => (
-            <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} />}</Field>
+            <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero ariaLabel={key==='fuelRedemption'?'Fuel Redemption (₱)':undefined} value={value} onChange={(next) => patchReport(["deductions", key], next)} />}{key==='fuelRedemption'&&<small>Enter the total peso value redeemed, not litres. Example: ₱500 redemption → enter 500.</small>}</Field>
           ))}
           <Field label="Points Issued">{report.posRedemptions?.automatic ? <b className="read-only-value">{report.posRedemptions.pointsStatus === "verified" ? peso(report.pointsIssued) : "Needs POS review"}</b> : <NumberInput ghostZero value={report.pointsIssued} onChange={(value) => patchReport(["root", "pointsIssued"], value)} />}</Field>
           <Field label="Points Withdrawn">
