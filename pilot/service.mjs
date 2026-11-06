@@ -1,4 +1,5 @@
 import { pendingVouchersForReport } from '../src/pending-vouchers.js';
+import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from '../src/zero-sales.js';
 import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
@@ -356,6 +357,13 @@ function validatePriceReadingOrder(report,change) {
         }
         const priceReadingIssues=midShiftReadingIssues(r);
         if(priceReadingIssues.length)reject(priceReadingIssues[0]);
+        const zeroResult=compute(r);
+        if(requiresZeroSalesConfirmation(r,zeroResult)) {
+          const reviewKey=zeroSalesReviewKey(r,zeroResult);
+          if(input.report.zeroSalesAcknowledged!==true||input.report.zeroSalesReviewKey!==reviewKey)reject('This report shows zero sales. Confirm the zero-sales statement in the submission dialog after checking the saved pump readings.');
+          r.zeroSalesConfirmation={confirmedAt:stamp(),role:session.role,cashierName:r.cashierName,reviewKey};
+          audit('zero-sales-confirmed',session,{reportKey:keyOf(r),cashierName:r.cashierName});
+        }else if(r.zeroSalesConfirmation)r.zeroSalesConfirmation=null;
         r.confirmed=true;r.confirmedAt=stamp();r.checkDetails=reportIssues(r,compute(r).cashVariance);r.checkCategories=[...new Set(r.checkDetails.map(i=>i.category))];r.checkRequired=!!r.checkDetails.length;
         if(r.correctionRequest?.status==='approved') r.correctionRequest={...r.correctionRequest,status:'completed',completedAt:stamp()};
       }

@@ -1,5 +1,6 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
 import AdminStoreGate from './admin-store-gate.jsx';
+import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from './zero-sales.js';
 import { configuredStations, stationStartDate, stationOpeningSlot } from './station-rollout.js';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
@@ -3988,6 +3989,8 @@ export default function App() {
       ...activeReport,
       confirmed: true,
       confirmedAt: new Date().toLocaleString(),
+      zeroSalesAcknowledged: extra.zeroSalesAcknowledged === true,
+      zeroSalesReviewKey: extra.zeroSalesReviewKey || "",
       cashVarianceReason: extra.cashVarianceReason ?? activeReport.cashVarianceReason ?? "",
       cashVarianceConfirmedAt: extra.cashVarianceReason ? new Date().toLocaleString() : activeReport.cashVarianceConfirmedAt ?? "",
       reopenStartingOpening: false,
@@ -3999,11 +4002,11 @@ export default function App() {
     }, "submit");
   }
 
-  function confirmSubmitReport() {
+  function confirmSubmitReport(extra = {}) {
     setShowReportConfirm(false);
     setSubmitReportError("");
     setIsSubmittingReport(true);
-    Promise.resolve(submitConfirmedReport())
+    Promise.resolve(submitConfirmedReport(extra))
       .catch((error) => setSubmitReportError(error.message || "The report could not be submitted. Please review the required fields and try again."))
       .finally(() => setIsSubmittingReport(false));
   }
@@ -4421,6 +4424,7 @@ export default function App() {
             {role === "Admin" && <AdminStoreGate finished={initialLoadFinished} error={initialLoadError} loadedReportCount={Object.keys(store.reports).length} retry={()=>window.location.reload()} logout={logout}><AdminPage logout={logout} sessionToken={sessionToken} branch={branch} setBranch={setBranch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} selectedShiftId={selectedShiftId} setSelectedShiftId={setSelectedShiftId} lastRefreshedAt={lastRefreshedAt} report={activeReport} result={activeResult} priceBook={store.priceBook} allReports={store.reports} patchFuelDeliveryCosts={patchFuelDeliveryCosts} verifyDeposit={verifyDeposit} approveDepositRemoval={approveDepositRemoval} rejectDepositRemoval={rejectDepositRemoval} correctionRequests={correctionRequests} missingShiftActivities={missingShiftActivities} approveCorrectionRequest={approveCorrectionRequest} rejectCorrectionRequest={rejectCorrectionRequest} summaryStartDate={summaryStartDate} setSummaryStartDate={setSummaryStartDate} summaryEndDate={summaryEndDate} setSummaryEndDate={setSummaryEndDate} adminSummaryReports={adminSummaryReports} adminSummary={adminSummary} adminInsights={adminInsights} mobileStationBranch={mobileStationBranch} setMobileStationBranch={setMobileStationBranch} mobileStationStartDate={mobileStationStartDate} setMobileStationStartDate={setMobileStationStartDate} mobileStationEndDate={mobileStationEndDate} setMobileStationEndDate={setMobileStationEndDate} mobileStationSummary={mobileStationSummary} consolidatedDeposits={consolidatedDeposits} exportDailyBackup={exportDailyBackup} systemHealth={systemHealth} healthStartDate={healthStartDate} setHealthStartDate={setHealthStartDate} healthEndDate={healthEndDate} setHealthEndDate={setHealthEndDate} healthRows={healthRows} healthCounts={healthCounts} depositRows={depositRows} depositCounts={depositCounts} rankingRange={rankingRange} setRankingRange={setRankingRange} rankingRows={rankingRows} rankingReportCount={rankingReports.length} weeklyCashFlow={weeklyCashFlow} monthlyCashFlow={monthlyCashFlow} /></AdminStoreGate>}
             {showReportConfirm && (
               <ConfirmReportDialog
+                key={zeroSalesReviewKey(activeReport, activeResult)}
                 report={activeReport}
                 result={activeResult}
                 onGoBack={() => setShowReportConfirm(false)}
@@ -4473,6 +4477,8 @@ function BaselineOpeningSection({ report, patchReport, confirmStartingOpening, o
 }
 
 function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting }) {
+  const [zeroSalesAcknowledged,setZeroSalesAcknowledged]=useState(false);
+  const zeroSales=requiresZeroSalesConfirmation(report,result);
   const reviewFlags = reportReviewFlags(report, result);
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-report-title">
@@ -4490,9 +4496,10 @@ function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting
             <li>Admin receives the full result after final validation.</li>
           </ul>
         </div>
+        {zeroSales&&<div className="warning-box"><p><b>This report shows ₱0.00 in sales.</b></p><label><input type="checkbox" checked={zeroSalesAcknowledged} onChange={e=>setZeroSalesAcknowledged(e.target.checked)}/>I confirm that this shift had zero sales and the pump readings were checked.</label></div>}
         <div className="modal-actions">
           <button type="button" className="secondary" onClick={onGoBack} disabled={isSubmitting}>Go Back</button>
-          <button type="button" className="confirm-button" onClick={onConfirm} disabled={isSubmitting}>{isSubmitting ? "Submitting Report..." : "Confirm Report"}</button>
+          <button type="button" className="confirm-button" onClick={()=>onConfirm({zeroSalesAcknowledged,zeroSalesReviewKey:zeroSalesReviewKey(report,result)})} disabled={isSubmitting||(zeroSales&&!zeroSalesAcknowledged)}>{isSubmitting ? "Submitting Report..." : "Confirm Report"}</button>
         </div>
       </div>
     </div>
@@ -4736,7 +4743,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   function goToCashReview() {
     setWizardStep(4);
     cashReviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    cashReviewRef.current?.querySelector("input:not(:disabled), button:not(:disabled)")?.focus({ preventScroll: true });
+    cashReviewRef.current?.querySelector("input:not(:disabled), button[data-cash-action]:not(:disabled)")?.focus({ preventScroll: true });
   }
 
   return (
