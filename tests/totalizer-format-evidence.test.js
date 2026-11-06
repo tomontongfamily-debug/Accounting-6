@@ -4,8 +4,8 @@ import {canDismissNineCellHint} from '../src/totalizer-format-evidence.js';
 import {totalizerRegions,withoutDisplayFrame,segmentDisplaySymbols,readingWithVisibleDecimal} from '../src/totalizer-image.js';
 
 const patterns=['1111110','0110000','1101101','1111001','0110011','1011011','1011111','1110000','1111111','1111011'];
-function fixture(text='15117097',offset=0,wideOnes=false){
-  const width=650+offset,height=180,gray=new Uint8Array(width*height).fill(190),top=30,left=65+offset,pitch=65;
+function fixture(text='15117097',offset=0,wideOnes=false,pitch=65){
+  const width=650+offset+Math.max(0,pitch-65)*7,height=180,gray=new Uint8Array(width*height).fill(190),top=30,left=65+offset;
   const strokes=[[8,0,28,10],[34,8,8,36],[34,56,8,38],[8,90,28,10],[1,56,8,38],[1,8,8,36],[8,45,28,10]];
   for(const [index,digit]of [...text].entries())for(const [segment,on]of [...patterns[Number(digit)]].entries())if(on==='1'){
     const [x0,y0,w,h]=wideOnes&&digit==='1'?(segment===1?[33,8,12,36]:[29,56,12,38]):strokes[segment];
@@ -57,6 +57,23 @@ test('bounded OCR box borders retain exact physical center ranges across differe
   for(const [text,offset]of [['15117097',0],['12063876',23],['92683075',31]]){
     assert.equal(canDismissNineCellHint(paddedProof(text,offset)),true,text);
   }
+});
+test('one character box may include blank cell advance but cannot contain a neighboring digit center',()=>{
+  for(const [text,offset]of [['15117097',0],['92683075',13],['12063876',29]]){
+    const proof=splitAt(fixture(text,offset,true,75)),physical=proof.physical.symbols;
+    const box=proof.hint.symbols[1].bbox;
+    box.x0=physical[1].bbox.x0-2;box.x1=box.x0+76;
+    box.y0=physical[1].bbox.y0-2;box.y1=physical[1].bbox.y1+1;
+    assert.ok(box.x1-box.x0>41+6,'OCR advance is deliberately wider than the old ink-width cap');
+    assert.equal(canDismissNineCellHint(proof),true,text);
+    const merged=structuredClone(proof);merged.hint.symbols[1].bbox.x1=physical[2].bbox.x1;
+    assert.equal(canDismissNineCellHint(merged),false,'A box containing the next cell is not blank advance');
+  }
+  const proof=splitAt(fixture('15117097',0,true,75)),physical=proof.physical.symbols;
+  const center=physical[1].bbox.x0,width=physical[2].bbox.x1-physical[1].bbox.x1+6;
+  proof.hint.symbols[1].bbox.x0=center-width/2;proof.hint.symbols[1].bbox.x1=center+width/2;
+  let code;assert.equal(canDismissNineCellHint(proof,{onDecision:event=>{code=event.code;}}),false);
+  assert.equal(code,18,'Even a width-compliant box cannot cover its neighbor’s actual ink center');
 });
 test('padding cannot absorb outside centers, oversized glyphs, or extra first/final cells',()=>{
   const changes=[
