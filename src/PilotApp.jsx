@@ -30,6 +30,7 @@ import { initialCashierStep } from './cash-first-workflow.js';
 import { mergePhoneReadings } from './phone-reading-sync.js';
 import { pilotDraftAlreadySaved } from './pilot-draft-recovery.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
+import { startAutomaticReaderPreparation } from './automatic-reader-preparation.js';
 import { StationHealthReview } from "./shift-health.jsx";
 import { AutomaticVouchers } from "./cash-denominations.jsx";
 import { denominationTotal, readingComplete } from "./error-reduction.ts";
@@ -2868,6 +2869,9 @@ export default function App() {
   const [showReportConfirm, setShowReportConfirm] = useState(false);
   const [submitReportError, setSubmitReportError] = useState("");
   const phoneView = usePhoneView();
+  useEffect(() => {
+    if (phoneView && role === "Cashier") return startAutomaticReaderPreparation();
+  }, [phoneView, role]);
   const [cashierReportOpen, setCashierReportOpen] = useState(false);
   const [cashierReportDateOverride, setCashierReportDateOverride] = useState("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);

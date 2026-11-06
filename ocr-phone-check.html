@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>FuelTech phone OCR check</title>
+    <style>
+      :root { font: 16px/1.5 system-ui, sans-serif; color: #17232e; background: #f4f6f8; }
+      body { margin: 0; } main { max-width: 760px; margin: auto; padding: 20px; }
+      h1 { font-size: 1.6rem; } h2 { font-size: 1.15rem; }
+      section { background: white; border: 1px solid #d5dce2; border-radius: 10px; padding: 16px; margin: 16px 0; }
+      p { margin: 8px 0; } small { color: #4e5d69; } label { display: block; margin: 12px 0; }
+      input, select, button { box-sizing: border-box; font: inherit; padding: 10px; max-width: 100%; }
+      input:not([type=file]), select { display: block; width: 100%; border: 1px solid #abb8c3; border-radius: 5px; }
+      button { background: #164b72; color: white; border: 0; border-radius: 6px; cursor: pointer; margin: 8px 8px 0 0; }
+      button:disabled { opacity: .5; cursor: default; } fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+      progress { width: 100%; } ul, ol { padding-left: 22px; } li { margin: 12px 0; overflow-wrap: anywhere; }
+      .photo-name { display: block; font-weight: 600; } .result { white-space: pre-wrap; }
+      #message { min-height: 1.5em; } #errors { color: #96251d; } code { overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Phone OCR check</h1>
+      <p>Use an actual phone or a cloud service's physical phone. A desktop mobile viewport does not verify phone speed.</p>
+      <p><small>This diagnostic reads selected photos inside this browser. It does not upload photos or change station reports. Real-phone performance has not been verified by opening this page alone.</small></p>
+      <section aria-labelledby="preparation-heading">
+        <h2 id="preparation-heading">Automatic reader preparation</h2>
+        <p id="preparation-status" role="status">Starting automatically…</p>
+        <progress id="preparation-progress" max="100" value="0" aria-label="Current preparation stage"></progress>
+        <p id="preparation-timing"></p>
+        <small>Preparation time is separate from each photo's reading time. First use can take longer on slow Wi-Fi. Keep this page open while the reader prepares.</small>
+      </section>
+      <section aria-labelledby="photos-heading">
+        <h2 id="photos-heading">Read local pump photos</h2>
+        <fieldset id="test-controls">
+          <label>Physical phone / cloud service and model
+            <input id="device-note" type="text" maxlength="180" placeholder="For example: Sauce Labs, Galaxy A…, Android …" />
+          </label>
+          <label>Network condition applied outside this page
+            <select id="network-label">
+              <option value="not-recorded">Not recorded</option>
+              <option value="normal">Normal connection</option>
+              <option value="slow-3g">Slow 3G</option>
+              <option value="fast-3g">Fast 3G</option>
+              <option value="4g">4G</option>
+              <option value="offline-after-preparation">Offline after preparation</option>
+              <option value="custom">Custom / see device note</option>
+            </select>
+          </label>
+          <small>The label records your test condition; it does not change the phone's connection.</small>
+          <label>Reading target
+            <select id="target-ms">
+              <option value="30000">30 seconds — difficult photo</option>
+              <option value="20000">20 seconds — clear photo</option>
+            </select>
+          </label>
+          <label>Select one or more existing photos
+            <input id="photos" type="file" accept="image/*" multiple />
+          </label>
+          <ol id="selected-photos"></ol>
+        </fieldset>
+        <button id="read-photos" type="button" disabled>Read selected photos</button>
+        <p id="message" role="status" aria-live="polite"></p>
+        <small>Photos run one at a time with the product reader's 30-second deadline. A missing reading or error is not counted as a successful read. Add an expected number to check accuracy.</small>
+      </section>
+      <section aria-labelledby="results-heading">
+        <h2 id="results-heading">Results</h2>
+        <p id="result-summary">No photos tested yet.</p>
+        <ol id="results"></ol>
+        <button id="download-results" type="button">Download results JSON</button>
+        <p><small id="engine-version"></small></p>
+        <ul id="errors" aria-label="Diagnostic errors"></ul>
+      </section>
+    </main>
+    <script type="module" src="/src/ocr-phone-check.js"></script>
+  </body>
+</html>

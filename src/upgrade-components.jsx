@@ -1,9 +1,8 @@
 import {captureKey,keepPumpCapture,readPumpCapture,forgetPumpCapture} from './pump-capture-store.js';
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { detectTotalizerResult as detect, prepareTotalizer } from './totalizer-ocr.js';
-import {readerPreparation,subscribeReaderPreparation,hasPreparedReaderFiles,canPrepareReaderAutomatically} from './ocr-downloads.js';
-import {prepareAdvancedTotalizer} from './totalizer-reader-client.js';
+import { detectTotalizerResult as detect } from './totalizer-ocr.js';
+import {automaticReaderPreparation,subscribeAutomaticReaderPreparation,startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning,isHighShortage,HIGH_SHORTAGE_MESSAGE } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
@@ -62,7 +61,6 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   },[localCaptureKey,locked]);
   const recognitionRun=useRef(0);
   useEffect(()=>{active.current=true;return()=>{active.current=false;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
-  useEffect(()=>{if(!locked)prepareTotalizer().catch(()=>{});},[locked]);
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
   const revision=useRef(row.readingRevision||0);
   useEffect(()=>{onBusy?.(row.id,busy||camera||openingCamera||!!retryCapture,uploading||camera||openingCamera);return()=>onBusy?.(row.id,false,false);},[busy,uploading,camera,openingCamera,retryCapture,onBusy,row.id]);
@@ -260,37 +258,16 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   </article>;
 }
 function ReaderPreparation(){
-  const [status,setStatus]=useState(readerPreparation);const [primaryReady,setPrimaryReady]=useState(false);
-  const [advancedReady,setAdvancedReady]=useState(false);const [preparingAdvanced,setPreparingAdvanced]=useState(false);
-  const [preparingPrimary,setPreparingPrimary]=useState(false);const [error,setError]=useState('');
+  const [status,setStatus]=useState(automaticReaderPreparation);
   useEffect(()=>{
-    let mounted=true,timer;const unsubscribe=subscribeReaderPreparation(setStatus);
-    const warm=async()=>{
-      if(!mounted)return;setPreparingAdvanced(true);
-      try{await prepareAdvancedTotalizer();if(mounted)setAdvancedReady(true);}
-      finally{if(mounted)setPreparingAdvanced(false);}
-    };
-    prepareTotalizer().then(async()=>{
-      if(!mounted)return;setPrimaryReady(true);
-      if(await hasPreparedReaderFiles())return warm();
-      if(mounted&&canPrepareReaderAutomatically())timer=window.setTimeout(()=>{warm().catch(()=>{});},1500);
-    }).catch(()=>{});
-    return()=>{mounted=false;window.clearTimeout(timer);unsubscribe();};
+    const unsubscribe=subscribeAutomaticReaderPreparation(setStatus);
+    const stop=startAutomaticReaderPreparation();setStatus(automaticReaderPreparation());
+    return()=>{unsubscribe();stop();};
   },[]);
-  const ready=primaryReady&&advancedReady,preparing=preparingPrimary||preparingAdvanced||status.status==='preparing';
-  async function prepare(){
-    setPreparingPrimary(true);setError('');
-    try{await Promise.all([prepareTotalizer().then(()=>setPrimaryReady(true)),prepareAdvancedTotalizer().then(()=>setAdvancedReady(true))]);}
-    catch(e){setError(e.reason==='unsupported-browser'?'The advanced reader is unavailable in this browser. Use updated Chrome or Safari. Photos and manual entry remain available.':'Preparation could not finish. Check your connection and retry.');}
-    finally{setPreparingPrimary(false);}
-  }
+  const preparing=status.stage==='primary'||status.stage==='advanced';
   return <aside className="neutral reader-preparation" aria-label="Automatic reader preparation">
-    {ready?<p role="status">{status.savedForReuse?'Reader ready for faster photos.':'Reader ready for this page. Keep it open for faster photos.'}</p>:<>
-      <p>Prepare the reader on Wi-Fi once for faster readings when the signal is weak. Photos still need a connection to save.</p>
-      <button type="button" className="secondary" disabled={preparing} onClick={prepare}>{preparing?'Preparing reader…':'Prepare faster readings'}</button>
-      {preparing&&<p role="status">{status.status==='ready'?'Finishing reader setup…':`Preparing reader: ${status.percent}%`} <progress aria-label="Reader preparation progress" max="100" value={status.percent}/></p>}
-      {(error||status.status==='error')&&<p role="status">{error||'Preparation could not finish. Check your connection and retry.'}</p>}
-    </>}
+    <p role="status">{status.stage==='ready'?'Automatic reader ready. Readings run on this phone.':status.stage==='primary-only'?'Automatic reader ready. Extra checks are unavailable in this browser.':status.stage==='unavailable'?'Automatic reading is unavailable in this browser. Use updated Chrome or Safari.':status.stage==='waiting'?(status.primaryReady?'Automatic reader ready. Extra checks will retry automatically when the connection recovers.':'Reader setup will retry automatically when the connection recovers.'):status.primaryReady?'Automatic reader ready. Preparing extra checks for difficult photos…':'Preparing the automatic reader. You can take a photo while setup continues…'}</p>
+    {preparing&&<progress aria-label="Reader preparation progress" max="100" value={status.percent}/>}
   </aside>;
 }
 export function PumpPhotoWorkflow({report,onReading,onBusy}) {

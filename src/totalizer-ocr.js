@@ -1,4 +1,5 @@
 import {createPrimaryTotalizer,boundedReaderTimeout,PRIMARY_INITIALIZATION_TIMEOUT_MS} from './totalizer-primary-client.js';
+import {preparePrimaryReaderFiles} from './ocr-downloads.js';
 import {analyzeTotalizerFrame,cancelTotalizerFrame} from './totalizer-frame-client.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
 import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
@@ -7,14 +8,22 @@ import { readingWithVisibleDecimal, supportedTotalizerReading, corroboratedShort
 
 export const TOTALIZER_CLEAR_TARGET_MS=20000;
 export const TOTALIZER_TIMEOUT_MS=30000;
-export const BACKGROUND_PRIMARY_TIMEOUT_MS=60000;
+export const BACKGROUND_PRIMARY_DOWNLOAD_TIMEOUT_MS=300000;
 let workerPromise,primarySession,framePreparation;
+const invalidationListeners=new Set();
+export function subscribeTotalizerInvalidation(listener){invalidationListeners.add(listener);return()=>invalidationListeners.delete(listener);}
+function invalidatePreparedReader(error){
+  const event={primary:true,advanced:true,reason:error?.reason||'worker-failed'};
+  for(const listener of invalidationListeners){try{listener(event);}catch{ /* A status subscriber cannot interrupt worker cleanup or deadlines. */ }}
+}
 const detectionQueue=[];
 let activeDetection;
-function resetPrimary(session,error){
+function resetPrimary(session,error,notify=true){
   if(!session)return;
-  if(primarySession===session){primarySession=undefined;workerPromise=undefined;}
+  const current=primarySession===session;
+  if(current){primarySession=undefined;workerPromise=undefined;}
   session.terminate(error);
+  if(current&&notify)invalidatePreparedReader(error);
 }
 function acquirePrimary({initializationTimeoutMs,background=false}={}){
   if(!primarySession||primarySession.closed){
@@ -27,7 +36,11 @@ function acquirePrimary({initializationTimeoutMs,background=false}={}){
 }
 export function prepareTotalizer({timeoutMs}={}){
   try{
-    const ready=acquirePrimary({initializationTimeoutMs:boundedReaderTimeout(timeoutMs,BACKGROUND_PRIMARY_TIMEOUT_MS),background:true}).ready;
+    // A cold phone may need minutes to download the public engine on weak
+    // Wi-Fi. Finish/cache those files before starting the short CPU-init clock.
+    // Every capture still has its own independent 30-second result deadline.
+    const files=primarySession&&!primarySession.closed?Promise.resolve():preparePrimaryReaderFiles({timeoutMs:BACKGROUND_PRIMARY_DOWNLOAD_TIMEOUT_MS});
+    const ready=files.then(()=>acquirePrimary({initializationTimeoutMs:boundedReaderTimeout(timeoutMs,PRIMARY_INITIALIZATION_TIMEOUT_MS),background:true}).ready);
     // Load the small image-analysis worker before the first capture too. A
     // prepared reader must not pause on Wi-Fi to start its geometry check.
     framePreparation ||= analyzeTotalizerFrame(new Uint8ClampedArray(4),1,1).catch(error=>{framePreparation=undefined;throw error;});
@@ -64,8 +77,9 @@ export function detectTotalizer(data,options={}){
       if(job.active){
         // Let an explicitly/background-prepared engine finish downloading.
         // Expired captures stop awaiting it and can never begin late inference.
-        if(!(job.primary?.background&&job.primary.initializing))resetPrimary(job.primary,job.error);
+        if(!(job.primary?.background&&job.primary.initializing))resetPrimary(job.primary,job.error,false);
         framePreparation=undefined;cancelTotalizerFrame();cancelAdvancedTotalizer();
+        invalidatePreparedReader(job.error);
       }
       cancel();
       finish(job.error);
@@ -102,11 +116,18 @@ async function recognizePhoto(data,job){
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
   const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
-  const {gray,analysis}=await job.wait(analyzeTotalizerFrame(pixels,canvas.width,canvas.height));
+  let frame;
+  try{frame=await job.wait(analyzeTotalizerFrame(pixels,canvas.width,canvas.height));}
+  catch(error){if(!job.canceled){framePreparation=undefined;invalidatePreparedReader(error);}throw error;}
+  const {gray,analysis}=frame;
   job.check();
   // Neither fallback can read a missing number row. Do not download a neural
   // runtime/model only to return an empty list of candidates.
   if(!analysis.regions.length)return null;
+  // Reuse automatic background preparation instead of starting a competing
+  // foreground download with a shorter timeout. A photo can expire without
+  // discarding a weak connection's progress toward the next ready capture.
+  if(!primarySession||primarySession.closed){await job.wait(preparePrimaryReaderFiles({timeoutMs:BACKGROUND_PRIMARY_DOWNLOAD_TIMEOUT_MS}));job.check();}
   const primary=acquirePrimary(job.options);job.primary=primary.session;
   let worker;
   try{

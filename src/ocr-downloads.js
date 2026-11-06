@@ -34,7 +34,15 @@ let snapshot={status:'idle',percent:0,savedForReuse:false};
 export const readerPreparation=()=>snapshot;
 export function subscribeReaderPreparation(listener){listeners.add(listener);return()=>listeners.delete(listener);}
 function publish(next){snapshot={...snapshot,...next};for(const listener of listeners)listener(snapshot);}
-async function fileCache(){try{return await globalThis.caches?.open(OCR_FILE_CACHE);}catch{return null;}}
+// Browser storage is optional: a blocked disk transaction must not spend the
+// minutes reserved for downloading on weak Wi-Fi. Verified bytes can remain in
+// memory when private mode, quota or a stalled cache prevents persistence.
+async function optionalStorage(operation,signal){
+ let timer;
+ const storage=Promise.race([Promise.resolve().then(operation).catch(()=>undefined),new Promise(resolve=>{timer=setTimeout(resolve,1500);})]);
+ try{return await(signal?untilAborted(storage,signal):storage);}finally{clearTimeout(timer);}
+}
+async function fileCache(signal){return await optionalStorage(()=>globalThis.caches?.open(OCR_FILE_CACHE),signal)||null;}
 function downloadError(){return Object.assign(Error('Reader preparation timed out. Please retry on a stronger connection.'),{code:'reader-download-timeout'});}
 function untilAborted(promise,signal){
  if(signal.aborted)return Promise.reject(signal.reason||downloadError());
@@ -55,10 +63,13 @@ async function readFile(file,cache,onProgress,signal){
  const url=ocrAsset(file.path);
  if(memory.has(url)){onProgress(file.bytes);return{bytes:memory.get(url),stored:false};}
  let cached;
- try{cached=await cache?.match(url);}catch{ /* Storage is optional. */ }
+ if(cache)cached=await optionalStorage(()=>cache.match(url),signal);
  if(cached){
-  try{const bytes=await checked(await cached.arrayBuffer(),file);onProgress(file.bytes);return{bytes,stored:true};}
-  catch{try{await cache.delete(url);}catch{ /* Refetch only this public file. */ }}
+  const cachedBytes=await optionalStorage(()=>cached.arrayBuffer(),signal);
+  if(cachedBytes!==undefined){
+   try{const bytes=await checked(cachedBytes,file);onProgress(file.bytes);return{bytes,stored:true};}
+   catch{await optionalStorage(()=>cache.delete(url),signal);}
+  }
  }
  const response=await untilAborted(fetch(url,{cache:'force-cache',signal}),signal);
  if(!response.ok)throw Error('Reader download could not finish.');
@@ -73,38 +84,49 @@ async function readFile(file,cache,onProgress,signal){
  }else bytes=await response.arrayBuffer();
  await checked(bytes,file);onProgress(file.bytes);
  let stored=false;
- try{if(cache){await cache.put(url,new Response(bytes,{headers:{'Content-Type':'application/octet-stream','Content-Length':String(bytes.byteLength)}}));stored=true;}}catch{ /* Quota/private-mode failure must not stop recognition. */ }
+ if(cache)stored=await optionalStorage(async()=>{await cache.put(url,new Response(bytes,{headers:{'Content-Type':'application/octet-stream','Content-Length':String(bytes.byteLength)}}));return true;},signal)===true;
  if(!stored)memory.set(url,bytes);
  return{bytes,stored};
 }
 
 export function preparePrimaryReaderFiles({timeoutMs=60000}={}){
  if(primaryPreparation)return primaryPreparation;
+ publish({stage:'primary',status:'preparing',percent:0,savedForReuse:false});
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(downloadError()),timeoutMs);
  primaryPreparation=untilAborted((async()=>{
-  const cache=await untilAborted(fileCache(),controller.signal);
+  const cache=await fileCache(controller.signal);
   const core=PRIMARY_OCR_DOWNLOADS[primaryCoreVariant()];
   const entries=[['worker',PRIMARY_OCR_DOWNLOADS.worker],['core',core],['language',PRIMARY_OCR_DOWNLOADS.language]];
+  const total=entries.reduce((sum,[,file])=>sum+file.bytes,0),downloaded={};let previous=-1;
   try{
-   const files=await Promise.all(entries.map(async([key,file])=>[key,(await readFile(file,cache,()=>{},controller.signal)).bytes]));
-   return Object.fromEntries(files);
+   const results=await Promise.all(entries.map(async([key,file])=>[key,await readFile(file,cache,bytes=>{
+    if(controller.signal.aborted)return;downloaded[key]=Math.min(bytes,file.bytes);
+    const percent=Math.min(99,Math.floor(Object.values(downloaded).reduce((sum,n)=>sum+n,0)/total*100));
+    if(percent!==previous){previous=percent;publish({stage:'primary',percent});}
+   },controller.signal)]));
+   if(controller.signal.aborted)throw controller.signal.reason||downloadError();
+   publish({stage:'primary',status:'ready',percent:100,savedForReuse:results.every(([,result])=>result.stored)});
+   return Object.fromEntries(results.map(([key,result])=>[key,result.bytes]));
   }catch(error){controller.abort(error);throw error;}
- })(),controller.signal).finally(()=>{clearTimeout(timer);primaryPreparation=undefined;});
+ })(),controller.signal).catch(error=>{publish({stage:'primary',status:'error'});throw error;}).finally(()=>{clearTimeout(timer);primaryPreparation=undefined;});
  return primaryPreparation;
 }
 
-export function prepareReaderFiles({timeoutMs=90000}={}){
+// Large fallback files prepare in the background after the primary reader.
+// Keep a weak but progressing transfer alive; captures have a separate 30s
+// recognition deadline and never inherit this download budget.
+export function prepareReaderFiles({timeoutMs=600000}={}){
  if(preparation)return preparation;
- publish({status:'preparing',percent:0});
+ publish({stage:'advanced',status:'preparing',percent:0,savedForReuse:false});
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(downloadError()),timeoutMs);
  preparation=untilAborted((async()=>{
-  const cache=await untilAborted(fileCache(),controller.signal),downloaded={};let previous=-1;
+  const cache=await fileCache(controller.signal),downloaded={};let previous=-1;
   const settled=await Promise.allSettled(files.map(async([key,file])=>{
    try{
     const result=await readFile(file,cache,bytes=>{
      if(controller.signal.aborted)return;downloaded[key]=bytes;
      const percent=Math.min(99,Math.floor(Object.values(downloaded).reduce((sum,n)=>sum+n,0)/totalBytes*100));
-     if(percent!==previous){previous=percent;publish({percent});}
+     if(percent!==previous){previous=percent;publish({stage:'advanced',percent});}
     },controller.signal);return[key,result];
    }catch(error){controller.abort(error);throw error;}
   }));
@@ -118,10 +140,7 @@ export function prepareReaderFiles({timeoutMs=90000}={}){
 }
 
 export async function hasPreparedReaderFiles(){
- if(snapshot.status==='ready')return true;
+ if(snapshot.status==='ready'&&snapshot.stage!=='primary')return true;
  const cache=await fileCache();if(!cache)return false;
- try{return(await Promise.all(files.map(([,file])=>cache.match(ocrAsset(file.path))))).every(Boolean);}catch{return false;}
-}
-export function canPrepareReaderAutomatically(connection=globalThis.navigator?.connection){
- return !!connection&&!connection.saveData&&connection.effectiveType==='4g'&&connection.downlink>=8;
+ return(await Promise.all(files.map(([,file])=>optionalStorage(()=>cache.match(ocrAsset(file.path)))))).every(Boolean);
 }

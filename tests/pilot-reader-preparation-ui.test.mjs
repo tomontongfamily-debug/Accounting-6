@@ -5,14 +5,14 @@ import {chromium,expect} from '@playwright/test';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 
-for(const {automatic,cache}of [{automatic:false,cache:true},{automatic:true,cache:true},{automatic:false,cache:false}])test(`reader files prepare ${automatic?'automatically on a fast connection':'optionally on a slow connection'} ${cache?'and survive refresh':'without persistent storage or duplicate downloads'}`,async()=>{
+for(const {fastConnection,cache,saveData=false}of [{fastConnection:false,cache:true},{fastConnection:true,cache:true},{fastConnection:false,cache:false},{fastConnection:false,cache:true,saveData:true}])test(`reader files prepare automatically on a ${fastConnection?'fast':'slow'} phone connection${saveData?' with data saver enabled':''} ${cache?'and survive refresh':'without persistent storage or duplicate downloads'}`,async()=>{
  const server=await createServer({server:{host:'127.0.0.1',port:44344,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let{state,cashier}=fixture();const writes=[],downloads=[];
  try{
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
   if(!cache)await page.addInitScript(()=>Object.defineProperty(globalThis,'caches',{configurable:true,value:undefined}));
-  await page.addInitScript(automatic=>Object.defineProperty(navigator,'connection',{configurable:true,value:{effectiveType:automatic?'4g':'3g',downlink:automatic?10:1.5,saveData:false}}),automatic);
+  await page.addInitScript(({fastConnection,saveData})=>Object.defineProperty(navigator,'connection',{configurable:true,value:{effectiveType:fastConnection?'4g':'3g',downlink:fastConnection?10:1.5,saveData}}),{fastConnection,saveData});
   page.on('request',request=>{if(/\/(neural|ort)\//.test(new URL(request.url()).pathname))downloads.push(request.url());});
   await page.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;let result;
@@ -27,12 +27,8 @@ for(const {automatic,cache}of [{automatic:false,cache:true},{automatic:true,cach
   });
   await page.goto('http://127.0.0.1:44344/pilot/cashier');
   const panel=page.getByRole('complementary',{name:'Automatic reader preparation'});
-  if(!automatic){
-   await expect(panel.getByRole('button',{name:'Prepare faster readings'})).toBeEnabled();
-   assert.equal(downloads.length,0,'Slow connections must not silently start the larger download');
-   await panel.getByRole('button',{name:'Prepare faster readings'}).click();
-  }
-  await expect(panel).toContainText(cache?'Reader ready for faster photos.':'Reader ready for this page.',{timeout:10000});
+  assert.equal(await panel.getByRole('button').count(),0,'Preparation is passive and never requires a cashier tap');
+  await expect(panel).toContainText('Automatic reader ready. Readings run on this phone.',{timeout:30000});
   assert.equal(downloads.length,3);assert.deepEqual(writes,[]);
   await expect(page.getByRole('button',{name:'Open camera',exact:true}).first()).toBeEnabled();
   if(!cache){
@@ -46,7 +42,7 @@ for(const {automatic,cache}of [{automatic:false,cache:true},{automatic:true,cach
   }
   await panel.screenshot({path:'../../outputs/Pump-reader-ready.png'});
   await page.reload();
-  await expect(page.getByRole('complementary',{name:'Automatic reader preparation'})).toContainText('Reader ready for faster photos.');
+  await expect(page.getByRole('complementary',{name:'Automatic reader preparation'})).toContainText('Automatic reader ready. Readings run on this phone.',{timeout:30000});
   assert.equal(downloads.length,3,'Refresh must reuse the explicit file cache');assert.deepEqual(writes,[]);
  }finally{await browser.close();await server.close();}
 });
@@ -55,7 +51,7 @@ test('a download longer than runtime initialization timeout works and survives b
  const server=await createServer({server:{host:'127.0.0.1',port:44345,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
-  const page=await browser.newPage();let blocked=false,requests=0;
+  const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});let blocked=false,requests=0;
   await page.route('**/ocr/lcd-neural-3-20261104/**',async route=>{
    requests++;if(blocked)return route.abort();
    if(route.request().url().endsWith('.wasm'))await new Promise(resolve=>setTimeout(resolve,21000));

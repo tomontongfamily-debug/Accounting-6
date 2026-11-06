@@ -5,13 +5,21 @@ result within 20 seconds. Every recognition attempt has a 30-second deadline,
 including queue time. A deadline produces an explicit retry result rather than
 leaving an active spinner. Unclear digits must not be guessed to meet a timer.
 
-Use **Prepare faster readings** while connected before starting the pump round.
-The primary worker, supported core and digit language are checked against pinned
-hashes and saved in the browser cache. Advanced reader files are prepared
-separately. Preparation also starts the image-analysis worker. Once prepared,
-local recognition does not wait for the photo upload. A first download, browser
-cache eviction, an extremely slow device or an unreadable photo can still prevent
-a successful number within the target. Online saving requires a connection.
+Preparation starts automatically when the phone cashier view opens, before the
+shift report finishes loading. There is no preparation button. The primary
+worker, supported core and digit language are checked against pinned hashes and
+saved in the browser cache first. The larger advanced reader prepares afterward,
+including on slow connections and with data saver enabled. Failed preparation
+retries automatically with capped backoff and on reconnect or returning to the
+page. Multiple pump panels share one preparation job.
+
+Background downloads have separate limits from engine startup and recognition:
+five minutes for primary files and ten minutes for advanced files. A photo's
+30-second deadline does not discard an ongoing background primary download.
+Preparation also starts the image-analysis worker. Once prepared, local
+recognition does not wait for the photo upload. A first download, browser cache
+eviction, an extremely slow device or an unreadable photo can still prevent a
+successful number within the target. Online saving requires a connection.
 
 An upload records a pending attempt with start/deadline timestamps. Browser OCR
 completion is saved separately. Closing the page, losing a response or an older
@@ -42,3 +50,26 @@ node --test tests/pilot-primary-offline-ui.test.mjs
 Desktop browser timings are evidence for that test environment, not guaranteed
 latencies for every cashier phone. Four/five-digit integer displays require the
 same physical-digit and visible two-place decimal checks as longer totalizers.
+
+## Real-phone acceptance testing
+
+`/ocr-phone-check.html` loads the same production OCR modules without station
+sign-in or accounting API calls. It prepares automatically, accepts local photo
+files and records each reading, explicit no-reading/error, duration, reader
+version, preparation timeline and reported device/network details. Photo bytes
+stay in the browser. Exported results contain filenames and readings, not photos.
+The device label is operator-supplied; a mobile user agent alone does not prove a
+physical phone was used.
+
+Use a physical-device service such as Sauce Labs **Mobile Real**, not its Mobile
+Virtual emulator or a desktop mobile viewport. Run Android Chrome and iPhone
+Safari with normal Wi-Fi, constrained bandwidth/high latency, interrupted
+connectivity, and prepared offline recognition. Include cold preparation and
+already-prepared sessions, the original Pump 4 photo, current reflected/glare
+photos, and an unreadable case. Compare exact digits against a separately
+reviewed reference. Record no-reading and wrong-reading rates alongside median,
+p95 and maximum latency. A timeout or quick refusal is not a successful reading.
+
+The automatic-preparation change has unit and build validation. Physical-phone
+timings and the glare/network acceptance matrix remain unverified until a
+signed-in device-lab session is available. Do not substitute desktop timings.
