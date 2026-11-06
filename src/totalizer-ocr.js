@@ -5,6 +5,7 @@ import { TOTALIZER_VERSION } from './ocr-evidence.js';
 import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
 import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
 import { readingWithVisibleDecimal, supportedTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
+import {createTotalizerTracer,traceSymbols,traceCandidates} from './totalizer-trace.js';
 
 export const TOTALIZER_CLEAR_TARGET_MS=20000;
 export const TOTALIZER_TIMEOUT_MS=30000;
@@ -56,7 +57,9 @@ function runNextDetection(){
 }
 export function detectTotalizer(data,options={}){
   const timeoutMs=Math.min(TOTALIZER_TIMEOUT_MS,boundedReaderTimeout(options.timeoutMs,TOTALIZER_TIMEOUT_MS));
-  const job={data,options,active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs};
+  const job={data,options,active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs,
+    tracing:typeof options.onTrace==='function',trace:createTotalizerTracer(options.onTrace)};
+  job.trace('queued',{timeoutMs,queueLength:detectionQueue.length});
   let cancel;
   const cancellation=new Promise(resolve=>{cancel=resolve;});
   job.wait=promise=>Promise.race([promise,cancellation.then(()=>{throw job.error;})]);
@@ -65,6 +68,7 @@ export function detectTotalizer(data,options={}){
     let settled=false;
     const finish=job.finish=(error,value)=>{
       if(settled)return;settled=true;clearTimeout(timer);job.active=false;job.data=null;
+      job.trace('final',{outcome:error?'error':value===null?'no-reading':'detected',value:value??null,reason:error?.reason||job.decision||'completed'},true);
       if(activeDetection===job)activeDetection=undefined;
       else{const index=detectionQueue.indexOf(job);if(index>=0)detectionQueue.splice(index,1);}
       if(error)reject(error);else resolve(value);
@@ -121,9 +125,11 @@ async function recognizePhoto(data,job){
   catch(error){if(!job.canceled){framePreparation=undefined;invalidatePreparedReader(error);}throw error;}
   const {gray,analysis}=frame;
   job.check();
+  if(job.tracing)job.trace('frame',{width:canvas.width,height:canvas.height,scale,componentCount:analysis.components.length,
+    regions:analysis.regions.map(({x,y,width,height,bandHeight,fallback})=>({x,y,width,height,bandHeight,hasFallback:!!fallback}))});
   // Neither fallback can read a missing number row. Do not download a neural
   // runtime/model only to return an empty list of candidates.
-  if(!analysis.regions.length)return null;
+  if(!analysis.regions.length){job.decision='no-number-row';return null;}
   // Reuse automatic background preparation instead of starting a competing
   // foreground download with a shorter timeout. A photo can expire without
   // discarding a weak connection's progress toward the next ready capture.
@@ -134,12 +140,13 @@ async function recognizePhoto(data,job){
     worker=await job.wait(primary.ready);job.check();
     const readings=new Set(),evidence=new Map(),glyphs=[];
     let sensitiveMask,longDisplay=false;
-    for(const primary of analysis.regions){
+    for(const [regionIndex,primary]of analysis.regions.entries()){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
-      for(const region of layouts){
+      for(const [layoutIndex,region]of layouts.entries()){
         const clean=withoutDisplayFrame(analysis.mask,canvas.width,region);
         const segments=segmentDisplaySymbols(clean,canvas.width,region);
+        if(job.tracing)job.trace('layout',{regionIndex,layoutIndex,box:{x:region.x,y:region.y,width:region.width,height:region.height},segments:traceSymbols(segments)});
         if(segments.length===9)longDisplay=true;
         const votes=new Map(),agreed=new Set();
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
@@ -166,7 +173,14 @@ async function recognizePhoto(data,job){
             glyphs.push(...verifiedSymbols.filter(s=>/^\d$/.test(s.text)&&s.confidence>=90&&!s.lcdAmbiguous));
             const verifiedLeading=digits[0]?.lcdVerified===true;
             if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)longDisplay=true;
-            let value=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous)?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
+            const confidenceAccepted=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous);
+            let value=confidenceAccepted?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
+            if(job.tracing)job.trace('primary-pass',{regionIndex,layoutIndex,grow,pad,sensitive:!!sensitive,mode,
+              confidence:Math.round(result.confidence*10)/10,confidenceAccepted,minimumOverallConfidence:verifiedLeading?40:70,
+              symbols:traceSymbols(translated),physicalBoxesUsed:!!corroborated,
+              geometryValue:confidenceAccepted?value:supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}),
+              sixIntegerDecimal:readingWithVisibleDecimal(translated,analysis.components,{integerDigits:6,decimalPlaces:2}),
+              value,physicalVerified:value!==null&&verifyLcdDigits(verifiedSymbols,gray,canvas.width,canvas.height,segments)});
             // Keep a physically verified alignment of the same numeric value.
             // An early crop with poor boxes must not hide a later verified pass.
             if(value!==null&&(!evidence.has(value)||verifyLcdDigits(verifiedSymbols,gray,canvas.width,canvas.height,segments)))evidence.set(value,{symbols:verifiedSymbols,segments});
@@ -178,6 +192,7 @@ async function recognizePhoto(data,job){
           if(passes[0].value!==null&&passes[0].value===passes[1].value&&Math.max(...passes.map(p=>p.confidence))>=80)agreed.add(passes[0].value);
         }
         for(const [value,count]of votes)if(count>=2)agreed.add(value);
+        if(job.tracing)job.trace('agreement',{regionIndex,layoutIndex,votes:[...votes].map(([value,count])=>({value,count})),agreed:[...agreed]});
         // Agreement across layouts or stroke widths is required. The visible
         // decimal is checked separately; a tighter crop cannot omit a digit.
         if(agreed.size===1){readings.add([...agreed][0]);break;}
@@ -186,26 +201,29 @@ async function recognizePhoto(data,job){
     }
     const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
     const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
-    if(verified!==null)return verified;
+    job.trace('primary-result',{readings:[...readings],value,hasPhysicalEvidence:!!candidate,verified,longDisplay});
+    if(verified!==null){job.decision='primary-physical-verified';return verified;}
     // The existing neural/grid fallback fits eight cells. It cannot establish
     // a nine-cell reading and must not silently drop its leading digit.
-    if(longDisplay)return null;
+    if(longDisplay){job.decision='nine-cell-fallback-blocked';return null;}
     // A neural model reads the original color row at several resolutions;
     // physical cell fitting independently checks the shape and decimal layout.
     // Model-loading failure retains the previously verified reader's behavior.
     const readNeural=async()=>{
-      try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);job.check();return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+      try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);job.check();if(job.tracing)job.trace('neural',{candidates:traceCandidates(result)});return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
     };
     let neural;
     if(value!==null){
       neural=await readNeural();
       const fast=chooseFastTotalizerReading({tesseract:value,neural});
-      if(fast!==null)return fast;
+      if(fast!==null){job.decision='fast-neural-consensus';return fast;}
     }
     const grid=await readTotalizerGridAsync(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components);
     job.check();
-    if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04))return null;
+    if(job.tracing)job.trace('grid',{candidates:traceCandidates(grid)});
+    if(value===null&&!(grid[0]?.score<.08&&grid[0]?.margin>.04)){job.decision='no-primary-and-weak-grid';return null;}
     neural ||= await readNeural();
-    return chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
+    const chosen=chooseTotalizerReading({tesseract:value,grid,neural,glyphs});
+    job.decision=chosen===null?'final-consensus-rejected':'final-consensus-accepted';return chosen;
   }catch(error){if(!job.canceled&&error.reason!=='unsupported-browser')resetPrimary(primary.session,error);throw error;}
 }

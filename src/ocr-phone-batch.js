@@ -15,6 +15,7 @@ export function parsePhoneBatch(fragment){
  try{raw=JSON.parse(decodeURIComponent(fragment.slice(7)));}catch{throw invalid();}
  if(!raw||typeof raw!=='object'||!Array.isArray(raw.sources)||raw.sources.length<1||raw.sources.length>4)throw invalid();
  const waitFor=raw.waitFor??'enhanced',startDelayMs=raw.startDelayMs??0;
+ if(raw.trace!==undefined&&typeof raw.trace!=='boolean')throw invalid();
  if(!['enhanced','primary','none'].includes(waitFor)||!Number.isInteger(startDelayMs)||startDelayMs<0||startDelayMs>60000)throw invalid();
  const rate=raw.expectedIngressBytesPerSecond??null;
  if(rate!==null&&(!Number.isFinite(rate)||rate<=0||rate>1e9))throw invalid();
@@ -38,7 +39,7 @@ export function parsePhoneBatch(fragment){
   }catch{throw invalid();}
   return {name,difficulty:stress==='extreme-glare'?'extreme (simulated)':difficulty,expected,stress,expectedOutcome,url:url.href};
  });
- return {sources,waitFor,startDelayMs,networkLabel:raw.networkLabel===undefined?'not-recorded':redactDiagnosticText(text(raw.networkLabel,80)),
+ return {sources,waitFor,startDelayMs,trace:raw.trace===true,networkLabel:raw.networkLabel===undefined?'not-recorded':redactDiagnosticText(text(raw.networkLabel,80)),
   deviceNote:raw.deviceNote===undefined?'':redactDiagnosticText(text(raw.deviceNote,180)),expectedIngressBytesPerSecond:rate};
 }
 export function safePhoneBatch(config){

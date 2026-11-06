@@ -25,6 +25,7 @@ for(const [name,change]of [
  ['invalid difficulty',value=>value.sources[0].difficulty='guaranteed'],
  ['excessive delay',value=>value.startDelayMs=60001],
  ['invalid rate',value=>value.expectedIngressBytesPerSecond=0],
+ ['nonboolean trace switch',value=>value.trace='execute-script'],
  ['unknown stress transform',value=>value.sources[0].stress='arbitrary-script'],
  ['invalid expected outcome',value=>value.sources[0].expectedOutcome='timeout-is-success'],
  ['stress numeric success expectation',value=>{value.sources[0].stress='extreme-glare';value.sources[0].expectedOutcome='detected';}],
@@ -44,6 +45,10 @@ test('synthetic glare is labelled separately and expects safe no-reading rather 
  const config=parsePhoneBatch(fragment(value)),source=config.sources[0];
  assert.equal(source.difficulty,'extreme (simulated)');assert.equal(source.expectedOutcome,'no-reading');assert.equal(source.expected,7808.55);
  assert.equal(safePhoneBatch(config).sources[0].stress,'extreme-glare');
+});
+test('optional trace is disabled by default and explicitly enabled with a boolean',()=>{
+ const value=valid();assert.equal(parsePhoneBatch(fragment(value)).trace,false);
+ value.trace=true;assert.equal(parsePhoneBatch(fragment(value)).trace,true);
 });
 test('calibration reports wall/body throughput separately and conservatively checks a requested limit',()=>{
  const resource={startTime:50,fetchStart:50,requestStart:60,responseStart:100,responseEnd:1100,encodedBodySize:CALIBRATION_BYTES,decodedBodySize:CALIBRATION_BYTES,transferSize:CALIBRATION_BYTES+300,workerStart:0};

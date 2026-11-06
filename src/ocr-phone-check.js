@@ -126,8 +126,19 @@ function appendResult(entry){
     const cell=document.createElement('td');cell.textContent=String(value);row.append(cell);
   }
   byId('compact-results').append(row);
+  if(entry.trace?.length){
+    const last=entry.trace.at(-1),passes=entry.trace.filter(event=>event.stage==='primary-pass');
+    const texts=[...new Set(passes.map(event=>event.symbols.map(symbol=>symbol.text||'?').join('')))];
+    const detailRow=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;
+    cell.textContent=`Trace: ${last.reason||last.stage} · OCR ${texts.slice(0,5).join(' / ')||'no digits'} · ${passes.filter(event=>event.confidenceAccepted).length}/${passes.length} confidence passes`;
+    detailRow.append(cell);byId('compact-results').append(detailRow);
+    const details=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('pre');
+    summary.textContent=`Reader trace: ${entry.file.name} (${entry.trace.length}/120 events)`;
+    text.style.whiteSpace='pre-wrap';text.style.fontSize='11px';text.textContent=JSON.stringify(entry.trace,null,2);
+    details.append(summary,text);item.append(details);
+  }
 }
-async function runBatch(batch,{targetMs,networkLabel,deviceNote}={}){
+async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false}={}){
   if(running||!batch.length)return;
   targetMs??=Number(byId('target-ms').value);networkLabel??=byId('network-label').value;deviceNote??=byId('device-note').value.trim();
   running=true;autoPhase='Reading photos';byId('test-controls').disabled=true;byId('read-photos').disabled=true;
@@ -138,10 +149,12 @@ async function runBatch(batch,{targetMs,networkLabel,deviceNote}={}){
       const entry={startedAt:new Date().toISOString(),file:{name:file.name,type:file.type,bytes:file.size,lastModified:file.lastModified},
         expected,expectedOutcome,difficulty,transformation,targetMs:difficulty==='easy'?20000:targetMs,deadlineMs:TOTALIZER_TIMEOUT_MS,networkLabel,deviceNote,networkAtStart:network(),
         preparationAtStart:{...preparation.getSnapshot()},primaryReadyMs,advancedReadyMs};
+      if(trace)entry.trace=[];
       try{
         if(!file.type.startsWith('image/')&&!/\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name))throw Error('The selected file is not an image.');
         url=URL.createObjectURL(file);
-        const result=await detectTotalizerResult(url,{timeoutMs:TOTALIZER_TIMEOUT_MS});
+        const result=await detectTotalizerResult(url,{timeoutMs:TOTALIZER_TIMEOUT_MS,
+          ...(trace?{onTrace:event=>{if(entry.trace.length<120)entry.trace.push(event);}}:{})});
         entry.reading=result.reading;entry.attempt=result.attempt;
         entry.outcome=result.attempt.status==='detected'&&Number.isFinite(result.reading)?'detected':result.attempt.status==='no-reading'?'no-reading':'error';
       }catch(error){entry.reading=null;entry.outcome='error';entry.error=recordError(`Photo ${file.name}`,error);}
@@ -166,7 +179,7 @@ byId('read-photos').addEventListener('click',async()=>{
   if(invalid){byId('message').textContent=`Enter a non-negative number with up to two decimals for ${invalid.file.name}, or leave expected reading blank.`;return;}
   const batch=selected.map(entry=>({...entry,expected:entry.expected===''?null:Number(entry.expected)}));
   const targetMs=Number(byId('target-ms').value),networkLabel=byId('network-label').value,deviceNote=byId('device-note').value.trim();
-  await runBatch(batch,{targetMs,networkLabel,deviceNote});
+  await runBatch(batch,{targetMs,networkLabel,deviceNote,trace:autoConfig?.trace===true});
 });
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function approvedPhoto(source){
@@ -246,7 +259,7 @@ async function automaticBatch(config){
     const until=performance.now()+config.startDelayMs;
     while(performance.now()<until){autoPhase=`Ready for network limit · batch in ${Math.ceil((until-performance.now())/1000)} s`;await pause(200);}
     autoPhase='Measuring network delivery';await probeNetwork(config.expectedIngressBytesPerSecond);
-    await runBatch(batch,{targetMs:30000,networkLabel:config.networkLabel,deviceNote:config.deviceNote});
+    await runBatch(batch,{targetMs:30000,networkLabel:config.networkLabel,deviceNote:config.deviceNote,trace:config.trace});
   }catch(error){recordError('Automatic batch',error);autoPhase='Automatic batch stopped';}
   finally{byId('test-controls').disabled=false;byId('read-photos').disabled=!selected.length;renderCompact();}
 }
