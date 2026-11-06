@@ -10,7 +10,7 @@ import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, da
 import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
 import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
-import { mergeOcrEvidence, pendingOcrAttempt } from '../src/ocr-evidence.js';
+import { mergeOcrEvidence, pendingOcrAttempt, completedPhotoOcrEvidence } from '../src/ocr-evidence.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -477,6 +477,8 @@ function validatePriceReadingOrder(report,change) {
       const image=Buffer.from(input.data.split(',')[1],'base64');
       if(image.length>2*1024*1024 || image[0]!==255 || image[1]!==216) reject('Invalid or oversized photo.');
       const id=mutationId, photoPath='/api/pilot/photo?id='+id;
+      const readyOcr=input.readyOcr===undefined?null:completedPhotoOcrEvidence(photoPath,input.readyOcr);
+      if(input.readyOcr!==undefined&&(!input.replaceReading||!readyOcr))reject('Invalid completed automatic reading evidence.');
       const objectPath=database.mode+'/'+r.branch+'/'+id+'.jpg';
       await uploadPhoto(objectPath,image,{reportKey:keyOf(r),rowId:photoRow.id,branch:r.branch,
         readingRevision:Number(previous?.readingRevision||0),uploadedAt:stamp(),
@@ -485,7 +487,7 @@ function validatePriceReadingOrder(report,change) {
       let readingRevision;
       if(input.replaceReading){
         readingRevision=Number(previous?.readingRevision||0)+1;
-        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:pendingOcrAttempt(),ocr_was_edited:false,readingRevision};
+        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:pendingOcrAttempt(),...(readyOcr||{}),ocr_was_edited:false,readingRevision};
         if(change){
           const pumpKey=midShiftPumpKey(photoRow);
           change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;
@@ -496,7 +498,7 @@ function validatePriceReadingOrder(report,change) {
         r.cashReviewState='';r.recountRequired=false;
         storeReport(r,session,change?'price-change-photo-saved':'pump-reading-saved');
       }
-      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id,photo_path:photoPath,previousPhoto,previousOcr,...(change?{changeId:change.id}: {})});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision,report:exposeReport(database.reports[input.reportKey],session)}: {})});
+      audit('pump-photo-uploaded',session,{reportKey:input.reportKey,rowId:photoRow.id,photo_path:photoPath,previousPhoto,previousOcr,...(readyOcr?{ocr:readyOcr.ocr_detected_reading,ocr_result:readyOcr.ocr_result}: {}),...(change?{changeId:change.id}: {})});save();return send({ok:true,photo_path:photoPath,...(input.replaceReading?{readingRevision,report:exposeReport(database.reports[input.reportKey],session)}: {}),...(readyOcr?{ocrPersisted:true}: {})});
     }
     if(route==='/api/demo/issue') {
       requireRole(session,'Cashier');const r=candidate(input.report,session);

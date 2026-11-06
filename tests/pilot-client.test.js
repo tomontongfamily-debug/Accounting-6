@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('queued photo preparation runs at send time and network retries reuse the completed OCR body',async()=>{
+ const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
+ globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-11-06'}};
+ const {pilotPost}=await import('../src/pilot-client.js?late-photo-evidence');
+ let release,ready=false,preparations=0;const bodies=[];
+ globalThis.fetch=async(_url,options)=>{bodies.push(options.body);if(bodies.length===1)await new Promise(resolve=>{release=resolve;});return {ok:bodies.length!==2,status:bodies.length===2?503:200,json:async()=>bodies.length===2?{ok:false,error:'Transient'}:{ok:true}};};
+ try{
+  const first=pilotPost('/api/demo/photo',{reportKey:'test-report',rowId:'first'});
+  const second=pilotPost('/api/demo/photo',{reportKey:'test-report',rowId:'second'},'',{prepareInput:async input=>{preparations++;assert.equal(ready,true);return {...input,readyOcr:{reading:123}};}});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(preparations,0);ready=true;release();await Promise.all([first,second]);
+  assert.equal(preparations,1);assert.equal(bodies.length,3);assert.equal(bodies[1],bodies[2]);assert.equal(JSON.parse(bodies[1]).input.readyOcr.reading,123);
+ }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
+});
+
 test('overlapping reads share one request without blocking a new write or reusing another account or shift',async()=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'live',start_date:'2026-10-03'}};

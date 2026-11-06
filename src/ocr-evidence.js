@@ -1,6 +1,15 @@
 export const TOTALIZER_VERSION='lcd-format-evidence-11';
 export const OCR_ATTEMPT_TIMEOUT_MS=30000;
 
+// Completed evidence can travel with a queued photo. This never confirms a
+// cashier reading or supplies an opening/closing number itself.
+export function completedPhotoOcrEvidence(photoPath,result){
+  const attempt=result?.attempt,status=attempt?.status,reading=result?.reading;
+  if(!['detected','no-reading','error'].includes(status))return null;
+  if(status==='detected'?(!Number.isFinite(reading)||reading<0||reading>1e12):reading!==null)return null;
+  return mergeOcrEvidence({}, {photo_path:photoPath,ocr_detected_reading:reading,ocr_result:attempt});
+}
+
 export function pendingOcrAttempt(now=Date.now()){
   const startedAt=new Date(now).toISOString();
   return {status:'pending',version:TOTALIZER_VERSION,startedAt,deadlineAt:new Date(Date.parse(startedAt)+OCR_ATTEMPT_TIMEOUT_MS).toISOString()};
@@ -29,7 +38,7 @@ export function mergeOcrEvidence(previous,incoming,{now=Date.now()}={}){
     }
     if(Number.isFinite(attempt.durationMs)&&attempt.durationMs>=0&&attempt.durationMs<=3600000)result.durationMs=Math.round(attempt.durationMs);
     if(status==='error')result.reason=['recognition-timeout','initialization-timeout','worker-failed','unsupported-browser','recognition-failed','recognition-interrupted'].includes(attempt.reason)?attempt.reason:'recognition-failed';
-    for(const key of ['queueMs','photoSaveMs','readingSaveMs'])if(Number.isFinite(attempt[key])&&attempt[key]>=0&&attempt[key]<=3600000)result[key]=Math.round(attempt[key]);
+    for(const key of ['queueMs','photoSaveMs','readingSaveMs','captureToReadingMs','captureToReadyMs'])if(Number.isFinite(attempt[key])&&attempt[key]>=0&&attempt[key]<=3600000)result[key]=Math.round(attempt[key]);
   }
   return {ocr_detected_reading:reading,...(result?{ocr_result:result}: {})};
 }

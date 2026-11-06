@@ -1,4 +1,5 @@
 import {captureKey,keepPumpCapture,readPumpCapture,forgetPumpCapture} from './pump-capture-store.js';
+import {finalizePumpPhotoInput,captureDuration} from './pump-capture-flow.js';
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect } from './totalizer-ocr.js';
@@ -33,7 +34,7 @@ export async function demoApi(path,body={},options) {
 export async function savePumpReading(report,row,options) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0},options);
 }
-function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false}) {
+export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false,recognize=detect}) {
   const phoneView=usePhoneView();
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
   const [ocrResult,setOcrResult]=useState(row.ocr_result);
@@ -69,7 +70,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     const started=Date.now();setElapsed(0);
     const timer=window.setInterval(()=>setElapsed(Math.floor((Date.now()-started)/1000)),1000);
     return()=>window.clearInterval(timer);
-  },[busy,captureStage]);
+  },[busy]);
   useEffect(()=>{
     if(busy || Number(row.readingRevision||0)===revision.current)return;
     revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setOcrResult(row.ocr_result);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
@@ -85,8 +86,8 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     ? {level:'NORMAL',liters:0,blocked:draft===''||!Number.isFinite(Number(draft))||Number(draft)<0||Number(draft)>1e12,message:'This confirmed number becomes the starting pump reading.'}
     : readingWarning({...row,closing:draft});
   if(change && row.finalClosing!=='' && row.finalClosing!=null && Number(draft)>Number(row.finalClosing)) {warning.blocked=true;warning.message='Price-change reading cannot exceed the confirmed shift closing.';}
-  function processPhoto(data,recognitionImage=data) {
-    return resumeCapture({data,sourceRow:row,expectedRevision:revision.current,photoMutationId:crypto.randomUUID()},recognitionImage);
+  function processPhoto(data,recognitionImage=data,startedAtMs=Date.now()) {
+    return resumeCapture({data,sourceRow:row,expectedRevision:revision.current,photoMutationId:crypto.randomUUID(),startedAtMs},recognitionImage);
   }
   async function resumeCapture(capture,recognitionImage) {
     capture.discarded=false;
@@ -99,9 +100,10 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       if(capture.data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
-      const recognition=capture.recognition ||= capture.result?Promise.resolve(capture.result):detect(recognitionImage||capture.data);
+      const recognition=capture.recognition ||= capture.result?Promise.resolve(capture.result):recognize(recognitionImage||capture.data);
       recognition.then(result=>{
         if(capture.discarded||currentCapture.current!==capture)return;
+        capture.captureToReadingMs??=captureDuration(capture);
         capture.result=result;keepPumpCapture(localCaptureKey,capture,{onlyIfCurrent:true});
         const {reading,attempt}=result;
         if(active.current&&currentCapture.current===capture){setDetected(reading);setOcrResult(attempt);setLiveReading(Number.isFinite(reading)?reading:null);setLiveStatus(attempt?.status||'');}
@@ -110,8 +112,12 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       if(!capture.saved){
         const photoStarted=performance.now();
         await onPrepare?.();
-        capture.photoInput||={reportKey:keyOf(report),rowId:row.id,data:capture.data,replaceReading:true,revision:capture.expectedRevision,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})};
-        capture.saved=await demoApi('photo',capture.photoInput,{mutationId:capture.photoMutationId});
+        if(!capture.photoInput){
+          capture.photoInput={reportKey:keyOf(report),rowId:row.id,data:capture.data,replaceReading:true,revision:capture.expectedRevision,...(change?{changeId:change.id,pumpKey:midShiftPumpKey(row)}: {})};
+          capture.photoInputFinalized=false;
+        }
+        capture.saved=await demoApi('photo',capture.photoInput,{mutationId:capture.photoMutationId,
+          prepareInput:snapshot=>finalizePumpPhotoInput(capture,snapshot,current=>keepPumpCapture(localCaptureKey,current))});
         capture.expectedRevision=Number(capture.saved.readingRevision);
         revision.current=capture.expectedRevision;
         capture.photoSaveMs=Math.round(performance.now()-photoStarted);
@@ -127,19 +133,21 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       }
       if(!active.current)return;
       setUploading(false);setCaptureStage('reading');
-      const result=await recognition,value=result.reading,attempt={...result.attempt,photoSaveMs:capture.photoSaveMs};
+      const result=await recognition,value=result.reading,attempt={...result.attempt,photoSaveMs:capture.photoSaveMs,captureToReadingMs:capture.captureToReadingMs};
       if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
       setCaptureStage('reading-save');
       const saveStarted=performance.now();
       // Freeze the exact input and ID across explicit retries. A lost response
       // can already have committed; the server receipt returns that same save.
-      capture.readingInput||={...capture.sourceRow,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt};
-      capture.readingOptions||={mutationId:crypto.randomUUID(),readingRevision:capture.expectedRevision};
-      await keepPumpCapture(localCaptureKey,capture);
-      await saveReading(capture.readingInput,undefined,capture.readingOptions);
+      if(!saved.ocrPersisted){
+        capture.readingInput||={...capture.sourceRow,photo_path:saved.photo_path,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:value,ocr_result:attempt};
+        capture.readingOptions||={mutationId:crypto.randomUUID(),readingRevision:capture.expectedRevision};
+        await keepPumpCapture(localCaptureKey,capture);
+        await saveReading(capture.readingInput,undefined,capture.readingOptions);
+      }
       capture.discarded=true;await forgetPumpCapture(localCaptureKey,capture.photoMutationId);
       capture.expectedRevision=revision.current;
-      if(active.current)setOcrResult({...attempt,readingSaveMs:Math.round(performance.now()-saveStarted)});
+      if(active.current)setOcrResult({...attempt,readingSaveMs:saved.ocrPersisted?0:Math.round(performance.now()-saveStarted),captureToReadyMs:captureDuration(capture)});
       if(value===null&&attempt.status==='error')setRetryReadingCapture(capture);
       if(value===null)setEditing(false);
     } catch(e) {
@@ -154,6 +162,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   async function retryAutomaticReading(){
     if(retryReadingCapture){
       const capture=retryReadingCapture;capture.recognition=null;delete capture.result;delete capture.readingInput;delete capture.readingOptions;
+      if(capture.saved)capture.saved={...capture.saved,ocrPersisted:false};
       return resumeCapture(capture);
     }
     setBusy(true);setError('');
@@ -186,7 +195,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
   }
   async function capture() {
     const v=video.current;if(!v?.videoWidth||captureInFlight.current)return;
-    captureInFlight.current=true;setBusy(true);setUploading(true);setCaptureStage('photo');
+    const startedAtMs=Date.now();captureInFlight.current=true;setBusy(true);setUploading(true);setCaptureStage('photo');
     try{
       // Dimensions can be available before the first camera image is presented.
       // Wait for real frames and encode them while the source track is alive.
@@ -202,7 +211,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
       const recognitionImage=context.getImageData(0,0,canvas.width,canvas.height);
       let data;
       for(const quality of[.95,.9,.85,.8]){data=canvas.toDataURL('image/jpeg',quality);if(data.length<=2700000)break;}
-      stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);await processPhoto(data,recognitionImage);
+      stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);await processPhoto(data,recognitionImage,startedAtMs);
     }catch{if(active.current)setError('The camera frame was not ready. Please capture the photo again.');}
     finally{captureInFlight.current=false;if(active.current){setBusy(false);setUploading(false);}}
   }
@@ -210,7 +219,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     if(phoneView&&!nativeCamera)return;
     const file=event.target.files?.[0];if(!file)return;
     if(captureInFlight.current)return;
-    captureInFlight.current=true;setBusy(true);setUploading(true);setCaptureStage('photo');
+    const startedAtMs=Date.now();captureInFlight.current=true;setBusy(true);setUploading(true);setCaptureStage('photo');
     try {
       const url=URL.createObjectURL(file),bitmap=new Image();
       try{
@@ -220,7 +229,7 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
         });
         const scale=Math.min(1,1800/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
         const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(bitmap,0,0,canvas.width,canvas.height);
-        await processPhoto(canvas.toDataURL('image/jpeg',.92),context.getImageData(0,0,canvas.width,canvas.height));
+        await processPhoto(canvas.toDataURL('image/jpeg',.92),context.getImageData(0,0,canvas.width,canvas.height),startedAtMs);
       }finally{URL.revokeObjectURL(url);event.target.value='';}
     }catch{if(active.current)setError('This image could not be opened. Please take another photo.');}
     finally{captureInFlight.current=false;if(active.current){setBusy(false);setUploading(false);}}
@@ -242,12 +251,12 @@ function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,openi
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><p>Fill the guide with all digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo||pendingPhoto?'Retake photo':'Open camera'}</button>{(!phoneView||nativeCamera)&&<label className="photo-picker">{phoneView?'Use phone camera':'Take / choose photo'}<input ref={fileInput} type="file" accept="image/*" capture={phoneView?'environment':undefined} onChange={selectPhoto} disabled={busy}/></label>}</div>
-    {busy&&<p role="status">{captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':liveReading!==null?<>Reading found: <strong>{Number(liveReading).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. Saving photo and reading…</>:uploading?(liveStatus==='error'?'Automatic reading stopped. Saving your photo; no retake is needed to retry the reader.':'Uploading photo and saving its backup. Automatic reading runs separately…'):'Photo saved. Automatic reading in progress. You can photograph the next pump.'} <small>{elapsed} seconds in this step</small></p>}
+    {busy&&<p role="status">{liveReading!==null?<>Reading found: <strong>{Number(liveReading).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. {captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':'Saving photo and reading…'}</>:captureStage==='reading-save'?'Photo saved. Saving the reading to the station…':uploading?(liveStatus==='error'?'Automatic reading stopped. Saving your photo; no retake is needed to retry the reader.':'Uploading photo and saving its backup. Automatic reading runs separately…'):'Photo saved. Automatic reading in progress. You can photograph the next pump.'} <small>{elapsed} seconds total</small></p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {retryCapture&&!busy&&<button type="button" className="primary" onClick={()=>resumeCapture(retryCapture)}>Retry saving {retryCapture.saved?'reading':'photo'}</button>}
     {retryCapture&&!busy&&detected!==null&&<p role="status">Reading found on this device: <strong>{Number(detected).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong>. Waiting to save online.</p>}
     {busy&&liveReading===null&&<small>Clear photos usually finish within 20 seconds. Harder photos get up to 30 seconds; unclear digits require a retake.</small>}
-    {photo&&!busy&&!retryCapture&&Number.isFinite(ocrResult?.durationMs)&&<small>Automatic reading: {(ocrResult.durationMs/1000).toFixed(1)} seconds. Photo transfer and server saving are separate.</small>}
+    {photo&&!busy&&!retryCapture&&Number.isFinite(ocrResult?.durationMs)&&<small>Automatic reading: {(ocrResult.durationMs/1000).toFixed(1)} seconds.{Number.isFinite(ocrResult.captureToReadyMs)?` ${Number.isFinite(detected)?'Ready to confirm':'Photo and result saved'}: ${(ocrResult.captureToReadyMs/1000).toFixed(1)} seconds from capture.`:' Photo transfer and server saving are separate.'}</small>}
     {photo&&!busy&&!retryCapture&&!row.readingConfirmed&&detected===null&&ocrResult&&<p className="neutral" role="status">{ocrResult.status==='error'?(ocrResult.reason==='recognition-timeout'?'Automatic reading reached its time limit. The photo is saved. Retry the reader or check the photo and enter the number.':'Automatic reader is unavailable on this attempt. The photo is saved. Retry the reader or check the photo and enter the number.'):ocrResult.status==='pending'?'The previous automatic reading was interrupted. Retry the reader on this saved photo.':'Automatic reader could not verify every digit. Retake a closer photo without reflections.'}</p>}
     {photo&&!busy&&!retryCapture&&!row.readingConfirmed&&(retryReadingCapture||detected===null)&&<button type="button" className="secondary" onClick={retryAutomaticReading}>Retry automatic reading</button>}
     {photo&&!busy&&!retryCapture&&row.readingConfirmed&&!editing?<div className="reading-confirm"><p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p><button type="button" className="secondary" onClick={editReading}>Edit number</button></div>:photo&&!busy&&!retryCapture&&<div className="reading-confirm">{detected===null&&editing&&<p className="neutral">Check every digit in the saved photo before entering a number. Retake if any digit is covered or unclear.</p>}{(detected!==null||editing)&&<label>{detected===null?'Reading shown in photo':editing?'Correct detected reading':'Detected reading'}<input aria-label={`${row.pump} ${row.nozzle} ${opening?'opening':change?'price-change':'closing'} reading`} inputMode="decimal" value={draft} readOnly={!editing} onChange={e=>setDraft(e.target.value)}/></label>}

@@ -42,7 +42,7 @@ async function transact(key,action,value,expectedMutation){
 }
 export async function keepPumpCapture(key,capture,{onlyIfCurrent=false}={}){
   const value={savedAt:Date.now()};
-  for(const field of ['data','sourceRow','expectedRevision','photoMutationId','saved','photoSaveMs','photoInput','readingInput','readingOptions','result'])if(capture[field]!==undefined)value[field]=capture[field];
+  for(const field of ['data','sourceRow','expectedRevision','photoMutationId','saved','photoSaveMs','photoInput','photoInputFinalized','readingInput','readingOptions','result','startedAtMs','captureToReadingMs'])if(capture[field]!==undefined)value[field]=capture[field];
   return transact(key,'put',JSON.parse(JSON.stringify(value)),onlyIfCurrent?capture.photoMutationId:undefined);
 }
 export async function readPumpCapture(key){

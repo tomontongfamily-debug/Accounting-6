@@ -35,7 +35,7 @@ async function request(options,readOnly) {
   } finally {clearTimeout(timer);}
 }
 
-export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.randomUUID()}={}) {
+export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.randomUUID(),prepareInput}={}) {
   const cfg=window.__fueltechPilotConfig;
   const reportKey=input.report?`${input.report.branch}__${input.report.date}__${input.report.shiftId}`:input.reportKey;
   const key=reportKey?`${cfg?.mode}:${cfg?.start_date}:${reportKey}`:'';
@@ -52,10 +52,13 @@ export function pilotPost(route,input={},sessionToken='',{mutationId=crypto.rand
     return read;
   }
   mutationSequence++;
+  // Prepare once when this queued mutation can send. post() then freezes its
+  // envelope, including across automatic network retries.
+  const dispatch=async()=>post(route,prepareInput?await prepareInput(snapshot):snapshot,sessionToken,key,mutationId);
   // Cash buttons and draft autosaves must observe each other's completed save.
   // Separate reports remain independent; failed requests do not stall the queue.
-  if(!key)return post(route,snapshot,sessionToken,key,mutationId);
-  const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(()=>post(route,snapshot,sessionToken,key,mutationId));
+  if(!key)return dispatch();
+  const request=(pendingReports.get(key)||Promise.resolve()).catch(()=>{}).then(dispatch);
   pendingReports.set(key,request);
   request.finally(()=>{if(pendingReports.get(key)===request)pendingReports.delete(key);}).catch(()=>{});
   return request;
