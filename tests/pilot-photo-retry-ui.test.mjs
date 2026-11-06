@@ -6,7 +6,7 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-for(const stage of ['photo','pump-reading'])test(`a failed ${stage} station read preserves the capture and retries without repeating OCR`,async t=>{
+for(const stage of ['photo','pump-reading'])for(const failure of ['unavailable','concurrent-save','legacy-conflict'])test(`a ${failure} ${stage} save preserves the capture and retries without repeating OCR`,async t=>{
  const server=await createServer({cacheDir:'node_modules/.vite/photo-retry-test',server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false}});t.after(()=>server.close());await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  let {state,key,report,cashier}=fixture();
@@ -25,7 +25,7 @@ for(const stage of ['photo','pump-reading'])test(`a failed ${stage} station read
     const body=route.request().postDataJSON();
     if(body.route==='/api/demo/photo')photoAttempts++;
     if(body.route==='/api/demo/pump-reading')readingAttempts++;
-    if(failing&&body.route==='/api/demo/'+stage)return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,code:'STATION_RECORDS_UNAVAILABLE',error:'Unable to load verified station records.'})});
+    if(failing&&body.route==='/api/demo/'+stage)return route.fulfill({status:failure==='unavailable'?503:409,contentType:'application/json',body:JSON.stringify(failure==='unavailable'?{ok:false,code:'STATION_RECORDS_UNAVAILABLE',error:'Unable to load verified station records.'}:failure==='concurrent-save'?{ok:false,retryableConflict:true,error:'The station changed while saving. Please retry.'}:{ok:false,error:'Another device saved first. Your changes are kept on this device. Load the saved shift before retrying.'})});
     try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(_path,image)=>uploads.set(body.mutationId,image)});state=out.state;result=out.result;}
     catch(e){status=e.status||400;result={ok:false,error:e.message};}
    }else result={ok:true,enabled:false};
