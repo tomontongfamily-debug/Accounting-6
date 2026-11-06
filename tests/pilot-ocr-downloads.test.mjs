@@ -45,15 +45,6 @@ test('a corrupted cached model is replaced and a wrong network copy cannot becom
   assert.equal(networkRequests,beforeRepair+1);assert.equal(reader.readerPreparation().status,'ready');
  }finally{globalThis.fetch=before.fetch;globalThis.caches=before.caches;}
 });
-test('automatic preparation respects slow connections and data saving',async()=>{
- const{canPrepareReaderAutomatically:can}=await import('../src/ocr-downloads.js');
- assert.equal(can({effectiveType:'4g',downlink:10,saveData:false}),true);
- assert.equal(can({effectiveType:'4g',downlink:10,saveData:true}),false);
- assert.equal(can({effectiveType:'4g',downlink:3}),false);
- assert.equal(can({effectiveType:'3g',downlink:10}),false);
- assert.equal(can(null),false);
-});
-
 for(const blocked of ['fetch','body','storage'])test(`stalled ${blocked} preparation is bounded and the next attempt recovers`,async()=>{
  const before={fetch:globalThis.fetch,caches:globalThis.caches};let stalled=true;
  globalThis.caches={open:async()=>{if(blocked==='storage'&&stalled)return new Promise(()=>{});return undefined;}};

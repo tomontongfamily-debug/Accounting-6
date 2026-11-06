@@ -17,7 +17,9 @@ export function analyzeTotalizerFrame(pixels,width,height){
     try{instance=new Worker(new URL('./totalizer-frame.worker.js',import.meta.url),{type:'module'});}
     catch{return Promise.reject(failure('This browser cannot start the image reader.','unsupported-browser'));}
     worker=instance;
-    instance.onerror=event=>{event.preventDefault?.();stop(instance,failure('The image reader could not start.','unsupported-browser'));};
+    // A worker script can fail to load on weak/offline Wi-Fi even on a fully
+    // capable phone. Treat that as retryable, not permanent incompatibility.
+    instance.onerror=event=>{event.preventDefault?.();stop(instance,failure('The image reader could not start.','worker-failed'));};
     instance.onmessageerror=()=>stop(instance,failure('The image reader returned an unreadable response.'));
     instance.onmessage=({data:{id,gray,analysis,error}})=>{
       if(worker!==instance)return;

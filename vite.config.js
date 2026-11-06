@@ -16,4 +16,5 @@ function versionedOcrAssets(){
 
 export default defineConfig({
   plugins: [versionedOcrAssets(),react()],
+  build: {rollupOptions: {input: {main:'index.html',phoneOcrCheck:'ocr-phone-check.html'}}},
 });
