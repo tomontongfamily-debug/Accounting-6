@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -85,7 +86,7 @@ for(const {name,engine,launch}of [
   await expect(card.locator('input[inputmode=decimal]')).toHaveValue('234567.89',{timeout:25000});
   assert.equal(uploads.size,1);assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
   assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,234567.89);
-  await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
+  await confirmPumpReading(card);
   await expect(card.getByText('✓ Complete',{exact:true})).toBeVisible();
   assert.equal(state.reports[key].pumpRows[0].closing,234567.89);
   assert.equal(state.reports[key].pumpRows[0].readingConfirmed,true);

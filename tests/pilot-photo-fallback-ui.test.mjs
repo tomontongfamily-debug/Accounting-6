@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium} from '@playwright/test';
@@ -44,8 +45,8 @@ test('Unreadable photo offers automatic retry first and keeps manual entry as an
   assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'error');
   await card.getByText('Automatic reader is unavailable on this attempt. The photo is saved. Retry the reader or check the photo and enter the number.',{exact:true}).waitFor();
   assert.equal(photoCount,1);assert.equal(await card.getByText(/Retake once more/).count(),0);
-  await input.fill('9999');assert.equal(await card.getByRole('button',{name:'Yes, confirm reading'}).isEnabled(),false);
-  await input.fill('10010');await card.getByRole('button',{name:'Yes, confirm reading'}).click();await card.getByText('✓ Complete',{exact:true}).waitFor();
+  await input.fill('9999');assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/}).isEnabled(),false);
+  await input.fill('10010');await confirmPumpReading(card);await card.getByText('✓ Complete',{exact:true}).waitFor();
   assert.equal(state.reports[key].pumpRows[0].closing,10010);assert.equal(state.reports[key].pumpRows[0].readingConfirmed,true);assert.ok(state.reports[key].pumpRows[0].photo_path);
   assert.equal(state.reports[key].confirmed,false);assert.equal(photoCount,1);
   assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'error');

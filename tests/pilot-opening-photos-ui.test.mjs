@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -66,7 +67,7 @@ test('Opening photos save automatic and reviewed manual readings from a phone an
     await card.getByRole('button',{name:'Enter number manually',exact:true}).click();
     await card.getByRole('textbox',{name:`${row.pump} ${row.nozzle} opening reading`,exact:true}).fill('0');
    }
-   await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
+   await confirmPumpReading(card);
    await card.getByText('✓ Complete',{exact:true}).waitFor();
    assert.equal(state.reports[key].pumpRows[index].opening,index===0?123456.78:0);
   }

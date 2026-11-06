@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
@@ -32,7 +33,7 @@ test('built shortage block hides amounts, retains an editable draft, and allows 
   await expect(page.getByLabel('Final recount ₱1000 quantity',{exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'Review pump readings',exact:true}).click();
   const card=page.locator(`[data-pump-row-id="${pump.id}"]`);await card.getByRole('button',{name:'Edit number',exact:true}).click();
-  await card.getByRole('textbox').fill(String(Number(pump.opening)+40));await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
+  await card.getByRole('textbox').fill(String(Number(pump.opening)+40));await confirmPumpReading(card);
   await expect.poll(()=>state.reports[key].pumpRows.find(row=>row.id===pump.id).closing).toBe(Number(pump.opening)+40);
   await page.getByRole('button',{name:'Open Review and Submit',exact:true}).click();await page.getByRole('button',{name:'Check my cash count',exact:true}).click();
   await page.getByRole('button',{name:'Submit Shift Report',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Confirm Report',exact:true}).click();

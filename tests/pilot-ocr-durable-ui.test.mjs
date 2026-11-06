@@ -63,7 +63,7 @@ test('local OCR result appears before a slow photo upload and survives a reload 
  const restored=await f.open({reload:true});
  const retry=restored.getByRole('button',{name:'Retry saving photo',exact:true});await expect(retry).toBeVisible();
  f.recover();await retry.click();
- await expect(restored.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(restored.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.equal(await f.page.evaluate(()=>Number(localStorage.getItem('test-recognition-count'))),1);
  const photoRequests=f.requests.filter(r=>r.route==='/api/demo/photo');
  assert.equal(photoRequests.length,2);assert.deepEqual(photoRequests[1],original);
@@ -79,7 +79,7 @@ test('a lost OCR save response survives reload and replays the exact request wit
  const restored=await f.open({reload:true});
  const retry=restored.getByRole('button',{name:'Retry saving reading',exact:true});await expect(retry).toBeVisible();
  f.recover();await retry.click();
- await expect(restored.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(restored.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.equal(await f.page.evaluate(()=>Number(localStorage.getItem('test-recognition-count'))),1);
  assert.equal(f.requests.filter(r=>r.route==='/api/demo/photo').length,1);
  const readingRequests=f.requests.filter(r=>r.route==='/api/demo/pump-reading');
@@ -92,13 +92,13 @@ test('a server-pending saved photo can rerun OCR without replacing its photo or 
  const f=await browserFixture(t);f.recover();
  // Use a real saved camera photo, then model the result-save interruption.
  const card=await f.open();await capturePumpCamera(f.page,card);
- await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  const r=f.state.reports[f.key],row=r.pumpRows[0],photo=row.photo_path;
  Object.assign(row,{ocr_detected_reading:null,ocr_result:{status:'pending',version:'older-reader'},closing:'',closingEntered:false,readingConfirmed:false});
  const before=f.requests.filter(r=>r.route==='/api/demo/photo').length;
  const restored=await f.open({reload:true});
  await restored.getByRole('button',{name:'Retry automatic reading',exact:true}).click();
- await expect(restored.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(restored.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.equal(f.requests.filter(r=>r.route==='/api/demo/photo').length,before);
  assert.equal(f.state.reports[f.key].pumpRows[0].photo_path,photo);
  assert.equal(f.state.reports[f.key].pumpRows[0].ocr_detected_reading,10010);
@@ -129,7 +129,7 @@ test('an older device capture cannot overwrite another device’s newer photo af
 test('unavailable device recovery storage does not prevent immediate OCR and an online save',async t=>{
  const f=await browserFixture(t,{storageUnavailable:true});f.recover();const card=await f.open();
  await capturePumpCamera(f.page,card);
- await expect(card.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.equal(f.state.reports[f.key].pumpRows[0].ocr_detected_reading,10010);
  assert.equal(f.state.reports[f.key].pumpRows[0].readingConfirmed,false);
  assert.equal(f.uploads.size,1);
@@ -163,7 +163,7 @@ test('late OCR from an old rejected photo cannot replace the newer recoverable c
  const restored=await f.open({reload:true});
  const retry=restored.getByRole('button',{name:'Retry saving photo',exact:true});await expect(retry).toBeVisible();
  f.recover();await retry.click();
- await expect(restored.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(restored.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.deepEqual(f.requests.filter(r=>r.route==='/api/demo/photo').at(-1),second);
  assert.equal(f.state.reports[f.key].pumpRows[0].ocr_detected_reading,10010);
  assert.equal(f.uploads.size,1);assert.deepEqual(f.errors,[]);
@@ -178,7 +178,7 @@ test('reload during unfinished OCR retains the photo request and reruns only the
  const restored=await f.open({reload:true});
  const retry=restored.getByRole('button',{name:'Retry saving photo',exact:true});await expect(retry).toBeVisible();
  f.recover();await retry.click();
- await expect(restored.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+ await expect(restored.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
  assert.equal(await f.page.evaluate(()=>Number(localStorage.getItem('test-recognition-count'))),2);
  assert.deepEqual(f.requests.filter(r=>r.route==='/api/demo/photo').at(-1),first);
  assert.equal(f.state.reports[f.key].pumpRows[0].ocr_detected_reading,10010);

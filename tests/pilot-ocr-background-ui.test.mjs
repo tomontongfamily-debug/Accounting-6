@@ -1,3 +1,4 @@
+import {confirmPumpReading} from './pilot-camera-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
@@ -49,7 +50,7 @@ for(const failedReader of [false,true])test(`photos save and pumps remain availa
   assert.equal(uploads.size,1);
   assert.equal(state.reports[key].pumpRows[0].ocr_result.status,'pending');
   assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
-  assert.equal(await firstCard.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+  assert.equal(await firstCard.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
   // Report navigation stays locked so background work keeps its original shift.
   await expect(page.getByLabel('Shift to photograph')).toBeDisabled();
   await page.getByRole('button',{name:new RegExp(`^${second.pump} ·`)}).click();
@@ -78,13 +79,13 @@ for(const failedReader of [false,true])test(`photos save and pumps remain availa
    await secondCard.getByRole('button',{name:'Retry automatic reading',exact:true}).click();
    await expect.poll(()=>page.evaluate(()=>globalThis.finishOcr.length)).toBe(3);
    await page.evaluate(value=>globalThis.finishOcr[2](value),second.opening+11);
-   await expect(secondCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+   await expect(secondCard.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
    assert.equal(state.reports[key].pumpRows.find(row=>row.id===second.id).photo_path,savedPath,'Retrying OCR must reuse the saved photo');
    assert.equal(uploads.size,2);
-  }else await expect(secondCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
+  }else await expect(secondCard.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
   await page.getByRole('button',{name:new RegExp(`^${first.pump} ·`)}).click();
-  await expect(firstCard.getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeEnabled();
-  await firstCard.getByRole('button',{name:'Yes, confirm reading',exact:true}).click();
+  await expect(firstCard.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
+  await confirmPumpReading(firstCard);
   await expect(firstCard.getByText('✓ Complete',{exact:true})).toBeVisible();
   assert.equal(state.reports[key].pumpRows[0].closing,first.opening+10);
   assert.equal(uploads.size,2);

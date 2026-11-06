@@ -43,7 +43,7 @@ test('Leak loss keeps saved readings and sales visible on desktop and phone, inc
       await page.evaluate(()=>window.setLeakTestReport(old=>({...old,confirmed:true})));
       await card.getByText('392,574.09',{exact:true}).waitFor();
       assert.match(await sales.innerText(),/Paid sales: 13\.37 L/);
-      assert.equal(await card.getByRole('button',{name:'Yes, confirm reading',exact:true}).count(),0);
+      assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
       assert.deepEqual(errors,[]);await page.close();
     }
