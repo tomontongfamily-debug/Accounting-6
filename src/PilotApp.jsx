@@ -1,6 +1,7 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
 import AdminStoreGate from './admin-store-gate.jsx';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from './zero-sales.js';
+import {requestPriceReview,midShiftPriceReviewContext} from './price-confirmation.js';
 import { configuredStations, stationStartDate, stationOpeningSlot } from './station-rollout.js';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
@@ -488,7 +489,7 @@ function pointsWithdrawnFromRedemptions(report = {}) {
 }
 
 function deductionLabel(key) {
-  return key === "bankCard" ? "Debit / credit card" : key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
+  return key === "fuelRedemption" ? "Fuel Redemption (₱)" : key === "bankCard" ? "Debit / credit card" : key === "posRedemption" ? "POS monetary redemption (automatic)" : humanizeKey(key);
 }
 
 function visibleDeductionEntries(deductions = {}) {
@@ -2502,8 +2503,8 @@ async function requestReportLease({ branch, date, shiftId, clientId, actor, acti
   return apiPost("/api/reports/lease", { branch, date, shiftId, clientId, actor, action }, sessionToken);
 }
 
-async function saveOnlinePrices(branch, date, coverage, shiftId, prices, sessionToken, pricePatch) {
-  return apiPost("/api/prices/save", { branch, date, coverage, shiftId, ...(pricePatch ? {pricePatch} : {prices: { ...defaultPrices(), ...defaultFuelCosts(), ...prices }}) }, sessionToken);
+async function saveOnlinePrices(branch, date, coverage, shiftId, prices, sessionToken, pricePatch, priceReview) {
+  return apiPost("/api/prices/save", { branch, date, coverage, shiftId, ...(priceReview?{priceReview}:{}), ...(pricePatch ? {pricePatch} : {prices: { ...defaultPrices(), ...defaultFuelCosts(), ...prices }}) }, sessionToken);
 }
 
 function Field({ label, children }) {
@@ -2538,13 +2539,14 @@ function BranchPinInput({ value, onChange, onSubmit }) {
   );
 }
 
-function NumberInput({ value, onChange, placeholder = "", className = "", ghostZero = false }) {
+function NumberInput({ value, onChange, placeholder = "", className = "", ghostZero = false, ariaLabel }) {
   const displayValue = ghostZero && value === 0 ? "" : value ?? "";
   return (
     <input
       className={`${className} ${ghostZero ? "ghost-zero-input" : ""}`.trim()}
       type="text"
       inputMode="decimal"
+      aria-label={ariaLabel}
       value={displayValue}
       placeholder={ghostZero ? "0" : placeholder}
       onChange={(event) => {
@@ -3761,13 +3763,16 @@ export default function App() {
     setIsSavingOnline(true);
     setSyncMessage(`Confirming ${change.product} mid-shift price...`);
     try {
-      const result=await demoApi('midshift-confirm',{reportKey:reportKey(latestReport.branch,latestReport.date,latestReport.shiftId),changeId:id});
+      const priceReview=requestPriceReview(midShiftPriceReviewContext(latestReport,change),{confirm:message=>window.confirm(message),prompt:(message,value)=>window.prompt(message,value)});
+      if(!priceReview){setSyncMessage('Price confirmation cancelled. The new price was not confirmed.');return;}
+      const result=await demoApi('midshift-confirm',{reportKey:reportKey(latestReport.branch,latestReport.date,latestReport.shiftId),changeId:id,priceReview});
       acceptDemoReport(result.report);
       setStore(old=>({...old,priceBook:{...old.priceBook,[branch]:{...(old.priceBook[branch]||{}),[result.priceDate]:{...getEffectiveDailyPricing(old.priceBook,branch,result.priceDate).prices,...result.dailyPricePatch}}}}));
       setHasUnsavedOnlineChange(false);
       setSyncMessage(`${change.product} mid-shift price confirmed. It carries into the next shift and day until changed again.`);
     } catch(error) {
       setSyncMessage(error.message||'Unable to confirm the price change. Retry after refreshing.');
+      window.alert(error.message||'Unable to confirm the price change.');
     } finally {setIsSavingOnline(false);}
   }
 
@@ -4128,39 +4133,25 @@ export default function App() {
     persistReport(normalizeExistingReport(next));
   }
 
-  function patchEffectivePrice(product, value) {
-    const previous = displayedManagerPrices[product];
-    if (Number(value) === Number(previous)) return;
-    if (!window.confirm(`${Number(value) > Number(previous) * 2 || Number(value) < Number(previous) / 2 ? "PLEASE CHECK THIS PRICE\n" : ""}${product}: ${peso(previous)} → ${peso(value)}\nEffective: ${selectedDate}\nConfirm this price change?`)) return;
-
-    localChangeVersionRef.current = nextDeviceSaveVersion(localChangeVersionRef.current);
-    const nextPrices = { ...defaultPrices(), ...displayedManagerPrices, [product]: value };
-    const priceKey = pricingCoverage === "Shift" ? shiftPriceKey(selectedDate, pricingShiftId) : dailyPriceKey(selectedDate);
-    setStore((old) => {
-      const priceBook = {
-        ...old.priceBook,
-        [branch]: {
-          ...(old.priceBook[branch] || {}),
-          [priceKey]: { ...(pricingCoverage === "Shift" ? getEffectivePricing(old.priceBook, branch, selectedDate, pricingShiftId).prices : getEffectiveDailyPricing(old.priceBook, branch, selectedDate).prices), [product]: value },
-        },
-      };
-      return { ...old, priceBook, reports: syncReportsWithPriceBook(old.reports, priceBook) };
-    });
-    setHasUnsavedOnlineChange(true);
+  async function patchEffectivePrice(product, value) {
+    if (Number(value) === Number(displayedManagerPrices[product])) return;
     setIsSavingOnline(true);
-    setSyncMessage(`Saving ${pricingCoverage.toLowerCase()} prices online...`);
-    return saveOnlinePrices(branch, selectedDate, pricingCoverage, pricingShiftId, nextPrices, sessionToken, {[product]:value})
-      .then(() => {
-        setHasUnsavedOnlineChange(false);
-        setSyncMessage(`${pricingCoverage} prices saved online.`);
-      })
-      .catch((error) => {
-        setHasUnsavedOnlineChange(true);
-        setSyncMessage(error.message || `Unable to save ${pricingCoverage.toLowerCase()} prices online.`);
-      })
-      .finally(() => {
-        setIsSavingOnline(false);
-      });
+    setSyncMessage('Loading the saved price before confirmation...');
+    try {
+      const book=await loadOnlinePriceBook(sessionToken);
+      const previous=(pricingCoverage==='Shift'?getEffectivePricing(book,branch,selectedDate,pricingShiftId):getEffectiveDailyPricing(book,branch,selectedDate)).prices;
+      const context={branch,date:selectedDate,coverage:pricingCoverage,shiftId:pricingShiftId,product,previousPrice:previous[product],newPrice:value};
+      const review=requestPriceReview(context,{confirm:message=>window.confirm(message),prompt:(message,initial)=>window.prompt(message,initial)});
+      if(!review){setSyncMessage('Price change cancelled. The saved price is unchanged.');return;}
+      setSyncMessage(`Saving ${pricingCoverage.toLowerCase()} prices online...`);
+      const result=await saveOnlinePrices(branch,selectedDate,pricingCoverage,pricingShiftId,{...previous,[product]:value},sessionToken,{[product]:value},{[product]:review});
+      const key=pricingCoverage==='Shift'?shiftPriceKey(selectedDate,pricingShiftId):dailyPriceKey(selectedDate);
+      localChangeVersionRef.current=nextDeviceSaveVersion(localChangeVersionRef.current);
+      setStore(old=>{const priceBook={...old.priceBook,[branch]:{...old.priceBook[branch],[key]:result.prices}};return{...old,priceBook,reports:syncReportsWithPriceBook(old.reports,priceBook)};});
+      setHasUnsavedOnlineChange(false);
+      setSyncMessage(`${pricingCoverage} prices saved online.`);
+    }catch(error){setSyncMessage(error.message||'The price was not saved. Refresh prices before retrying.');window.alert(error.message||'Unable to save the price.');}
+    finally{setIsSavingOnline(false);}
   }
 
   function patchFuelDeliveryCosts({ deliveryBranch = branch, deliveryDate = selectedDate, deliveryShiftId = selectedShiftId, costs = {} }) {
@@ -4870,7 +4861,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
           <AutomaticPay report={report} onSaved={onDemoSaved} />
           {report.branch === "Moalboal" && <p className="neutral">Debit / credit card: enter the gross terminal sales total for this shift. Exclude transactions already included in automatic FuelTech Pay. Card payments reduce expected physical cash.</p>}
           {visibleDeductionEntries(report.deductions).filter(([key]) => !report.posRedemptions?.automatic || !["cashRedemption", "fuelRedemption"].includes(key)).map(([key, value]) => (
-            <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero value={value} onChange={(next) => patchReport(["deductions", key], next)} />}</Field>
+            <Field key={key} label={deductionLabel(key)}>{key === "posRedemption" ? <b className="read-only-value">{peso(value)}</b> : <NumberInput ghostZero ariaLabel={key==='fuelRedemption'?'Fuel Redemption (₱)':undefined} value={value} onChange={(next) => patchReport(["deductions", key], next)} />}{key==='fuelRedemption'&&<small>Enter the total peso value redeemed, not litres. Example: ₱500 redemption → enter 500.</small>}</Field>
           ))}
           <Field label="Points Issued">{report.posRedemptions?.automatic ? <b className="read-only-value">{report.posRedemptions.pointsStatus === "verified" ? peso(report.pointsIssued) : "Needs POS review"}</b> : <NumberInput ghostZero value={report.pointsIssued} onChange={(value) => patchReport(["root", "pointsIssued"], value)} />}</Field>
           <Field label="Points Withdrawn">

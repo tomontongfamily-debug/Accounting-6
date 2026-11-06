@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import globals from 'globals';
 export default [
+  {...js.configs.recommended,files:['src/price-confirmation.js'],languageOptions:{globals:{...globals.browser}}},
   {...js.configs.recommended,files:['src/returned-calibration.jsx'],languageOptions:{globals:{...globals.browser},parserOptions:{ecmaFeatures:{jsx:true}}}},
   {...js.configs.recommended,files:['src/pilot-config.js','src/demo-report-load.js'],languageOptions:{globals:{...globals.browser}}},
   {...js.configs.recommended,files:['src/ocr-downloads.js','src/ocr-assets.js','src/ocr-capabilities.js'],languageOptions:{globals:{...globals.browser}}},
