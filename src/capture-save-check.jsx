@@ -86,7 +86,7 @@ async function runConfirmationDemo(){
       dialog().querySelector('.reading-final-cancel').click();await until(()=>!dialog());
       check(calls.length===0&&!report.pumpRows[0].readingConfirmed,'Cancel must not save.');
       check(cards.querySelector('input[inputmode=decimal]').value===draft,'Cancel must retain the draft.');
-      first().click();await until(()=>dialog());dialog().querySelector('.reading-final-sure').click();
+      first().click();await until(()=>dialog());await until(()=>!dialog()?.querySelector('.reading-final-sure')?.disabled);dialog().querySelector('.reading-final-sure').click();
       await until(()=>report.pumpRows[0].readingConfirmed&&!dialog());
       check(calls.length===1&&calls[0].route==='/api/demo/pump-reading','Final confirmation must save exactly once.');
       Object.assign(report.pumpRows[0],{readingConfirmed:false,closing:'',closingEntered:false});

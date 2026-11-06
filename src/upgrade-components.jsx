@@ -2,6 +2,7 @@ import {captureKey,keepPumpCapture,readPumpCapture,forgetPumpCapture} from './pu
 import {finalizePumpPhotoInput,captureDuration} from './pump-capture-flow.js';
 import {MeterReadingEditor} from './meter-reading-editor.jsx';
 import {ReadingFinalConfirmation} from './reading-final-confirmation.jsx';
+import {rememberMeterPhoto} from './meter-photo-preview.js';
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect } from './totalizer-ocr.js';
@@ -52,6 +53,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   const [camera,setCamera]=useState(false);const [openingCamera,setOpeningCamera]=useState(false);const video=useRef(null);const fileInput=useRef(null);const stream=useRef(null);const active=useRef(true);
   const captureInFlight=useRef(false);
   const currentCapture=useRef(null);
+  const photoImage=useRef(null);
   const localCaptureKey=captureKey(report,row,change);
   useEffect(()=>{
     let mounted=true;
@@ -240,6 +242,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   }
   function askToConfirm(){
     if(busy||locked||retryCapture||!photo||draft===''||warning.blocked)return;
+    rememberMeterPhoto(photo,photoImage.current);
     setFinalConfirmation({reading:draft,photo,revision:revision.current});
   }
   async function confirm() {
@@ -254,6 +257,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
     } catch(e){setError(e.message);} finally{confirming.current=false;setBusy(false);}
   }
   async function editReading() {
+    rememberMeterPhoto(photo,photoImage.current);
     // A suggestion is not an official number yet. Open its editor locally;
     // only an already confirmed number needs the existing server unlock.
     if(!row.readingConfirmed){setEditing(true);setError('');return;}
@@ -261,7 +265,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   }
   return <article className={`reading-card ${readingComplete(row)?'complete':''}`} data-pump-row-id={row.id}>
     <header><div><strong>{change?`${row.pump} · ${row.nozzle}`:row.nozzle}</strong><small>{opening?`${row.product} · Starting totalizer reading`:<>{row.product} · Opening {Number(row.opening).toLocaleString('en-PH',{minimumFractionDigits:2})} 🔒</>}</small></div><b>{pendingPhoto?busy?'Saving…':'Save pending':readingComplete(row)?'✓ Complete':photo?'Photo saved · Confirm reading':'Photo required'}</b></header>
-    {(pendingPhoto||photo)&&!editing&&<img src={pendingPhoto||photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
+    {(pendingPhoto||photo)&&!editing&&<img ref={photoImage} src={pendingPhoto||photo} alt={`${row.pump} ${row.nozzle} totalizer`} className="totalizer-photo"/>}
     {photo&&row.readingConfirmed&&locked&&<p className="success-box">✓ Reading confirmed and saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
     {camera&&<div><p>Fill the guide with all digits and the decimal point. Move closer and tilt the phone until reflections leave the digits.</p><div className="totalizer-camera"><video ref={video} autoPlay playsInline muted/><div className="totalizer-camera-guide" aria-hidden="true"/></div><button type="button" onClick={capture}>Capture photo</button><button type="button" onClick={()=>{stream.current?.getTracks().forEach(t=>t.stop());setCamera(false);}}>Cancel camera</button></div>}
     {!locked&&<><div className="demo-actions"><button type="button" className="primary" disabled={busy||camera||openingCamera} onClick={openCamera}>{openingCamera?'Opening camera…':photo||pendingPhoto?'Retake photo':'Open camera'}</button>{(!phoneView||nativeCamera)&&<label className="photo-picker">{phoneView?'Use phone camera':'Take / choose photo'}<input ref={fileInput} type="file" accept="image/*" capture={phoneView?'environment':undefined} onChange={selectPhoto} disabled={busy}/></label>}</div>
@@ -278,7 +282,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
       <div className="demo-actions">{(detected!==null||editing)&&<button type="button" className="confirm-button" disabled={!photo||draft===''||warning.blocked} onClick={askToConfirm}>{editing?'Save corrected reading':'Yes, confirm reading'}</button>}{!editing&&<button type="button" className="secondary" onClick={editReading}>{detected===null?'Enter number manually':'Edit number'}</button>}</div>
     </div>}</>}
     {!change&&!opening&&row.readingConfirmed&&<PumpSales report={report} row={row}/>}
-    {finalConfirmation&&<ReadingFinalConfirmation reading={finalConfirmation.reading} pump={`${row.pump} · ${row.nozzle}`} shift={`${report.date} · ${report.shiftId.replace('shift-','Shift ')}`}
+    {finalConfirmation&&<ReadingFinalConfirmation reading={finalConfirmation.reading} photo={finalConfirmation.photo} pump={`${row.pump} · ${row.nozzle}`} shift={`${report.date} · ${report.shiftId.replace('shift-','Shift ')}`}
       warning={warning.level!=='NORMAL'?warning.message:''} onCancel={()=>setFinalConfirmation(null)} onConfirm={confirm}/>}
   </article>;
 }
