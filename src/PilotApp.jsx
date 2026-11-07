@@ -1,7 +1,8 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
 import AdminStoreGate from './admin-store-gate.jsx';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from './zero-sales.js';
-import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from './error-reduction.ts';
+import {isHighVariance,highVarianceMessage,HIGH_SHORTAGE_MESSAGE,HIGH_OVERAGE_MESSAGE} from './error-reduction.ts';
+import {HighVarianceNotice} from './high-variance-notice.jsx';
 import {requestPriceReview,midShiftPriceReviewContext} from './price-confirmation.js';
 import { configuredStations, stationStartDate, stationOpeningSlot } from './station-rollout.js';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
@@ -3938,7 +3939,7 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
-    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance)){setSubmitReportError(HIGH_SHORTAGE_MESSAGE);return;}
+    if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance)){setSubmitReportError(highVarianceMessage(activeResult.cashVariance));return;}
     const calibrationError=validateReturnedCalibration(activeReport);
     if(calibrationError){setSubmitReportError(calibrationError);setSyncMessage(calibrationError);return;}
     if (activeReport.confirmed) {
@@ -4001,7 +4002,7 @@ export default function App() {
   }
 
   function submitConfirmedReport(extra = {}) {
-    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance))return Promise.reject(new Error(HIGH_SHORTAGE_MESSAGE));
+    if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance))return Promise.reject(new Error(highVarianceMessage(activeResult.cashVariance)));
     return saveReport({
       ...activeReport,
       confirmed: true,
@@ -4510,6 +4511,7 @@ function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting
 }
 
 function ReportSubmitErrorDialog({ message, onClose, onReload }) {
+  const highVariance=message===HIGH_SHORTAGE_MESSAGE||message===HIGH_OVERAGE_MESSAGE;
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState('');
   async function reload() {
@@ -4521,10 +4523,11 @@ function ReportSubmitErrorDialog({ message, onClose, onReload }) {
   const shouldReload = /newer|another device|restarted|older draft|changed while|reload/i.test(message);
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="submit-error-title">
-      <div className="modal-panel">
+      <div className={`modal-panel${highVariance?' variance-submit-dialog':''}`}>
         <div className="modal-header">
           <span>Report Not Submitted</span>
-          <h2 id="submit-error-title">Report Not Submitted</h2>
+          <h2 id="submit-error-title">{highVariance?'High variance':'Report Not Submitted'}</h2>
+          {highVariance&&<strong>Please double-check</strong>}
           <p>{message}</p>
           {reloadError && <p role="alert">{reloadError}</p>}
         </div>
@@ -4618,7 +4621,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
-    !reportCompleted(report)&&!report.baselineReport&&isHighShortage(result.cashVariance)?HIGH_SHORTAGE_MESSAGE:'',
+    !reportCompleted(report)&&!report.baselineReport&&isHighVariance(result.cashVariance)?highVarianceMessage(result.cashVariance):'',
     !reportCompleted(report)?validateReturnedCalibration(report):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
     !reportCompleted(report) && !report.cashCountConfirmed ? "Confirm physical cash in Step 1 before submitting." : "",
@@ -4777,6 +4780,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
       </div>}
 
       <div className="cashier-wizard-alerts">
+        {!reportCompleted(report)&&!openingSetupMode&&hasActualCashCounted(report)&&report.pumpRows.every(row=>row.closingEntered)&&<HighVarianceNotice variance={result.cashVariance} onReviewCash={goToCashReview} onReviewPumps={()=>setWizardStep(1)} onReviewPayments={()=>setWizardStep(2)}/>}
         {editingConflict && (
           <WarningBanner>
             Currently being edited on another device. Please wait before saving this station and shift.
@@ -4955,7 +4959,6 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
             <div className="warning-box form-space">
               <b>Cannot submit yet</b>
               {submitBlockers.map((warning) => <p key={warning}>{warning}</p>)}
-              {isHighShortage(result.cashVariance)&&<div className="demo-actions"><button type="button" className="secondary" onClick={()=>setWizardStep(1)}>Review pump readings</button><button type="button" className="secondary" onClick={()=>setWizardStep(2)}>Review payments and deductions</button></div>}
               {validateReturnedCalibration(report)&&<button type="button" className="secondary" onClick={()=>setWizardStep(3)}>Check returned calibration</button>}
               {submitBlockers.some((warning) => warning.includes("End-of-shift cash count")) && (
                 <button type="button" className="secondary" onClick={() => setWizardStep(0)}>Go to Physical Cash</button>

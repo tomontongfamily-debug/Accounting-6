@@ -1,6 +1,6 @@
 import { pendingVouchersForReport } from '../src/pending-vouchers.js';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from '../src/zero-sales.js';
-import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from './domain.mjs';
+import {isHighVariance,highVarianceMessage} from './domain.mjs';
 import {priceReviewError,midShiftPriceReviewContext} from '../src/price-confirmation.js';
 import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
@@ -342,7 +342,7 @@ function validatePriceReadingOrder(report,change) {
       }
       const r=candidate(input.report,session);
       if(input.operation==='submit') {
-        if(!r.baselineReport&&isHighShortage(compute(r).cashVariance))reject(HIGH_SHORTAGE_MESSAGE);
+        if(!r.baselineReport&&isHighVariance(compute(r).cashVariance))reject(highVarianceMessage(compute(r).cashVariance));
         if(r.posRedemptions?.automatic&&(r.posRedemptions.status!=='verified'||!r.posRedemptions.verifiedAt||Date.now()-Date.parse(r.posRedemptions.verifiedAt)>120000))reject('Verify automatic POS redemptions before submission.');
         const leakLossError=validateFuelLeakLosses(r,{requireNotes:true});
         if(leakLossError) reject(leakLossError);
@@ -404,7 +404,7 @@ function validatePriceReadingOrder(report,change) {
         r.reviewedExpectedCash=compute(r).expectedCash;
         r.recountRequired=!hasDepositCoverage(r)&&cashNeedsRecount(Number(r.actualCashCounted),compute(r).expectedCash);r.cashReviewState=r.recountRequired?'recount':'checked';
       }
-      if(route.endsWith('cash-recount')) { if(hasDepositCoverage(r)) reject('This cash count is already covered by a deposit. Correct the deposit coverage before changing cash.',409);if(r.cashReviewState!=='recount'&&!(r.cashReviewState==='final'&&isHighShortage(compute(r).cashVariance))) reject('Recount is not available.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.cashReviewState='final'; }
+      if(route.endsWith('cash-recount')) { if(hasDepositCoverage(r)) reject('This cash count is already covered by a deposit. Correct the deposit coverage before changing cash.',409);if(r.cashReviewState!=='recount'&&!(r.cashReviewState==='final'&&isHighVariance(compute(r).cashVariance))) reject('Recount is not available.');r.actualCashCounted=denominationTotal(input.denominations);r.cashDenominations=input.denominations;r.cashReviewState='final'; }
       const saved=storeReport(r,session,route.split('/').at(-1));
       return send({ok:true,needsRecount:!!saved.report.recountRequired,report:exposeReport(saved.report,session)});
     }

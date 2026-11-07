@@ -7,7 +7,7 @@ import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect } from './totalizer-ocr.js';
 import {automaticReaderPreparation,subscribeAutomaticReaderPreparation,startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
-import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning,isHighShortage,HIGH_SHORTAGE_MESSAGE } from './error-reduction.ts';
+import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning,isHighVariance,highVarianceMessage } from './error-reduction.ts';
 import './upgrade.css';
 import { AdminDepositCards } from './admin-deposits.jsx';
 import { midShiftPumpKey, midShiftReadingValue } from './mid-shift-price-change.js';
@@ -328,16 +328,16 @@ export function CashConfirmation({report,onSaved,onCountsChange,onReload,onRefre
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
   const reconciliation=review?compute(report):null;
-  const blockedShortage=review&&reconciliation?.actualCashCountEntered&&isHighShortage(reconciliation.cashVariance);
+  const blockedVariance=review&&reconciliation?.actualCashCountEntered&&isHighVariance(reconciliation.cashVariance);
   useEffect(()=>{if(!review&&report.cashCountConfirmed){setError('');setStale(false);}},[report.cashCountConfirmed,review]);
   let valid=false;try{denominationTotal(denominations);valid=true;}catch{ /* An empty/invalid count cannot be confirmed. */ }
   async function run(action) {setBusy(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409||e.saveUncertain===true);}finally{setBusy(false);}}
   async function reload(){setBusy(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);}}
   return <div className="cash-confirmation" aria-busy={busy}>
     {busy&&<p role="status">Waiting for the station server to verify the saved shift…</p>}
-    {blockedShortage&&<p className="warning-box" role="alert">{HIGH_SHORTAGE_MESSAGE}</p>}
+    {blockedVariance&&<p className="warning-box" role="alert">{highVarianceMessage(reconciliation.cashVariance)}</p>}
     {!review&&<><CashDenominations counts={denominations} onChange={onCountsChange} disabled={report.cashCountConfirmed||busy} label="End-of-shift cash count"/>{report.cashCountConfirmed?<p>✓ Physical cash confirmed: <strong>{php(report.actualCashCounted)}</strong>{!report.cashDenominations&&' · Earlier count has no denomination breakdown.'}</p>:<button type="button" className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-confirm')}>Confirm physical cash</button>}</>}
-    {review&&<><PendingVouchers report={report} onRefresh={onRefreshVouchers}/><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" data-cash-action className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'||report.cashReviewState==='final'&&blockedShortage?<><p className="warning-box">Please recount your physical cash. Record only the cash actually counted.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" data-cash-action className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your count remains saved. If submission is blocked, review the entries and contact your manager if the difference remains.</small></>}
+    {review&&<><PendingVouchers report={report} onRefresh={onRefreshVouchers}/><h3>Cash reconciliation</h3>{!report.cashReviewState?<button type="button" data-cash-action className="primary" disabled={busy} onClick={()=>run('cash-check')}>Check my cash count</button>:report.cashReviewState==='recount'||report.cashReviewState==='final'&&blockedVariance?<><p className="warning-box">Please recount your physical cash. Record only the cash actually counted.</p><CashDenominations counts={counts} onChange={setCounts} disabled={busy} label="Final recount"/><button type="button" data-cash-action className="confirm-button" disabled={busy||!valid} onClick={()=>run('cash-recount')}>Confirm final recount</button></>:<p>{report.cashReviewState==='final'?'✓ Final recount recorded. Admin will review the submitted result.':'✓ OK'}</p>}<small>Your count remains saved. If submission is blocked, review the entries and contact your manager if the difference remains.</small></>}
     {error&&<p className="error" role="alert">{error}</p>}
     {stale&&onReload&&<div><p>Reload the saved shift details, then check and confirm again. Your entered cash quantities will be kept; an already confirmed count stays locked.</p><button type="button" className="secondary" disabled={busy} onClick={reload}>{review?'Refresh saved shift':'Refresh shift, keep my cash count'}</button></div>}
   </div>;

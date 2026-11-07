@@ -1,5 +1,6 @@
 import { hasPumpOpening } from './fuel-leak-loss.js';
-import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from './error-reduction.ts';
+import {isHighVariance,highVarianceMessage,HIGH_SHORTAGE_MESSAGE,HIGH_OVERAGE_MESSAGE} from './error-reduction.ts';
+import {HighVarianceNotice} from './high-variance-notice.jsx';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
@@ -3763,7 +3764,7 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
-    if(!activeReport.baselineReport&&isHighShortage(activeResult.cashVariance)){setSubmitReportError(HIGH_SHORTAGE_MESSAGE);return;}
+    if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance)){setSubmitReportError(highVarianceMessage(activeResult.cashVariance));return;}
     if (activeReport.confirmed) {
       setSyncMessage(`This report is locked${activeReport.serverMeta?.reportId ? ` as ${activeReport.serverMeta.reportId}` : ""}. Request an admin correction to change it.`);
       return;
@@ -3824,6 +3825,7 @@ export default function App() {
   }
 
   function submitConfirmedReport(extra = {}) {
+    if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance))return Promise.reject(new Error(highVarianceMessage(activeResult.cashVariance)));
     return saveReport({
       ...activeReport,
       confirmed: true,
@@ -4332,13 +4334,15 @@ function ConfirmReportDialog({ report, result, onGoBack, onConfirm, isSubmitting
 }
 
 function ReportSubmitErrorDialog({ message, onClose }) {
+  const highVariance=message===HIGH_SHORTAGE_MESSAGE||message===HIGH_OVERAGE_MESSAGE;
   const shouldReload = /newer|another device|restarted|older draft|changed while|reload/i.test(message);
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="submit-error-title">
-      <div className="modal-panel">
+      <div className={`modal-panel${highVariance?' variance-submit-dialog':''}`}>
         <div className="modal-header">
           <span>Report Not Submitted</span>
-          <h2 id="submit-error-title">Report Not Submitted</h2>
+          <h2 id="submit-error-title">{highVariance?'High variance':'Report Not Submitted'}</h2>
+          {highVariance&&<strong>Please double-check</strong>}
           <p>{message}</p>
         </div>
         <div className="modal-actions">
@@ -4428,6 +4432,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
+    !reportCompleted(report)&&!report.baselineReport&&isHighVariance(result.cashVariance)?highVarianceMessage(result.cashVariance):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
     !String(report.cashierName || "").trim() ? "Cashier name is required. Complete Step 7 before submitting." : "",
     !Array.isArray(report.tankRows) || report.tankRows.some((row) => row.actualDip === "" || row.actualDip === null || row.actualDip === undefined)
@@ -4566,6 +4571,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
       </div>}
 
       <div className="cashier-wizard-alerts">
+        {!reportCompleted(report)&&!openingSetupMode&&hasActualCashCounted(report)&&report.pumpRows.every(row=>row.closingEntered)&&<HighVarianceNotice variance={result.cashVariance} onReviewCash={()=>setWizardStep(0)} onReviewPumps={()=>setWizardStep(1)} onReviewPayments={()=>setWizardStep(3)}/>}
         {editingConflict && (
           <WarningBanner>
             Currently being edited on another device. Please wait before saving this station and shift.

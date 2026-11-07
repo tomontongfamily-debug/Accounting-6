@@ -2,6 +2,8 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PhotoReading,savePumpReading} from './upgrade-components.jsx';
 import {completedPhotoOcrEvidence} from './ocr-evidence.js';
+import {HighVarianceNotice} from './high-variance-notice.jsx';
+import {isHighVariance} from './error-reduction.ts';
 
 // Completely isolated functional fixture. Its fetch stub never delegates to
 // the network, and no account, station photo or signed URL is used.
@@ -9,6 +11,7 @@ window.__fueltechPilotConfig={mode:'shadow',start_date:'2026-11-06'};
 const editDemo=new URLSearchParams(location.search).get('edit')==='1';
 const confirmDemo=editDemo&&new URLSearchParams(location.search).get('confirm')==='1';
 const verifyConfirmation=confirmDemo&&new URLSearchParams(location.search).get('verify')==='1';
+const varianceDemo=new URLSearchParams(location.search).get('variance');
 const report={branch:'Latency demo',date:'2026-11-06',shiftId:'shift-2',pilotRevision:1,
   pumpRows:(editDemo?[1]:[1,2]).map(number=>({id:'isolated-'+number,pump:'Pump '+number,nozzle:'Regular',product:'Regular',opening:10000,closing:'',readingRevision:0,readingConfirmed:false}))};
 const calls=[],shown=new Map(),started=performance.now();
@@ -46,6 +49,7 @@ if(editDemo){
   document.querySelector('body>p').textContent=confirmDemo?'Isolated app demo. Check the sample reading, then confirm a second time. No station records are changed.':'Isolated app demo. The sample photo says 10010.12; the simulated OCR suggestion is wrong. Tap Edit number to compare and correct it. No station records are changed.';
 }
 function update(){
+  if(varianceDemo)return;
   if(editDemo){evidence.textContent='App demo · sample photo and simulated OCR\n'+(confirmationAudit||'Edit the number using the enlarged photo.')+(errors.length?'\nERROR: '+errors.join('; '):'');return;}
   for(const card of cards.querySelectorAll('[data-pump-row-id]')){
     if([...card.querySelectorAll('[role=status]')].some(node=>node.textContent.includes('Reading found:'))&&!shown.has(card.dataset.pumpRowId))shown.set(card.dataset.pumpRowId,Math.round(performance.now()-started));
@@ -60,7 +64,7 @@ const root=createRoot(cards);
 function renderDemo(){root.render(<>{report.pumpRows.map(row=><PhotoReading key={row.id+':'+demoGeneration} row={row} report={report} recognize={recognize} onConfirm={async(next,savedPhoto,options)=>{
   const saved=savedPhoto||await savePumpReading(report,next,options);return saved.report.pumpRows.find(item=>item.id===next.id);
 }}/>)}</>);}
-renderDemo();
+if(!varianceDemo)renderDemo();
 async function until(predicate){const end=performance.now()+10000;while(!predicate()){if(performance.now()>end)throw Error('Fixture control did not become ready.');await delay(50);}}
 async function run(){
   try{
@@ -105,4 +109,15 @@ async function runConfirmationDemo(){
   }catch(error){errors.push(error.message);}
   update();
 }
-if(editDemo){complete=true;update();if(confirmDemo)runConfirmationDemo();}else run();
+if(varianceDemo){
+  complete=true;
+  document.querySelector('h1').textContent='High variance notification';
+  document.querySelector('body>p').textContent='Isolated app demo. This is the actual report notification with sample data. No station report is changed.';
+  const passed=!isHighVariance(1000)&&isHighVariance(1000.01)&&!isHighVariance(-3000)&&isHighVariance(-3000.01);
+  const audit=`${passed?'PASS':'FAIL'} · submission limits: above +1,000 or below -3,000. Exact boundaries allowed.`;
+  evidence.textContent=audit;
+  root.render(<HighVarianceNotice variance={varianceDemo==='overage'?1000.01:-3000.01}
+    onReviewCash={()=>{evidence.textContent=audit+'\nReview cash count selected.';}}
+    onReviewPumps={()=>{evidence.textContent=audit+'\nReview pump readings selected.';}}
+    onReviewPayments={()=>{evidence.textContent=audit+'\nReview payments and deductions selected.';}}/>);
+}else if(editDemo){complete=true;update();if(confirmDemo)runConfirmationDemo();}else run();
