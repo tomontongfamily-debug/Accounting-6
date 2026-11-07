@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {compute} from '../src/accounting-engine.js';
-import {cashNeedsRecount,isHighShortage,HIGH_SHORTAGE_MESSAGE,reportIssues} from '../pilot/domain.mjs';
+import {cashNeedsRecount,isHighShortage,isHighOverage,isHighVariance,highVarianceMessage,HIGH_SHORTAGE_MESSAGE,HIGH_OVERAGE_MESSAGE,reportIssues} from '../pilot/domain.mjs';
 import {validateSubmission} from '../api/reports/save.js';
 
 function ready(cash=1000){
@@ -47,5 +47,37 @@ test('a newer authoritative price cannot bypass the shortage check using an olde
  const f=ready(6500);assert.equal(compute(f.report).cashVariance,0);
  f.state.priceBook.Liloan[f.report.date]={Premium:70,Regular:100,Diesel:60};
  await assert.rejects(runAction(f.state,f.cashier,'/api/reports/save',{report:f.report,operation:'submit'}),error=>error.message===HIGH_SHORTAGE_MESSAGE);
+ assert.equal(f.state.reports[f.key].confirmed,false);
+});
+
+test('positive submission limit is one thousand with inclusive boundaries and private messages',()=>{
+ for(const [variance,blocked] of [[100,false],[100.01,false],[999.99,false],[1000,false],[1000.01,true],[-3000,false],[-3000.01,true],[NaN,false],[Infinity,false]])assert.equal(isHighVariance(variance),blocked);
+ assert.equal(isHighOverage(1000),false);assert.equal(isHighOverage(1000.01),true);
+ assert.equal(highVarianceMessage(1000),'');assert.equal(highVarianceMessage(1000.01),HIGH_OVERAGE_MESSAGE);assert.equal(highVarianceMessage(-3000.01),HIGH_SHORTAGE_MESSAGE);
+ assert.doesNotMatch(HIGH_OVERAGE_MESSAGE,/[0-9₱]/);
+});
+
+test('pilot and legacy submissions reject high overages while preserving saved cash and readings',async()=>{
+ for(const [cash,allowed] of [[7500,true],[7500.01,false]]){
+  const f=ready(cash);f.report.tankRows.forEach(row=>row.actualDip=1000);const before=structuredClone(f.state);
+  assert.equal(validateSubmission(f.report),allowed?'':HIGH_OVERAGE_MESSAGE);
+  if(allowed)assert.equal((await runAction(f.state,f.cashier,'/api/reports/save',{report:f.report,operation:'submit'})).result.report.confirmed,true);
+  else {await assert.rejects(runAction(f.state,f.cashier,'/api/reports/save',{report:f.report,operation:'submit'}),error=>error.message===HIGH_OVERAGE_MESSAGE);assert.deepEqual(f.state,before);}
+ }
+});
+
+test('a high positive variance can be recounted again without replacing the original count',async()=>{
+ const f=ready(9000);
+ const recounted=await runAction(f.state,f.cashier,'/api/demo/cash-recount',{report:f.report,denominations:{1000:8}});
+ assert.equal(recounted.result.report.actualCashCounted,8000);assert.equal(recounted.result.report.initialCashDenominations[1000],9);
+ await assert.rejects(runAction(recounted.state,f.cashier,'/api/reports/save',{report:recounted.result.report,operation:'submit'}),error=>error.message===HIGH_OVERAGE_MESSAGE);
+ const final=await runAction(recounted.state,f.cashier,'/api/demo/cash-recount',{report:recounted.result.report,denominations:{1000:7}});
+ assert.equal((await runAction(final.state,f.cashier,'/api/reports/save',{report:final.result.report,operation:'submit'})).result.report.confirmed,true);
+ assert.equal(final.result.report.initialCashDenominations[1000],9);
+});
+
+test('a newer lower selling price cannot bypass the positive variance block',async()=>{
+ const f=ready(6500);f.state.priceBook.Liloan[f.report.date]={Premium:70,Regular:50,Diesel:60};
+ await assert.rejects(runAction(f.state,f.cashier,'/api/reports/save',{report:f.report,operation:'submit'}),error=>error.message===HIGH_OVERAGE_MESSAGE);
  assert.equal(f.state.reports[f.key].confirmed,false);
 });

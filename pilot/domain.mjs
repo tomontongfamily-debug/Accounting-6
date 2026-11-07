@@ -2,8 +2,13 @@
 export const ERROR_CATEGORIES = ['CASH_VARIANCE', 'PUMP_READING', 'PUMP_OCR_CORRECTION', 'ONLINE_PAY', 'PO', 'REDEMPTION', 'MANUAL_DEDUCTION', 'FUEL_PRICE', 'MID_SHIFT_PRICE', 'TANK_DELIVERY', 'BANK_DEPOSIT', 'BANK_VERIFIER', 'OTHER'];
 export function money(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 export const SHORTAGE_LIMIT = 3000;
+export const OVERAGE_LIMIT = 1000;
 export const HIGH_SHORTAGE_MESSAGE = 'Report has high negative variance. Review the report entries before submitting. If the entries are correct, contact your manager.';
+export const HIGH_OVERAGE_MESSAGE = 'Report has high positive variance. Review the report entries before submitting. If the entries are correct, contact your manager.';
 export function isHighShortage(variance) { return Number.isFinite(variance) && money(variance) < -SHORTAGE_LIMIT; }
+export function isHighOverage(variance) { return Number.isFinite(variance) && money(variance) > OVERAGE_LIMIT; }
+export function isHighVariance(variance) { return isHighShortage(variance) || isHighOverage(variance); }
+export function highVarianceMessage(variance) { return isHighShortage(variance) ? HIGH_SHORTAGE_MESSAGE : isHighOverage(variance) ? HIGH_OVERAGE_MESSAGE : ''; }
 export const CASH_DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
 export function denominationTotal(counts) {
     if (!counts || typeof counts !== 'object' || Array.isArray(counts) || !Object.values(counts).some(v => v !== '' && v != null))

@@ -9,7 +9,7 @@ import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 import { saveLivePilotCorrection } from "../../pilot/repository.mjs";
 import { validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
 import {compute} from '../../src/accounting-engine.js';
-import {isHighShortage,HIGH_SHORTAGE_MESSAGE} from '../../pilot/domain.mjs';
+import {isHighVariance,highVarianceMessage} from '../../pilot/domain.mjs';
 import { midShiftReadingIssues } from "../../src/mid-shift-price-change.js";
 
 const LEASE_MS = 2 * 60_000;
@@ -121,7 +121,7 @@ export function validateSubmission(report) {
     }
   }
   const totals=compute({...report,coke:report.coke||{},purchaseRows:report.purchaseRows||[],poRows:report.poRows||[],deductions:report.deductions||{}});
-  if(!report.baselineReport&&isHighShortage(totals.cashVariance))return HIGH_SHORTAGE_MESSAGE;
+  if(!report.baselineReport&&isHighVariance(totals.cashVariance))return highVarianceMessage(totals.cashVariance);
   return "";
 }
 
