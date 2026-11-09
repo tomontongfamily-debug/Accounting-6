@@ -2,7 +2,7 @@ import { hasPumpOpening } from './fuel-leak-loss.js';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
 import { additionalReviewFlags } from './accounting-review.js';
-import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters} from './fuel-leak-loss.js';
+import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters, returnedCalibrationSummary, calibrationAmount} from './fuel-leak-loss.js';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cashierReportDateDisplay } from "./cashier-date.js";
 import { OWNER_PERIOD_OPTIONS, ownerCashTrendRows, ownerPeriodRange, ownerReportsForPeriod } from "./owner-period.js";
@@ -992,15 +992,15 @@ function compute(report) {
   const cvFuelIssues = cvFuelIssueSummary(report);
   const cvFuelExcessProducts = [];
   const leakLoss = fuelLeakLossSummary(report, row => pumpRowSales(report, row));
-  const calibrationLiters = tankTotalsByProduct(report, "calibration");
+  const calibration = Object.fromEntries(returnedCalibrationSummary(report).map(row => [row.product, row]));
   FUEL_TYPES.forEach((product) => {
     const grossLiters = n(fuelLiters[product]);
     const grossSales = n(fuelSalesByProduct[product]);
-    const returnedCalibration = Math.min(grossLiters, n(calibrationLiters[product]));
-    const averagePrice = grossLiters > 0 ? grossSales / grossLiters : Math.max(0, n(report.prices?.[product]));
-    if (cvFuelIssues.liters[product] > grossLiters - returnedCalibration - leakLoss.meteredLiters[product] + .001 || cvFuelIssues.sales[product] > grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product] + .01) cvFuelExcessProducts.push(product);
+    const returnedCalibration = Math.min(grossLiters, calibration[product].calibrationLiters);
+    const returnedCalibrationSales = calibration[product].salesAdjustment;
+    if (cvFuelIssues.liters[product] > grossLiters - returnedCalibration - leakLoss.meteredLiters[product] + .001 || cvFuelIssues.sales[product] > grossSales - returnedCalibrationSales - leakLoss.meteredSales[product] + .01) cvFuelExcessProducts.push(product);
     fuelLiters[product] = Math.max(0, grossLiters - returnedCalibration - leakLoss.meteredLiters[product] - cvFuelIssues.liters[product]);
-    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibration * averagePrice - leakLoss.meteredSales[product] - cvFuelIssues.sales[product]);
+    fuelSalesByProduct[product] = Math.max(0, grossSales - returnedCalibrationSales - leakLoss.meteredSales[product] - cvFuelIssues.sales[product]);
   });
 
   const totalLiters = FUEL_TYPES.reduce((sum, product) => sum + fuelLiters[product], 0);
@@ -2088,7 +2088,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
 
   const tankLedgerRows = [
     sheetTitle("TANK INVENTORY DETAIL", 18),
-    excelRow(["BRANCH", "DATE", "SHIFT", "TANK", "PRODUCT", "PREVIOUS DIP", "DELIVERY", "PULL OUT", "CALIBRATION", "NET PUMP OUTFLOW", "FUEL LEAK LOSS (L)", "OUTSIDE METER LOSS (L)", "EXPECTED DIP", "ACTUAL DIP", "ORIGINAL DIFFERENCE", "REFERENCE DIFFERENCE", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
+    excelRow(["BRANCH", "DATE", "SHIFT", "TANK", "PRODUCT", "PREVIOUS DIP", "DELIVERY", "PULL OUT", "CALIBRATION (PHP)", "NET PUMP OUTFLOW", "FUEL LEAK LOSS (L)", "OUTSIDE METER LOSS (L)", "EXPECTED DIP", "ACTUAL DIP", "ORIGINAL DIFFERENCE", "REFERENCE DIFFERENCE", "CASHIER", "REPORT STATUS"].map((label) => excelCell(label, "Header"))),
     ...exportReports.flatMap((report) => {
       const result = compute(report);
       return result.tankRows.map((row) => excelRow([
@@ -2100,7 +2100,7 @@ function exportDetailedReportsToExcel(reports, summary, startDate, endDate) {
         excelCell(n(row.opening)),
         excelCell(n(row.delivery)),
         excelCell(n(row.pullOut)),
-        excelCell(n(row.calibration)),
+        excelCell(calibrationAmount(report, row)),
         excelCell(n(result.tankOutflowLiters[row.product])),
         excelCell(n(row.leakLossLiters)),
         excelCell(n(row.unmeteredLeakLossLiters)),

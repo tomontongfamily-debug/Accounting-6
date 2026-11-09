@@ -4995,3 +4995,7 @@ tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.calibration-peso-input { display: flex; align-items: center; gap: 8px; }
+.calibration-peso-input > span { font-size: 1.3rem; font-weight: 700; }
+.calibration-peso-input input { flex: 1; min-width: 0; }
+.calibration-section label small { display: block; margin-top: 4px; line-height: 1.4; }

@@ -35,7 +35,7 @@ const actions={
   REDEMPTION:'Check the POS points and redemption transaction shown in the issue details.',
   BANK_DEPOSIT:'Compare the receipt with the selected source shifts and assigned amounts.',
   BANK_VERIFIER:'Check the bank reference and the verifier’s rejection reason.',
-  CALIBRATION:'Check the litres actually returned to the tank. Correct the calibration entry, not the pump readings.',
+  CALIBRATION:'Check the peso amount shown by the pump for calibration fuel returned to the tank, and compare it with the saved readings.',
   FUEL_PRICE:'Compare the saved selling price with the approved price for this shift.',
   MID_SHIFT_PRICE:'Check the change time, price and pump readings at the price change.',
   TANK_DELIVERY:'Compare the delivery entry with its delivery receipt.',
