@@ -1,9 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readingWithVisibleDecimal,supportedTotalizerReading,corroboratedShortTotalizerSymbols,segmentDisplaySymbols,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
+import {readingWithVisibleDecimal,supportedTotalizerReading,provisionalShortTotalizerReading,corroboratedShortTotalizerSymbols,segmentDisplaySymbols,refineLeadingLcdDigit,refineNarrowLcdDigits,totalizerRegions,totalizerMask,totalizerCrop,withoutDisplayFrame,verifyLcdDigits} from '../src/totalizer-image.js';
 
 const symbols=text=>[...text].map((text,i)=>({text,confidence:95,bbox:{x0:20+i*60,x1:60+i*60,y0:20,y1:120}}));
 const dot=index=>({x:20+index*60-15,y:110,width:8,height:9,area:65});
+
+test('a short neural rescue candidate retains complete physical cells and visible decimal',()=>{
+ const detected=symbols('1292482'),physical=symbols('1292482');physical[2].text='?';
+ assert.equal(provisionalShortTotalizerReading(detected,[dot(5)],physical),12924.82);
+ assert.equal(provisionalShortTotalizerReading(detected,[],physical),null);
+ assert.equal(provisionalShortTotalizerReading(detected,[dot(4),dot(5)],physical),null);
+ assert.equal(provisionalShortTotalizerReading(detected,[dot(5)],physical.slice(1)),null);
+ assert.equal(provisionalShortTotalizerReading(detected,[dot(5)],symbols('01292482')),null);
+ const conflict=structuredClone(physical);conflict[1].text='3';
+ assert.equal(provisionalShortTotalizerReading(detected,[dot(5)],conflict),null);
+ for(const change of [{confidence:89},{lcdAmbiguous:true}]){
+  const weak=structuredClone(detected);Object.assign(weak[0],change);
+  assert.equal(provisionalShortTotalizerReading(weak,[dot(5)],physical),null);
+ }
+});
 
 test('four- and five-integer displays require exact independent digits and a visible two-place decimal',()=>{
  for(const [text,integerDigits,value] of [['780855',4,7808.55],['1780855',5,17808.55],['007855',4,78.55]]){

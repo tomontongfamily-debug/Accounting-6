@@ -33,9 +33,10 @@ export function decodeTotalizerTokens(data,dims,characters){
   const match=trimmed.match(/^(?:ER|R)?([\d.,]+)(?:L(?:ITER|ITI|IT|I7|I)?)?$/i);
   if(!match)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
   const digits=match[1].replace(/[.,]/g,'');
-  if(digits.length!==8)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
+  const explicit=match[1].match(/^(\d{4,5})[.,](\d{2})$/);
+  if(digits.length!==8&&!explicit)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
   const digitScores=[...text].map((c,i)=>({c,p:confidences[i]})).filter(({c})=>/^\d$/.test(c)).map(x=>x.p);
-  return {text,value:Number(digits)/100,score:digitScores.reduce((a,b)=>a+b,0)/8,integerConfidence:Math.min(...digitScores.slice(0,6)),fractionConfidence:Math.min(...digitScores.slice(6)),digitConfidences:digitScores};
+  return {text,value:Number(digits)/100,score:digitScores.reduce((a,b)=>a+b,0)/digits.length,integerConfidence:Math.min(...digitScores.slice(0,digits.length-2)),fractionConfidence:Math.min(...digitScores.slice(digits.length-2)),digitConfidences:digitScores};
 }
 
 function tensorForCrop(pixels,width,height,region,inputHeight){

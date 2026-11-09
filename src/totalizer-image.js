@@ -136,6 +136,16 @@ export function readingWithVisibleDecimal(symbols,components,format){
 // Short and long displays need the same independently read physical cells and
 // visible two-place decimal. Do not infer missing zeros or accept a cropped
 // prefix simply because its remaining digits form a plausible smaller reading.
+export function provisionalShortTotalizerReading(symbols,components,segments){
+  const digits=symbols.filter(s=>/^\d$/.test(s.text));
+  if(![6,7].includes(digits.length)||digits.some(s=>s.confidence<90||s.lcdAmbiguous)||segments.length!==digits.length||
+    segments.some((cell,i)=>cell.text!=='?'&&cell.text!==digits[i].text))return null;
+  const cells=segments.map((cell,i)=>({...cell,text:digits[i].text,confidence:digits[i].confidence}));
+  // This is only a candidate for independent neural corroboration, never an
+  // accepted reading. Count, cell boxes, and the decimal all come from the image.
+  return readingWithVisibleDecimal(cells,components,{integerDigits:digits.length-2,decimalPlaces:2});
+}
+
 export function corroboratedShortTotalizerSymbols(symbols,components,segments,image){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   if(digits.length===6||digits.length===7){

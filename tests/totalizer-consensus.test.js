@@ -1,9 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseTotalizerReading,chooseFastTotalizerReading} from '../src/totalizer-consensus.js';
+import {chooseTotalizerReading,chooseFastTotalizerReading,chooseRescueTotalizerReading} from '../src/totalizer-consensus.js';
 import {decodeTotalizerTokens} from '../src/totalizer-neural.js';
 const nn=(value,extra={})=>({value,score:.99,integerConfidence:.99,fractionConfidence:.99,inputHeight:48,...extra});
 const grid=(value,extra={})=>[{value,score:.005,margin:.14,digitMargins:Array(8).fill(.14),...extra}];
+
+test('resolution rescue requires two confident neural resolutions and no conflicting reading',()=>{
+ const primary=876712.21,neural=[32,48,64].map(inputHeight=>nn(primary,{inputHeight}));
+ assert.equal(chooseRescueTotalizerReading({primary,neural}),primary);
+ assert.equal(chooseRescueTotalizerReading({primary:876712.27,neural}),null,'Reflection-induced primary seven must not override the visible one');
+ for(const candidates of [[],[nn(primary)],[nn(primary),nn(primary)],
+  [nn(primary),nn(primary,{inputHeight:32,integerConfidence:.89})],
+  [nn(primary),nn(primary,{inputHeight:32,fractionConfidence:.94})],
+  [...neural,nn(876712.27,{score:.3})]]){
+  assert.equal(chooseRescueTotalizerReading({primary,neural:candidates}),null);
+ }
+ assert.equal(chooseRescueTotalizerReading({neural}),null);
+});
+
+test('neural short counters need an explicit two-place decimal and retain per-digit confidence',()=>{
+ const characters=['blank',...'0123456789.,'];
+ const decode=text=>{
+  const data=new Float32Array(text.length*2*characters.length);
+  for(let i=0;i<text.length;i++){data[i*2*characters.length+characters.indexOf(text[i])]=.99;data[(i*2+1)*characters.length]=1;}
+  return decodeTotalizerTokens(data,[1,text.length*2,characters.length],characters);
+ };
+ for(const text of ['9881.20','12924.82','25065.00','12924,82']){
+  const result=decode(text);
+  assert.equal(result.value,Number(text.replace(',','.')));
+  assert.equal(result.digitConfidences.length,text.length-1);
+  assert.ok(result.integerConfidence>.98&&result.fractionConfidence>.98);
+ }
+ for(const text of ['988120','1292482','988.120','98812.0','9881..20','1234567.89'])assert.equal(decode(text).value,null,text);
+});
 
 test('the fast path needs independent agreement in every nonempty view and preserves full-grid outcomes',()=>{
  const value=123456.78,neural=[32,48,64].map(inputHeight=>nn(value,{inputHeight}));

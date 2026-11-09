@@ -1,5 +1,55 @@
 # Pump reader timing and recovery
 
+## November 9: bounded resolution rescue (`lcd-format-evidence-12`)
+
+Recognition keeps the existing 1280-pixel first pass. Only an abstention can
+try the original photo again at up to 1800 pixels, with at least eight seconds
+remaining in the same 30-second deadline. A successful first pass returns
+immediately. Every higher-resolution result needs repeated primary agreement,
+physical decimal/layout evidence, and two confident neural resolutions. Any
+decoded conflicting neural view rejects the rescue. Physical and unexplained
+OCR nine-cell guards still block the fallback; extra digits are never dropped.
+
+Four/five-integer displays may also recover when complete independent cells
+contain an undecided binary stroke. Repeated qualified primary passes, the
+physical two-place decimal, no conflicting physical digit, and the same strict
+neural agreement are required. The neural decoder accepts shorter counters
+only with an explicit two-place decimal. It never pads hidden zeros. Photo
+inference stays local; cashier confirmation and accounting records are unchanged.
+
+The exact same 62 private reference photos were replayed before and after:
+38 historical/compatibility/Barili examples plus 24 recent photos, four from
+each of six stations. Correct automatic readings increased from 31 to 39;
+abstentions fell from 31 to 23, with zero incorrect suggestions in either run
+and all 31 prior successes retained. This is a selected regression corpus,
+not a measured production failure rate. The reflection-heavy Barili example
+still abstains when primary and neural readers disagree on the last digit.
+The separate-row Moalboal overflow counter also remains unverified.
+
+Two recovered photos additionally passed the built camera → OCR → fixture API
+save → explicit cashier confirmation flow, including the five-integer counter.
+Worker/deadline/format/background browser checks passed (six tests; Firefox and
+WebKit skipped because those engines are unavailable). A seven-photo replay
+with 4× desktop CPU throttling returned five correct readings and two intended
+abstentions, no errors or wrong suggestions. This does not establish physical
+phone timings. Unit tests (369), lint, typecheck, production build, and the data
+preservation/model integrity gates passed.
+
+Reproduce locally with private `{file, expected}` manifests; expected readings
+are used only by the harness after recognition and never supplied to the reader:
+
+```powershell
+node scripts/benchmark-totalizer.mjs manifest.json results.json baseline.json
+$env:TOTALIZER_TEST_PHOTO = '<absolute path to reference photo>'
+$env:TOTALIZER_TEST_EXPECTED = '<independently verified reading>'
+node --test tests/pilot-totalizer-ocr-ui.test.mjs
+```
+
+The comparison fails on a wrong suggestion, reader error, lost baseline
+success, or lack of improvement. Keep private manifests, photos and results
+outside version control. Optional `TOTALIZER_CPU_THROTTLE=4` is a desktop
+emulation check only.
+
 The phone runs OCR locally while the photo uploads. Clear photos target a
 result within 20 seconds. Every recognition attempt has a 30-second deadline,
 including queue time. A deadline produces an explicit retry result rather than

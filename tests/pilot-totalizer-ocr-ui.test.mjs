@@ -8,7 +8,8 @@ import {fixture} from './pilot-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {pumpCameraBootstrap,capturePumpCamera} from './pilot-camera-fixture.mjs';
 
-test('Real seven-segment OCR reads the supplied glare photo through the phone camera flow',{skip:!process.env.TOTALIZER_TEST_PHOTO},async()=>{
+test('Real OCR reads and saves the supplied station photo through the phone camera flow',{skip:!process.env.TOTALIZER_TEST_PHOTO},async()=>{
+ const expected=Number(process.env.TOTALIZER_TEST_EXPECTED||439931.31);
  const server=await preview({preview:{host:'127.0.0.1',port:4335,strictPort:true}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
@@ -16,8 +17,8 @@ test('Real seven-segment OCR reads the supplied glare photo through the phone ca
   const errors=[];page.on('pageerror',e=>errors.push(e.message));let {state,key,report,cashier}=fixture();const uploads=new Map();let photoCount=0;
   // Only fixture data is changed. The recognizer never receives an opening value.
   for(const r of Object.values(state.reports)){
-   r.pumpRows[0].opening=439853.29;
-   if(r.confirmed)r.pumpRows[0].closing=439853.29;
+   r.pumpRows[0].opening=expected-10;
+   if(r.confirmed)r.pumpRows[0].closing=expected-10;
   }
   await page.route('**/api/**',async request=>{
    const path=new URL(request.request().url()).pathname;let result,status=200;
@@ -39,17 +40,17 @@ test('Real seven-segment OCR reads the supplied glare photo through the phone ca
   assert.equal(await page.locator('input[type=file]').count(),0);
   await capturePumpCamera(page,card);
   const input=card.locator('input[inputmode=decimal]');
-  await page.waitForFunction(()=>[...document.querySelectorAll('input[inputmode=decimal]')].some(i=>i.value==='439931.31'),{},{timeout:120000});
-  assert.equal(await input.inputValue(),'439931.31');assert.notEqual(await input.getAttribute('readonly'),null);
+  await page.waitForFunction(expected=>[...document.querySelectorAll('input[inputmode=decimal]')].some(i=>Number(i.value)===expected),expected,{timeout:45000});
+  assert.equal(Number(await input.inputValue()),expected);assert.notEqual(await input.getAttribute('readonly'),null);
   assert.equal(photoCount,1);assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
-  assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,439931.31);
+  assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,expected);
   page.on('dialog',d=>{errors.push('Unexpected reading warning: '+d.message());return d.dismiss();});
   await confirmPumpReading(card);await card.getByText('✓ Complete',{exact:true}).waitFor();
-  assert.equal(state.reports[key].pumpRows[0].closing,439931.31);assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,439931.31);
+  assert.equal(state.reports[key].pumpRows[0].closing,expected);assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,expected);
   assert.equal(state.reports[key].confirmed,false);assert.equal(photoCount,1);
   assert.equal(await card.locator('input[inputmode=decimal]').count(),0);
   assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/}).count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);assert.deepEqual(errors,[]);
-  fs.mkdirSync('../../work/liloan-photo-cash-review',{recursive:true});await card.screenshot({path:'../../work/liloan-photo-cash-review/phone-automatic-43993131.png'});
+  fs.mkdirSync('test-output',{recursive:true});await card.screenshot({path:'test-output/phone-automatic-reading.png'});
  }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}
 });

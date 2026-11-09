@@ -3,8 +3,8 @@ import {preparePrimaryReaderFiles} from './ocr-downloads.js';
 import {analyzeTotalizerFrame,cancelTotalizerFrame} from './totalizer-frame-client.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
 import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
-import { chooseTotalizerReading, chooseFastTotalizerReading } from './totalizer-consensus.js';
-import { readingWithVisibleDecimal, supportedTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
+import { chooseTotalizerReading, chooseFastTotalizerReading, chooseRescueTotalizerReading } from './totalizer-consensus.js';
+import { readingWithVisibleDecimal, supportedTotalizerReading, provisionalShortTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
 import {createTotalizerTracer,traceSymbols,traceCandidates} from './totalizer-trace.js';
 import {canDismissNineCellHint} from './totalizer-format-evidence.js';
 
@@ -133,7 +133,17 @@ async function recognizePhoto(data,job){
     image=document.createElement('canvas');image.width=data.width;image.height=data.height;
     image.getContext('2d').putImageData(data,0,0);
   }
-  const scale=Math.min(1,1280/Math.max(image.width,image.height));
+  const first=await recognizeFrame(image,job,1280);
+  if(first!==null||Math.max(image.width,image.height)<=1280||job.deadline-performance.now()<8000)return first;
+  // Preserve the proven fast path. A second resolution only rescues abstentions
+  // and must agree with the independent neural reader within the same deadline.
+  job.trace('resolution-rescue',{maximumDimension:1800});
+  return recognizeFrame(image,job,1800,true);
+}
+
+async function recognizeFrame(image,job,maximumDimension,rescue=false){
+  job.check();
+  const scale=Math.min(1,maximumDimension/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
   const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
@@ -155,7 +165,7 @@ async function recognizePhoto(data,job){
   let worker;
   try{
     worker=await job.wait(primary.ready);job.check();
-    const readings=new Set(),evidence=new Map(),glyphs=[],layoutEvidence=[];
+    const readings=new Set(),evidence=new Map(),glyphs=[],layoutEvidence=[],shortVotes=new Map();
     let sensitiveMask;
     for(const [regionIndex,primary]of analysis.regions.entries()){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
@@ -195,6 +205,14 @@ async function recognizePhoto(data,job){
             // split one of the same eight physical cells, without adding a vote.
             if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)format.hints.push({regionId:regionIndex,layoutId:layoutIndex,symbols:translated});
             const confidenceAccepted=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous);
+            // A short display can have a weak binary stroke but clear color
+            // pixels. Keep a candidate only with complete physical cells, a
+            // visible decimal, and no independently conflicting cell. It still
+            // needs repeated primary passes and strict neural corroboration.
+            if(confidenceAccepted){
+              const provisional=provisionalShortTotalizerReading(translated,analysis.components,segments);
+              if(provisional!==null)shortVotes.set(provisional,(shortVotes.get(provisional)||0)+1);
+            }
             let value=confidenceAccepted?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
             if(job.tracing)job.trace('primary-pass',{regionIndex,layoutIndex,grow,pad,sensitive:!!sensitive,mode,
               confidence:Math.round(result.confidence*10)/10,confidenceAccepted,minimumOverallConfidence:verifiedLeading?40:70,
@@ -226,7 +244,7 @@ async function recognizePhoto(data,job){
     const formatEvidence=evaluateNineCellHints(layoutEvidence,{trace:job.tracing}),longDisplay=formatEvidence.blocked;
     job.trace('format-evidence',formatEvidence);
     job.trace('primary-result',{readings:[...readings],value,hasPhysicalEvidence:!!candidate,verified,longDisplay});
-    if(verified!==null){job.decision='primary-physical-verified';return verified;}
+    if(verified!==null&&!rescue){job.decision='primary-physical-verified';return verified;}
     // The existing neural/grid fallback fits eight cells. It cannot establish
     // a nine-cell reading and must not silently drop its leading digit.
     if(longDisplay){job.decision='nine-cell-fallback-blocked';return null;}
@@ -237,6 +255,14 @@ async function recognizePhoto(data,job){
       try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);job.check();if(job.tracing)job.trace('neural',{candidates:traceCandidates(result)});return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
     };
     let neural;
+    const shortCandidates=[...shortVotes].filter(([,votes])=>votes>=2).map(([v])=>v);
+    if((rescue&&value!==null)||(readings.size===0&&shortCandidates.length===1&&!longDisplay)){
+      neural=await readNeural();
+      const corroborated=chooseRescueTotalizerReading({primary:value??shortCandidates[0],neural});
+      job.decision=corroborated===null?'rescue-consensus-rejected':'rescue-consensus-accepted';
+      return corroborated;
+    }
+    if(rescue){job.decision='rescue-no-physical-proof';return null;}
     if(value!==null){
       neural=await readNeural();
       const fast=chooseFastTotalizerReading({tesseract:value,neural});

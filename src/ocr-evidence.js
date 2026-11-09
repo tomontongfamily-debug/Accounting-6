@@ -1,4 +1,4 @@
-export const TOTALIZER_VERSION='lcd-format-evidence-11';
+export const TOTALIZER_VERSION='lcd-format-evidence-12';
 export const OCR_ATTEMPT_TIMEOUT_MS=30000;
 
 // Completed evidence can travel with a queued photo. This never confirms a

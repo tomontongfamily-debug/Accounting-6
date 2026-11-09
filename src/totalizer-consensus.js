@@ -19,6 +19,15 @@ export function chooseFastTotalizerReading({tesseract=null,neural=[]}){
   return chooseTotalizerReading({tesseract,neural});
 }
 
+// A new resolution must never turn a previously rejected reflection into an
+// automatic reading on physical verification alone. Require two confident
+// neural resolutions and reject even a weak conflicting decoded view.
+export function chooseRescueTotalizerReading({primary=null,neural=[]}){
+  if(primary===null||neural.some(r=>r.value!==null&&r.value!==primary))return null;
+  const confident=neural.filter(r=>r.value===primary&&r.score>=.95&&r.integerConfidence>=.9&&r.fractionConfidence>=.95);
+  return new Set(confident.map(r=>r.inputHeight)).size>=2?primary:null;
+}
+
 export function chooseTotalizerReading({verified=null,tesseract=null,grid=[],neural=[],glyphs=[]}){
   if(verified!==null)return verified;
   const physical=grid[0],goodGrid=physical&&physical.score<.08&&physical.margin>.04;
