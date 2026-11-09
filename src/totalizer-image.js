@@ -1,7 +1,10 @@
+import {classifyTotalizerGlyph} from './totalizer-glyph-model.js';
+import {confirmedTotalizerFormat} from './totalizer-formats.js';
+
 // Local contrast removes broad reflections while retaining narrow LCD segments.
 // Coordinates are found from the image; no pump-specific crop or expected value.
-export function totalizerRegions(gray,width,height){
-  const mask=totalizerMask(gray,width,height);
+export function totalizerRegions(gray,width,height,threshold=10){
+  const mask=totalizerMask(gray,width,height,threshold);
   return totalizerRegionsFromMask(mask,width,height);
 }
 
@@ -113,7 +116,7 @@ function rowComponents(mask,width,left,right,top,bottom){
   }return parts;
 }
 
-export function readingWithVisibleDecimal(symbols,components,format){
+function decimalEvidence(symbols,components,{smallPoint=false}={}){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   if(digits.length<4||digits.length>12||digits.some(s=>s.confidence<70))return null;
   const heights=digits.map(s=>s.bbox.y1-s.bbox.y0).sort((a,b)=>a-b),h=heights[Math.floor(heights.length/2)];
@@ -123,11 +126,18 @@ export function readingWithVisibleDecimal(symbols,components,format){
   const centers=digits.map(s=>(s.bbox.x0+s.bbox.x1)/2);
   if(centers.some((x,i)=>i>0&&x<=centers[i-1]))return null;
   if(digits.some((s,i)=>i>0&&digits[i-1].bbox.x1-s.bbox.x0>h*.25))return null;
-  const points=components.filter(c=>c.width>=Math.max(2,h*.05)&&c.height>=Math.max(2,h*.05)&&c.width<h*.22&&c.height<h*.22&&c.width/c.height>.5&&c.width/c.height<1.15&&c.area/(c.width*c.height)>.6&&Math.abs(c.y+c.height-bottom)<h*.15&&c.y>bottom-h*.25&&c.x>centers[0]&&c.x<centers.at(-1));
+  const minimumPoint=h*(smallPoint ? .025 : .05),minimumAspect=smallPoint ? .4 : .5;
+  const points=components.filter(c=>c.width>=Math.max(2,minimumPoint)&&c.height>=Math.max(2,minimumPoint)&&c.width<h*.22&&c.height<h*.22&&c.width/c.height>minimumAspect&&c.width/c.height<1.15&&c.area/(c.width*c.height)>.6&&Math.abs(c.y+c.height-bottom)<h*.15&&c.y>bottom-h*.25&&c.x>centers[0]&&c.x<centers.at(-1));
   // Broken strokes can resemble dots inside earlier digits. Only dots that can
   // represent the display's one-to-three decimal places are candidates.
   const positions=new Set(points.map(p=>({x:p.x+p.width/2,i:centers.filter(x=>x<p.x+p.width/2).length})).filter(({x,i})=>digits.length-i>=1&&digits.length-i<=3&&x>=digits[i-1].bbox.x1-h*.12&&x<=digits[i].bbox.x0+h*.12).map(p=>p.i));
-  if(positions.size!==1)return null;
+  return {digits,positions};
+}
+
+export function readingWithVisibleDecimal(symbols,components,format,options){
+  const evidence=decimalEvidence(symbols,components,options);
+  if(!evidence||evidence.positions.size!==1)return null;
+  const {digits,positions}=evidence;
   const decimal=[...positions][0],places=digits.length-decimal;if(places<1||places>3)return null;
   if(format&&(decimal!==format.integerDigits||places!==format.decimalPlaces))return null;
   const text=digits.map(s=>s.text).join('');return Number(text.slice(0,decimal)+'.'+text.slice(decimal));
@@ -136,14 +146,31 @@ export function readingWithVisibleDecimal(symbols,components,format){
 // Short and long displays need the same independently read physical cells and
 // visible two-place decimal. Do not infer missing zeros or accept a cropped
 // prefix simply because its remaining digits form a plausible smaller reading.
-export function provisionalShortTotalizerReading(symbols,components,segments){
+export function provisionalShortTotalizerReading(symbols,components,segments,options){
   const digits=symbols.filter(s=>/^\d$/.test(s.text));
   if(![6,7].includes(digits.length)||digits.some(s=>s.confidence<90||s.lcdAmbiguous)||segments.length!==digits.length||
     segments.some((cell,i)=>cell.text!=='?'&&cell.text!==digits[i].text))return null;
   const cells=segments.map((cell,i)=>({...cell,text:digits[i].text,confidence:digits[i].confidence}));
   // This is only a candidate for independent neural corroboration, never an
-  // accepted reading. Count, cell boxes, and the decimal all come from the image.
-  return readingWithVisibleDecimal(cells,components,{integerDigits:digits.length-2,decimalPlaces:2});
+  // accepted reading. Cell count/boxes come from the image; decimal placement
+  // needs either a visible point or the explicitly confirmed hardware format.
+  return readingWithConfirmedFormat(cells,components,options);
+}
+
+function readingWithConfirmedFormat(cells,components,options){
+  const format=confirmedTotalizerFormat(options?.format);
+  if(!format)return readingWithVisibleDecimal(cells,components,{integerDigits:cells.length-2,decimalPlaces:2},options);
+  if(cells.length!==format.integerDigits+format.decimalPlaces)return null;
+  const evidence=decimalEvidence(cells,components,{smallPoint:true});
+  if(!evidence||evidence.positions.size>1||evidence.positions.size===1&&![...evidence.positions].includes(format.integerDigits))return null;
+  const text=cells.map(c=>c.text).join('');
+  return Number(text.slice(0,format.integerDigits)+'.'+text.slice(format.integerDigits));
+}
+
+export function physicalTotalizerCandidate(cells,components,options){
+  if(![6,7,8].includes(cells.length)||cells.some(c=>!/^\d$/.test(c.text)||c.confidence<90||c.lcdAmbiguous)||
+    cells.filter(c=>c.direct).length<4)return null;
+  return readingWithConfirmedFormat(cells,components,options);
 }
 
 export function corroboratedShortTotalizerSymbols(symbols,components,segments,image){
@@ -217,7 +244,7 @@ export function verifyLcdDigits(symbols,gray,width,height,segments=[],{requireEv
   return true;
 }
 
-export function segmentDisplaySymbols(mask,width,region){
+export function segmentDisplaySymbols(mask,width,region,{shear=false,learned=false}={}){
   const h=region.bandHeight;
   const parts=rowComponents(mask,width,region.x,region.x+region.width,region.y,region.y+region.height)
     .filter(c=>c.area>=h*.6&&c.height>=h*.12&&c.width<h*.9&&c.height<h*1.15&&!(c.width<h*.22&&c.height>h*.8))
@@ -252,6 +279,26 @@ export function segmentDisplaySymbols(mask,width,region){
     });
     return halves.every(c=>c&&c.bottom-c.top>=h*.7&&c.right-c.left>=w*.65&&c.right-c.left<=w*1.35)?halves:[g];
   });
+  if(learned)cells=cells.flatMap(g=>{
+    const span=g.right-g.left;
+    if(span<w*1.25||span>w*1.9)return [g];
+    let best=null;
+    for(let split=Math.ceil(g.left+w*.15);split<g.right-w*.15;split++){
+      let ink=0;for(let y=g.top;y<g.bottom;y++)ink+=mask[y*width+split]||0;
+      if(ink>h*.15)continue;
+      const halves=[[g.left,split],[split,g.right]].map(([left,right])=>{
+        const parts=rowComponents(mask,width,left,right,g.top,g.bottom).filter(c=>c.area>=h*.4&&c.height>=h*.1);
+        if(!parts.length)return null;
+        return {left:Math.min(...parts.map(c=>c.x)),right:Math.max(...parts.map(c=>c.x+c.width)),top:Math.min(...parts.map(c=>c.y)),bottom:Math.max(...parts.map(c=>c.y+c.height))};
+      });
+      if(halves.some(c=>!c||c.bottom-c.top<h*.7))continue;
+      const widths=halves.map(c=>c.right-c.left);
+      const narrow=i=>widths[i]>=h*.07&&widths[i]<=h*.3&&widths[1-i]>=w*.65&&widths[1-i]<=w*1.35;
+      if(!(narrow(0)||narrow(1)))continue;
+      if(!best||ink<best.ink)best={ink,halves};
+    }
+    return best?.halves||[g];
+  });
   const positions=[[.5,.06],[.85,.25],[.85,.75],[.5,.94],[.15,.75],[.15,.25],[.5,.5]];
   return cells.map(g=>{
     const gh=g.bottom-g.top,gw=g.right-g.left,left=gw<h*.3?g.right-w:g.left,cw=gw<h*.3?w:gw;
@@ -264,7 +311,25 @@ export function segmentDisplaySymbols(mask,width,region){
       return count/total;
     });
     const matches=lcdPatterns.map((pattern,digit)=>({pattern,digit})).filter(({pattern})=>[...pattern].every((on,i)=>on==='1'?coverage[i]>=.6:coverage[i]<=.15));
-    return {text:matches.length===1?String(matches[0].digit):'?',confidence:99,bbox:{x0:g.left,x1:g.right,y0:g.top,y1:g.bottom},coverage};
+    let text=matches.length===1?String(matches[0].digit):'?';
+    const direct=text!=='?';
+    if(learned&&text==='?')text=classifyTotalizerGlyph(coverage)??'?';
+    if(shear&&text==='?'){
+      const votes=new Map();
+      for(const slant of [-.15,-.1,-.05,0,.05,.1,.15,.2,.25,.3,.35]){
+        const fitted=positions.map(([x,y])=>{
+          let count=0,total=0;
+          for(let dy=-.035;dy<=.035;dy+=.0175)for(let dx=-.06;dx<=.06;dx+=.03){
+            const ix=Math.round(left+(x+dx+(.5-y)*slant)*cw),iy=Math.round(g.top+(y+dy)*gh);
+            if(ix>=0&&ix<width){count+=mask[iy*width+ix]||0;total++;}
+          }
+          return count/total;
+        });
+        for(const [digit,pattern]of lcdPatterns.entries())if([...pattern].every((on,i)=>on==='1'?fitted[i]>=.6:fitted[i]<=.15))votes.set(String(digit),(votes.get(String(digit))||0)+1);
+      }
+      if(votes.size===1&&[...votes.values()][0]>=2)text=[...votes.keys()][0];
+    }
+    return {text,confidence:99,bbox:{x0:g.left,x1:g.right,y0:g.top,y1:g.bottom},coverage,direct};
   });
 }
 

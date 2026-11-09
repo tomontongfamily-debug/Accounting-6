@@ -3,10 +3,12 @@ import {preparePrimaryReaderFiles} from './ocr-downloads.js';
 import {analyzeTotalizerFrame,cancelTotalizerFrame} from './totalizer-frame-client.js';
 import { TOTALIZER_VERSION } from './ocr-evidence.js';
 import { neuralTotalizerCandidatesAsync as neuralTotalizerCandidates, readTotalizerGridAsync, cancelAdvancedTotalizer } from './totalizer-reader-client.js';
-import { chooseTotalizerReading, chooseFastTotalizerReading, chooseRescueTotalizerReading } from './totalizer-consensus.js';
-import { readingWithVisibleDecimal, supportedTotalizerReading, provisionalShortTotalizerReading, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
+import { chooseTotalizerReading, chooseFastTotalizerReading, chooseRescueTotalizerReading, gridMatchesPhysicalRow, gridExplainsOcrHints } from './totalizer-consensus.js';
+import { readingWithVisibleDecimal, supportedTotalizerReading, provisionalShortTotalizerReading, physicalTotalizerCandidate, corroboratedShortTotalizerSymbols, refineLeadingLcdDigit, refineNarrowLcdDigits, verifyLcdDigits, segmentDisplaySymbols, withoutDisplayFrame, totalizerCrop, totalizerMask } from './totalizer-image.js';
 import {createTotalizerTracer,traceSymbols,traceCandidates} from './totalizer-trace.js';
 import {canDismissNineCellHint} from './totalizer-format-evidence.js';
+import {confirmedTotalizerFormat} from './totalizer-formats.js';
+import {isPrintedTotalizerArrow} from './totalizer-panel.js';
 
 export const TOTALIZER_CLEAR_TARGET_MS=20000;
 export const TOTALIZER_TIMEOUT_MS=30000;
@@ -74,7 +76,7 @@ function runNextDetection(){
 }
 export function detectTotalizer(data,options={}){
   const timeoutMs=Math.min(TOTALIZER_TIMEOUT_MS,boundedReaderTimeout(options.timeoutMs,TOTALIZER_TIMEOUT_MS));
-  const job={data,options,active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs,
+  const job={data,options:{...options,format:confirmedTotalizerFormat(options.format)},active:false,canceled:false,primary:null,deadline:performance.now()+timeoutMs,
     tracing:typeof options.onTrace==='function',trace:createTotalizerTracer(options.onTrace)};
   job.trace('queued',{timeoutMs,queueLength:detectionQueue.length});
   let cancel;
@@ -113,13 +115,14 @@ export function detectTotalizer(data,options={}){
 }
 
 export async function detectTotalizerResult(data,options){
-  const started=performance.now();
+  const started=performance.now(),format=confirmedTotalizerFormat(options?.format);
+  const formatEvidence=format?{formatProfile:format.id}:{};
   try{
     const reading=await detectTotalizer(data,options);
-    return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
+    return {reading,attempt:{status:reading===null?'no-reading':'detected',version:TOTALIZER_VERSION,...formatEvidence,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
   }catch(error){
     const reason=['recognition-timeout','initialization-timeout','worker-failed','unsupported-browser'].includes(error.reason)?error.reason:'recognition-failed';
-    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
+    return {reading:null,attempt:{status:'error',version:TOTALIZER_VERSION,reason,...formatEvidence,completedAt:new Date().toISOString(),durationMs:Math.round(performance.now()-started)}};
   }
 }
 
@@ -134,24 +137,31 @@ async function recognizePhoto(data,job){
     image.getContext('2d').putImageData(data,0,0);
   }
   const first=await recognizeFrame(image,job,1280);
-  if(first!==null||Math.max(image.width,image.height)<=1280||job.deadline-performance.now()<8000)return first;
+  if(first!==null)return first;
   // Preserve the proven fast path. A second resolution only rescues abstentions
   // and must agree with the independent neural reader within the same deadline.
-  job.trace('resolution-rescue',{maximumDimension:1800});
-  return recognizeFrame(image,job,1800,true);
+  if(Math.max(image.width,image.height)>1280&&job.deadline-performance.now()>=8000){
+    job.trace('resolution-rescue',{maximumDimension:1800});
+    const second=await recognizeFrame(image,job,1800,true);
+    if(second!==null)return second;
+  }
+  if(job.deadline-performance.now()<8000)return null;
+  job.trace('panel-rescue',{maximumDimension:1280});
+  return recognizeFrame(image,job,1280,true,true);
 }
 
-async function recognizeFrame(image,job,maximumDimension,rescue=false){
+async function recognizeFrame(image,job,maximumDimension,rescue=false,panel=false){
   job.check();
   const scale=Math.min(1,maximumDimension/Math.max(image.width,image.height));
   const canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
   const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
   let frame;
-  try{frame=await job.wait(analyzeTotalizerFrame(pixels,canvas.width,canvas.height));}
+  try{frame=await job.wait(analyzeTotalizerFrame(pixels,canvas.width,canvas.height,{panel}));}
   catch(error){if(!job.canceled){framePreparation=undefined;invalidatePreparedReader(error);}throw error;}
   const {gray,analysis}=frame;
   job.check();
+  if(panel&&analysis.extraCellHint){job.decision='sensitive-extra-cell';return null;}
   if(job.tracing)job.trace('frame',{width:canvas.width,height:canvas.height,scale,componentCount:analysis.components.length,
     regions:analysis.regions.map(({x,y,width,height,bandHeight,fallback})=>({x,y,width,height,bandHeight,hasFallback:!!fallback}))});
   // Neither fallback can read a missing number row. Do not download a neural
@@ -165,16 +175,17 @@ async function recognizeFrame(image,job,maximumDimension,rescue=false){
   let worker;
   try{
     worker=await job.wait(primary.ready);job.check();
-    const readings=new Set(),evidence=new Map(),glyphs=[],layoutEvidence=[],shortVotes=new Map();
+    const readings=new Set(),evidence=new Map(),glyphs=[],layoutEvidence=[],shortVotes=new Map(),shortFormats=new Map();
     let sensitiveMask;
     for(const [regionIndex,primary]of analysis.regions.entries()){
       const layouts=[primary,...(primary.fallback?[primary.fallback]:[])];
       let primaryDigits=0;
       for(const [layoutIndex,region]of layouts.entries()){
         const clean=withoutDisplayFrame(analysis.mask,canvas.width,region);
-        const segments=segmentDisplaySymbols(clean,canvas.width,region);
+        const segments=segmentDisplaySymbols(clean,canvas.width,region,{shear:panel,learned:panel});
+        const profileRowValid=!job.options.format||!segments.some(s=>isPrintedTotalizerArrow(gray,canvas.width,canvas.height,s.bbox));
         if(job.tracing)job.trace('layout',{regionIndex,layoutIndex,box:{x:region.x,y:region.y,width:region.width,height:region.height},segments:traceSymbols(segments)});
-        const format={physical:{regionId:regionIndex,layoutId:layoutIndex,region,symbols:segments,components:analysis.components,image:{gray,width:canvas.width,height:canvas.height}},hints:[],agreeingPasses:[]};
+        const format={physical:{regionId:regionIndex,layoutId:layoutIndex,profileRowValid,segmentation:panel?'enhanced':undefined,maskThreshold:analysis.maskThreshold,region,symbols:segments,components:analysis.components,image:{gray,width:canvas.width,height:canvas.height}},hints:[],agreeingPasses:[]};
         layoutEvidence.push(format);
         const votes=new Map(),agreed=new Set();
         for(const {grow,pad,sensitive}of [{grow:1,pad:20},{grow:2,pad:20},{grow:1,pad:40},{grow:1,pad:20,sensitive:true}]){
@@ -204,14 +215,23 @@ async function recognizeFrame(image,job,maximumDimension,rescue=false){
             // ninth digit. A later qualified pass can prove two glyph boxes
             // split one of the same eight physical cells, without adding a vote.
             if(readingWithVisibleDecimal(translated,analysis.components,{integerDigits:7,decimalPlaces:2})!==null)format.hints.push({regionId:regionIndex,layoutId:layoutIndex,symbols:translated});
-            const confidenceAccepted=result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous);
+            const formatAccepted=!job.options.format||digits.length===job.options.format.integerDigits+job.options.format.decimalPlaces;
+            const confidenceAccepted=formatAccepted&&profileRowValid&&result.confidence>=(verifiedLeading?40:70)&&digits.every(s=>s.confidence>=90&&!s.lcdAmbiguous);
             // A short display can have a weak binary stroke but clear color
             // pixels. Keep a candidate only with complete physical cells, a
             // visible decimal, and no independently conflicting cell. It still
             // needs repeated primary passes and strict neural corroboration.
             if(confidenceAccepted){
-              const provisional=provisionalShortTotalizerReading(translated,analysis.components,segments);
-              if(provisional!==null)shortVotes.set(provisional,(shortVotes.get(provisional)||0)+1);
+              const provisional=provisionalShortTotalizerReading(translated,analysis.components,segments,{smallPoint:panel,format:job.options.format});
+              if(provisional!==null){
+                shortVotes.set(provisional,(shortVotes.get(provisional)||0)+1);
+                shortFormats.set(provisional,shortFormats.has(provisional)&&shortFormats.get(provisional)!==digits.length?0:digits.length);
+                if(job.options.format){
+                  job.profileCandidates ||= new Map();
+                  if(!job.profileCandidates.has(provisional))job.profileCandidates.set(provisional,new Set());
+                  job.profileCandidates.get(provisional).add(`${canvas.width}x${canvas.height}`);
+                }
+              }
             }
             let value=confidenceAccepted?supportedTotalizerReading(translated,analysis.components,segments,{gray,width:canvas.width,height:canvas.height}):null;
             if(job.tracing)job.trace('primary-pass',{regionIndex,layoutIndex,grow,pad,sensitive:!!sensitive,mode,
@@ -241,7 +261,14 @@ async function recognizeFrame(image,job,maximumDimension,rescue=false){
     }
     const value=readings.size===1?[...readings][0]:null,candidate=evidence.get(value);
     const verified=candidate&&verifyLcdDigits(candidate.symbols,gray,canvas.width,canvas.height,candidate.segments)?value:null;
-    const formatEvidence=evaluateNineCellHints(layoutEvidence,{trace:job.tracing}),longDisplay=formatEvidence.blocked;
+    const formatEvidence=evaluateNineCellHints(layoutEvidence,{trace:job.tracing});
+    let longDisplay=formatEvidence.blocked,rescueGrid;
+    if(panel&&longDisplay&&job.deadline-performance.now()>=12000&&layoutEvidence.every(e=>e.physical.symbols.length<9)){
+      rescueGrid=await job.wait(readTotalizerGridAsync(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components));
+      job.check();
+      if(gridExplainsOcrHints(rescueGrid[0],layoutEvidence))longDisplay=false;
+      if(job.tracing)job.trace('grid-format-proof',{accepted:!longDisplay,candidates:traceCandidates(rescueGrid)});
+    }
     job.trace('format-evidence',formatEvidence);
     job.trace('primary-result',{readings:[...readings],value,hasPhysicalEvidence:!!candidate,verified,longDisplay});
     if(verified!==null&&!rescue){job.decision='primary-physical-verified';return verified;}
@@ -252,17 +279,46 @@ async function recognizeFrame(image,job,maximumDimension,rescue=false){
     // physical cell fitting independently checks the shape and decimal layout.
     // Model-loading failure retains the previously verified reader's behavior.
     const readNeural=async()=>{
-      try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions);job.check();if(job.tracing)job.trace('neural',{candidates:traceCandidates(result)});return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
+      try{job.check();const result=await neuralTotalizerCandidates(pixels,canvas.width,canvas.height,analysis.regions,{shortDigits:job.options.format?job.options.format.integerDigits+job.options.format.decimalPlaces:panel&&readings.size===0&&shortCandidates.length===1?shortFormats.get(shortCandidates[0]):null});job.check();if(job.tracing)job.trace('neural',{candidates:traceCandidates(result)});return result;}catch(error){job.check();if(error.reason==='unsupported-browser')throw error;throw Object.assign(new Error('The automatic reader could not load. Please reconnect and retry.'),{cause:error,code:'model-unavailable'});}
     };
     let neural;
-    const shortCandidates=[...shortVotes].filter(([,votes])=>votes>=2).map(([v])=>v);
-    if((rescue&&value!==null)||(readings.size===0&&shortCandidates.length===1&&!longDisplay)){
+    const shortCandidates=[...new Set([...shortVotes.keys(),...(job.profileCandidates?.keys()||[])])]
+      .filter(v=>(shortVotes.get(v)||0)>=(job.options.format?1:2)||(job.profileCandidates?.get(v)?.size||0)>=(job.options.format?1:2));
+    if(((rescue||job.options.format)&&value!==null)||(readings.size===0&&shortCandidates.length===1&&!longDisplay)){
       neural=await readNeural();
-      const corroborated=chooseRescueTotalizerReading({primary:value??shortCandidates[0],neural});
+      const singleFormatPass=job.options.format&&value===null&&(shortVotes.get(shortCandidates[0])||0)<2&&(job.profileCandidates?.get(shortCandidates[0])?.size||0)<2;
+      const corroborated=chooseRescueTotalizerReading({primary:value??shortCandidates[0],neural,
+        ...(singleFormatPass?{minimumViews:3,minimumScore:.99,minimumInteger:.98,minimumFraction:.98}:{}),digitCount:job.options.format?job.options.format.integerDigits+job.options.format.decimalPlaces:panel&&value===null?shortFormats.get(shortCandidates[0]):null});
       job.decision=corroborated===null?'rescue-consensus-rejected':'rescue-consensus-accepted';
-      return corroborated;
+      if(corroborated!==null||!rescue)return corroborated;
     }
-    if(rescue){job.decision='rescue-no-physical-proof';return null;}
+    if(rescue){
+      if(panel){
+        const physicalValues=new Set(layoutEvidence.flatMap(({physical})=>{
+          const number=physicalTotalizerCandidate(physical.symbols,analysis.components,{format:job.options.format});
+          return number===null?[]:[number];
+        }));
+        if(physicalValues.size===1){
+          neural ||= await readNeural();
+          const chosen=chooseRescueTotalizerReading({primary:[...physicalValues][0],neural,digitCount:job.options.format?job.options.format.integerDigits+job.options.format.decimalPlaces:null});
+          if(chosen!==null){job.decision='physical-neural-rescue';return chosen;}
+        }
+      }
+      if(job.options.format){job.decision='confirmed-format-unverified';return null;}
+      const rows=layoutEvidence.map(e=>e.physical.symbols).filter(cells=>cells.length>=4&&cells.length<=8);
+      if(!rows.length){job.decision='rescue-no-complete-row';return null;}
+      const grid=rescueGrid||await job.wait(readTotalizerGridAsync(analysis.mask,canvas.width,canvas.height,analysis.regions,analysis.components));
+      job.check();if(job.tracing)job.trace('rescue-grid',{candidates:traceCandidates(grid)});
+      const physical=grid[0];
+      const complete=physical&&physical.score<.06&&physical.margin>.06&&
+        physical.digitMargins?.length===8&&physical.digitMargins.every(m=>m>.06)&&
+        rows.some(cells=>gridMatchesPhysicalRow(physical,cells));
+      if(!complete){job.decision='rescue-grid-unverified';return null;}
+      neural ||= await readNeural();
+      const chosen=chooseRescueTotalizerReading({primary:physical.value,neural});
+      job.decision=chosen===null?'rescue-grid-disagreement':'rescue-grid-accepted';return chosen;
+    }
+    if(job.options.format){job.decision='confirmed-format-unverified';return null;}
     if(value!==null){
       neural=await readNeural();
       const fast=chooseFastTotalizerReading({tesseract:value,neural});

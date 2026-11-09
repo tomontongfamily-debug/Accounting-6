@@ -1,5 +1,92 @@
 # Pump reader timing and recovery
 
+## November 10: photo-derived checks and confirmed Mabolo format (`lcd-format-evidence-13`)
+
+The available reviewed corpus contains 782 unique photos: 752 archived Liloan
+references and 30 additional unique compatibility/recent station photos. The
+88 unreviewed or superseded archive entries are not treated as ground truth.
+The full previous-reader replay returned 619 correct automatic readings, 163
+abstentions and no wrong numbers against those references.
+
+This revision corrects several distinct failures:
+
+- A narrow one joined to its neighbor can be separated only at a low-ink valley
+  with two full-height cells, one narrow and one normal-width cell. No cell is
+  discarded. Printed triangles beside the LCD are excluded only after their
+  filled triangular shape is verified, including triangles at the photo edge.
+  A presumed bezel or reflection alone never supplies permission to crop digits.
+- Weak physical strokes can use a small classifier fitted to the reviewed
+  examples, plus conservative shear/sensitivity checks. Alternative masks must
+  retain the original cells and their alignment; an additional ninth cell stops
+  rescue. Neural agreement remains necessary for new suggestions.
+- OCR character boxes can overlap even when the complete physical row is clear.
+  An interior alias needs independently rebuilt physical cells, a visible
+  decimal, regular spacing and qualified primary evidence. A fitted grid can
+  alternatively prove eight complete cells only with strong scores for every
+  cell, matching physical landmarks, and no outside hinted digit. Every actual
+  ninth physical cell still blocks this eight-cell fallback.
+- Six/seven-digit neural strings remain unscaled until physical decimal/count
+  evidence supplies their format. This prevents discarding correctly recognized
+  short counters simply because the neural model missed the decimal point.
+
+On November 10 the owner explicitly confirmed that Mabolo uses five integer
+digits and two decimal digits. The cashier camera, Opening Setup and mid-shift
+capture therefore pass only that verified format to the reader. A missing dot
+can use this format; missing digits cannot. Seven complete physical cells and
+independent recognition agreement are still required. A visible contradictory
+decimal, an extra cell, a printed arrow, conflicting readings or uncertain digits
+cannot be repaired by this profile. Other stations keep photo-based decimal
+validation. No opening value or expected counter number enters recognition.
+
+A single qualified primary pass for the confirmed format needs all three neural
+resolutions, word score at least .99 and every integer/fractional digit at least
+.98. Repeated primary evidence retains the existing strict two-resolution neural
+gate. Different resolutions of the same neural model are not independent engines;
+the primary/physical reader supplies the independent corroboration.
+
+New attempts retain `formatProfile: mabolo-five-two-20261110` in OCR evidence.
+Automatic Mabolo suggestions show both decimal digits, including `.00`. Cashier
+confirmation remains required. Existing confirmed readings are not rewritten.
+Unconfirmed failed photos can use **Retry automatic reading** after refreshing.
+The read-only phone diagnostic also offers the verified Mabolo format explicitly.
+
+The classifier uses 2,728 aligned glyphs from 341 photos in the older 500-photo
+partition. Validation uses 1,384 glyphs from 173 eligible photos in the remaining
+partition. Its runtime gates resolve 74 previously undecided validation glyphs
+with no wrong accepted glyphs; these digit-level figures are not meter accuracy.
+An ablation on 15 recovered photos kept all 15 readings without the classifier,
+with one needing the grid instead of the physical-only corroborator. Recovery
+claims are based on complete-photo results, not classifier scores. Only aggregate
+coefficients ship; private photos, counter sequences and training features do not.
+
+Validation covers the full 782-photo replay, a complete replay of its 163
+abstentions after the marker refinement, and the calibrated recent-station set.
+Together the validated cases yield 637 correct automatic readings, 145 abstentions,
+zero wrong numbers and no lost prior successes. The newer 282-photo partition
+improves from 204 to 214 correct readings. The selected recent set (four photos
+per station) improves from 10/24 to 17/24; its failures fall from 14 to seven.
+Mabolo improves from 1/4 to 4/4. These are regression-set results, not a measured
+production failure rate or a guarantee for every new photo/device.
+
+The actual built camera → OCR → fixture API → saved format evidence → explicit
+cashier confirmation flow passes on the no-dot Mabolo photos, including
+25,065.00 and 27,167.61. The original 30-second deadline, worker recovery, offline
+preparation, format guards, model-integrity gate and data-preservation gate remain
+in force. Inference stays on the device; model/runtime assets are unchanged.
+
+Reproduce glyph fitting with an ordered private `{file, expected}` manifest:
+
+```powershell
+node scripts/extract-totalizer-glyphs.mjs private-manifest.json private-features.json
+node scripts/train-totalizer-glyphs.mjs private-features.json weights.js
+```
+
+The first 500 photos are the training partition; remaining photos are reserved
+for validation. The supplied manifest must preserve that ordering. The benchmark
+can additionally use `branch` to apply the same owner-confirmed station format as
+the app. `TOTALIZER_GLYPH_ABLATION=1` disables only the glyph classifier in the local
+benchmark; it is not a product setting. Private inputs/results stay out of Git.
+
 ## November 9: bounded resolution rescue (`lcd-format-evidence-12`)
 
 Recognition keeps the existing 1280-pixel first pass. Only an abstention can

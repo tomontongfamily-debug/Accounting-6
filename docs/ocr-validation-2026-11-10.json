@@ -1,0 +1,158 @@
+{
+  "readerVersion": "lcd-format-evidence-13",
+  "validatedOn": "2026-11-10",
+  "referenceCohort": {
+    "before": {
+      "photos": 782,
+      "correct": 619,
+      "noReading": 163,
+      "wrong": 0
+    },
+    "after": {
+      "photos": 782,
+      "correct": 637,
+      "noReading": 145,
+      "wrong": 0
+    },
+    "lostPriorSuccesses": 0,
+    "method": "Full cohort replay, complete prior-abstention replay after marker refinement, calibrated recent-station replay, final 18 recoveries and 20 prior successes rechecked."
+  },
+  "laterPhotoPartition": {
+    "before": {
+      "photos": 282,
+      "correct": 204,
+      "noReading": 78,
+      "wrong": 0
+    },
+    "after": {
+      "photos": 282,
+      "correct": 214,
+      "noReading": 68,
+      "wrong": 0
+    }
+  },
+  "recentStations": {
+    "before": {
+      "photos": 24,
+      "correct": 10,
+      "noReading": 14,
+      "wrong": 0
+    },
+    "after": {
+      "photos": 24,
+      "correct": 17,
+      "noReading": 7,
+      "wrong": 0
+    },
+    "byStation": {
+      "Arpili": {
+        "before": {
+          "photos": 4,
+          "correct": 2,
+          "noReading": 2,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 2,
+          "noReading": 2,
+          "wrong": 0
+        }
+      },
+      "Barili": {
+        "before": {
+          "photos": 4,
+          "correct": 3,
+          "noReading": 1,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 4,
+          "noReading": 0,
+          "wrong": 0
+        }
+      },
+      "Mabolo": {
+        "before": {
+          "photos": 4,
+          "correct": 1,
+          "noReading": 3,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 4,
+          "noReading": 0,
+          "wrong": 0
+        }
+      },
+      "Moalboal": {
+        "before": {
+          "photos": 4,
+          "correct": 2,
+          "noReading": 2,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 3,
+          "noReading": 1,
+          "wrong": 0
+        }
+      },
+      "Liloan": {
+        "before": {
+          "photos": 4,
+          "correct": 1,
+          "noReading": 3,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 1,
+          "noReading": 3,
+          "wrong": 0
+        }
+      },
+      "Pondol": {
+        "before": {
+          "photos": 4,
+          "correct": 1,
+          "noReading": 3,
+          "wrong": 0
+        },
+        "after": {
+          "photos": 4,
+          "correct": 3,
+          "noReading": 1,
+          "wrong": 0
+        }
+      }
+    }
+  },
+  "maboloFormat": {
+    "integerDigits": 5,
+    "decimalPlaces": 2,
+    "confirmedBy": "owner",
+    "confirmedOn": "2026-11-10"
+  },
+  "glyphClassifier": {
+    "trainingPhotos": 341,
+    "trainingGlyphs": 2728,
+    "validationPhotos": 173,
+    "validationGlyphs": 1384,
+    "previouslyUnknownGlyphsResolved": 74,
+    "wrongAcceptedValidationGlyphs": 0,
+    "automaticReaderAblation": {
+      "photos": 15,
+      "correctWithModel": 15,
+      "correctWithoutModel": 15
+    }
+  },
+  "limits": [
+    "Regression cohort results are not a measured live failure rate.",
+    "Desktop CPU throttling does not establish physical-phone performance.",
+    "Unclear or contradictory digits still require review."
+  ]
+}

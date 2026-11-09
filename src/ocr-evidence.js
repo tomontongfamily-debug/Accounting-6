@@ -1,4 +1,5 @@
-export const TOTALIZER_VERSION='lcd-format-evidence-12';
+export const TOTALIZER_VERSION='lcd-format-evidence-13';
+export const MABOLO_TOTALIZER_FORMAT_ID='mabolo-five-two-20261110';
 export const OCR_ATTEMPT_TIMEOUT_MS=30000;
 
 // Completed evidence can travel with a queued photo. This never confirms a
@@ -32,6 +33,7 @@ export function mergeOcrEvidence(previous,incoming,{now=Date.now()}={}){
   if(attempt&&['pending','detected','no-reading','error'].includes(attempt.status)){
     const status=reading!==null?'detected':attempt.status==='detected'?'no-reading':attempt.status;
     result={status,version:String(attempt.version||'unknown').slice(0,80)};
+    if(attempt.formatProfile===MABOLO_TOTALIZER_FORMAT_ID)result.formatProfile=MABOLO_TOTALIZER_FORMAT_ID;
     for(const key of ['startedAt','deadlineAt','completedAt']){
       const value=key==='completedAt'?attempt[key]:previousAttempt?.[key]||attempt[key];
       if(value&&!Number.isNaN(Date.parse(value)))result[key]=new Date(value).toISOString();

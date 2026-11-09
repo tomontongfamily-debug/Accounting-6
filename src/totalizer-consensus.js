@@ -22,10 +22,56 @@ export function chooseFastTotalizerReading({tesseract=null,neural=[]}){
 // A new resolution must never turn a previously rejected reflection into an
 // automatic reading on physical verification alone. Require two confident
 // neural resolutions and reject even a weak conflicting decoded view.
-export function chooseRescueTotalizerReading({primary=null,neural=[]}){
-  if(primary===null||neural.some(r=>r.value!==null&&r.value!==primary))return null;
-  const confident=neural.filter(r=>r.value===primary&&r.score>=.95&&r.integerConfidence>=.9&&r.fractionConfidence>=.95);
-  return new Set(confident.map(r=>r.inputHeight)).size>=2?primary:null;
+export function chooseRescueTotalizerReading({primary=null,neural=[],digitCount=null,minimumViews=2,minimumScore=.95,minimumInteger=.9,minimumFraction=.95}){
+  // Short digit-only neural text has no numeric value until an independent
+  // physical row proves both its complete cell count and two-place decimal.
+  if(digitCount!==null)neural=neural.map(r=>r.value===null&&[6,7].includes(digitCount)&&
+    r.unscaledDigits?.length===digitCount&&/^\d+$/.test(r.unscaledDigits)?
+    {...r,value:Number(r.unscaledDigits)/100,physicalDecimal:true}:r);
+  if(primary===null||neural.some(r=>r.value!==null&&(r.value!==primary||digitCount!==null&&r.digitConfidences?.length!==digitCount)))return null;
+  const confident=neural.filter(r=>r.value===primary&&r.score>=minimumScore&&r.integerConfidence>=minimumInteger&&r.fractionConfidence>=minimumFraction&&
+    (digitCount===null||r.decimalPlaces===2||r.physicalDecimal));
+  return new Set(confident.map(r=>r.inputHeight)).size>=minimumViews?primary:null;
+}
+
+export function gridMatchesPhysicalRow(candidate,cells,{minimumKnown=4}={}){
+ const layout=candidate?.layout,text=candidate?String(Math.round(candidate.value*100)).padStart(8,'0'):'';
+ if(!layout||text.length!==8||cells.length<minimumKnown||cells.length>8||cells.filter(c=>/^\d$/.test(c.text)).length<minimumKnown)return false;
+ const {left,pitch,height:h,glyphWidth:w,shear=0,base,slope=0,dotx,heightSlope=0,curve=0}=layout;
+ if(![left,pitch,h,w,base,dotx].every(Number.isFinite)||h<=0||pitch<=0)return false;
+ const fitted=Array.from({length:8},(_,i)=>{
+  const j=i-5,x=left+j*pitch+j*j*curve*h,hh=h+heightSlope*(x+w*.5-dotx),ww=w*hh/h;
+  return {x:x+ww*.5+shear*hh*.5,left:x,right:x+ww+shear*hh,bottom:base+slope*(x+w*.5-dotx),digit:text[i]};
+ });
+ if(cells.some(c=>c.bbox.x0<fitted[0].left-h*.2||c.bbox.x1>fitted.at(-1).right+h*.2))return false;
+ return cells.filter(c=>/^\d$/.test(c.text)).every(c=>{
+  const x=(c.bbox.x0+c.bbox.x1)/2;
+  const aligned=fitted.filter(f=>Math.abs(f.x-x)<pitch*.45&&Math.abs(f.bottom-c.bbox.y1)<h*.2);
+  return aligned.length===1&&aligned[0].digit===c.text;
+ });
+}
+
+export function gridExplainsOcrHints(candidate,layouts){
+ if(!candidate||candidate.score>=.04||candidate.margin<=.08||candidate.digitMargins?.length!==8||
+   candidate.digitMargins.some(m=>m<=.08)||layouts.some(l=>l.physical.symbols.length>=9))return false;
+ const {left,pitch,height:h,glyphWidth:w,base,slope=0,dotx,heightSlope=0,curve=0,shear=0}=candidate.layout||{};
+ if(![left,pitch,h,w,base,dotx].every(Number.isFinite)||h<=0||pitch<=0)return false;
+ const x0=left-5*pitch+25*curve*h,x7=left+2*pitch+4*curve*h;
+ const right=x7+w+Math.abs(shear)*h,top=base-h;
+ let hints=0;
+ for(const layout of layouts){
+  if(!layout.hints.length)continue;
+  if(!gridMatchesPhysicalRow(candidate,layout.physical.symbols,{minimumKnown:3}))return false;
+  for(const hint of layout.hints)for(const symbol of hint.symbols.filter(s=>/^\d$/.test(s.text))){
+    const b=symbol.bbox;if(!b)return false;
+    const x=(b.x0+b.x1)/2,y=(b.y0+b.y1)/2;
+    const localBase=base+slope*(x-dotx),hh=h+heightSlope*(x-dotx);
+    if(x<x0||x>right||b.x0<x0-h*.12||b.x1>right+h*.12||y<localBase-hh||y>localBase||
+      b.y0<Math.min(top,localBase-hh)-h*.15||b.y1>localBase+h*.15)return false;
+    hints++;
+  }
+ }
+ return hints>0;
 }
 
 export function chooseTotalizerReading({verified=null,tesseract=null,grid=[],neural=[],glyphs=[]}){

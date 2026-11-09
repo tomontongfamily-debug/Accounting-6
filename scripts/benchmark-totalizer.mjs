@@ -6,23 +6,29 @@ import {chromium} from '@playwright/test';
 const [manifest,output,baselineFile]=process.argv.slice(2);
 if(!manifest||!output)throw Error('Usage: node scripts/benchmark-totalizer.mjs manifest.json results.json [baseline.json]');
 const samples=JSON.parse(fs.readFileSync(manifest,'utf8'));
-const server=await createServer({server:{host:'127.0.0.1',port:4389,strictPort:true,hmr:false}});await server.listen();
+const ablation=process.env.TOTALIZER_GLYPH_ABLATION==='1';
+const plugins=ablation?[{name:'disable-photo-glyph-model',enforce:'pre',transform(_code,id){
+ if(id.split('?')[0].endsWith('/src/totalizer-glyph-model.js'))return 'export function classifyTotalizerGlyph(){return null;}';
+}}]:[];
+const server=await createServer({plugins,server:{host:'127.0.0.1',port:Number(process.env.TOTALIZER_BENCHMARK_PORT||4389),strictPort:true,hmr:false}});await server.listen();
 const browser=await chromium.launch({channel:'msedge',headless:true});
 const results=[];
 try{
  const page=await browser.newPage({viewport:{width:390,height:900}});
  const cpuRate=Number(process.env.TOTALIZER_CPU_THROTTLE||1);
  if(cpuRate>1){const cdp=await page.context().newCDPSession(page);await cdp.send('Emulation.setCPUThrottlingRate',{rate:cpuRate});}
- await page.goto('http://127.0.0.1:4389/ocr/neural/README.md');
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/ocr/neural/README.md`);
+ if(ablation)assert.equal(await page.evaluate(async()=>(await import('/src/totalizer-glyph-model.js')).classifyTotalizerGlyph([1,1,.52,0,0,0,0])),null);
  await page.evaluate(async()=>{await(await import('/src/totalizer-ocr.js')).prepareTotalizer();});
  for(const [index,sample] of samples.entries()){
   const input='data:image/jpeg;base64,'+fs.readFileSync(sample.file).toString('base64');
-  const result=await page.evaluate(async input=>{
+  const result=await page.evaluate(async ({input,station})=>{
    const events=[];const reader=await import('/src/totalizer-ocr.js');
-   const result=await reader.detectTotalizerResult(input,{onTrace:event=>events.push(event)});
+   const format=(await import('/src/totalizer-formats.js')).totalizerFormatForStation(station);
+   const result=await reader.detectTotalizerResult(input,{format,onTrace:event=>events.push(event)});
    return {...result,events};
-  },input);
-  const row={index,file:sample.file,expected:sample.expected,...result};
+  },{input,station:sample.branch});
+  const row={index,file:sample.file,branch:sample.branch||null,expected:sample.expected,...result};
   results.push(row);fs.writeFileSync(output,JSON.stringify(results,null,2));
   console.log(JSON.stringify({index,expected:sample.expected,reading:result.reading,status:result.attempt.status,reason:result.events.at(-1)?.reason,milliseconds:result.attempt.durationMs}));
  }

@@ -244,3 +244,16 @@ test('Continuous frame strokes are removed without changing disconnected LCD str
 test('A high-confidence OCR number without physical LCD evidence cannot pass corroboration',()=>{
   assert.equal(verifyLcdDigits(symbols('12345678'),new Uint8Array(600*180).fill(220),600,180),false);
 });
+
+
+test('small oblique decimal evidence still requires a real unique point in the correct position',()=>{
+ const digits=symbols('9415321').map(s=>({...s,bbox:{...s.bbox,y1:100}}));
+ const physical=structuredClone(digits);physical[4].text='?';
+ const point={x:303,y:96,width:2,height:4,area:8};
+ assert.equal(provisionalShortTotalizerReading(digits,[point],physical),null);
+ assert.equal(provisionalShortTotalizerReading(digits,[point],physical,{smallPoint:true}),94153.21);
+ assert.equal(provisionalShortTotalizerReading(digits,[],physical,{smallPoint:true}),null);
+ const threePlaces={...point,x:243};
+ assert.equal(provisionalShortTotalizerReading(digits,[threePlaces],physical,{smallPoint:true}),null);
+ assert.equal(provisionalShortTotalizerReading(digits,[point,threePlaces],physical,{smallPoint:true}),null);
+});

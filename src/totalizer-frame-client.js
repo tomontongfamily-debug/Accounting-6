@@ -10,7 +10,7 @@ function stop(instance,error){
 export function cancelTotalizerFrame(){
   stop(worker,failure('The image check took too long.','recognition-timeout'));
 }
-export function analyzeTotalizerFrame(pixels,width,height){
+export function analyzeTotalizerFrame(pixels,width,height,options={}){
   if(typeof Worker==='undefined')return Promise.reject(failure('This browser cannot start the image reader.','unsupported-browser'));
   if(!worker){
     let instance;
@@ -34,7 +34,7 @@ export function analyzeTotalizerFrame(pixels,width,height){
     const id=++nextId,timer=setTimeout(()=>stop(instance,failure('The image check took too long.','recognition-timeout')),15000);
     pending.set(id,{resolve,reject,timer});
     // Keep the caller's pixels intact for neural checks and failed-read recovery.
-    try{instance.postMessage({id,pixels,width,height});}
+    try{instance.postMessage({id,pixels,width,height,panel:options.panel===true});}
     catch{stop(instance,failure('The image reader could not receive the photo.'));}
   });
 }

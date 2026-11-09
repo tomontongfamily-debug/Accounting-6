@@ -1,9 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseTotalizerReading,chooseFastTotalizerReading,chooseRescueTotalizerReading} from '../src/totalizer-consensus.js';
+import {chooseTotalizerReading,chooseFastTotalizerReading,chooseRescueTotalizerReading,gridMatchesPhysicalRow,gridExplainsOcrHints} from '../src/totalizer-consensus.js';
 import {decodeTotalizerTokens} from '../src/totalizer-neural.js';
 const nn=(value,extra={})=>({value,score:.99,integerConfidence:.99,fractionConfidence:.99,inputHeight:48,...extra});
 const grid=(value,extra={})=>[{value,score:.005,margin:.14,digitMargins:Array(8).fill(.14),...extra}];
+
+test('unscaled neural digits need the exact independently proven short format',()=>{
+ const neural=[48,64].map(inputHeight=>nn(null,{unscaledDigits:'988120',digitConfidences:Array(6).fill(.99),inputHeight}));
+ assert.equal(chooseRescueTotalizerReading({primary:9881.2,neural}),null,'A neural digit string alone has no decimal');
+ assert.equal(chooseRescueTotalizerReading({primary:9881.2,neural,digitCount:6}),9881.2);
+ assert.equal(chooseRescueTotalizerReading({primary:9881.2,neural,digitCount:7}),null,'No hidden leading zero may be inserted');
+ assert.equal(chooseRescueTotalizerReading({primary:988.12,neural,digitCount:6}),null,'A different decimal position cannot be substituted');
+ assert.equal(chooseRescueTotalizerReading({primary:9881.2,neural:[...neural,nn(null,{unscaledDigits:'988127',digitConfidences:Array(6).fill(.99),inputHeight:32})],digitCount:6}),null);
+});
+
+test('a single qualified format pass needs three especially strong neural resolutions',()=>{
+ const primary=27167.61,digitCount=7;
+ const neural=[32,48,64].map(inputHeight=>nn(null,{score:.999,integerConfidence:.999,fractionConfidence:.999,
+   unscaledDigits:'2716761',digitConfidences:Array(7).fill(.999),inputHeight}));
+ const strict={primary,digitCount,minimumViews:3,minimumScore:.99,minimumInteger:.98,minimumFraction:.98};
+ assert.equal(chooseRescueTotalizerReading({...strict,neural}),primary);
+ assert.equal(chooseRescueTotalizerReading({...strict,neural:neural.slice(1)}),null);
+ assert.equal(chooseRescueTotalizerReading({...strict,neural:[...neural.slice(0,2),{...neural[2],fractionConfidence:.979}]}),null);
+ assert.equal(chooseRescueTotalizerReading({...strict,neural:[...neural,{...neural[0],unscaledDigits:'2716767'}]}),null);
+});
+
+test('a complete physical grid can explain OCR aliases but cannot discard a real or outside ninth cell',()=>{
+ const candidate=grid(123456.78,{layout:{left:350,pitch:60,height:100,glyphWidth:40,base:150,slope:0,dotx:395}})[0];
+ const cells=[...'12345678'].map((text,i)=>({text,confidence:99,bbox:{x0:50+i*60,x1:90+i*60,y0:50,y1:150}}));
+ const symbols=structuredClone(cells);symbols.splice(2,0,{text:'1',bbox:{x0:185,x1:195,y0:52,y1:148}});
+ const layouts=[{physical:{symbols:cells},hints:[{symbols}]}];
+ assert.equal(gridMatchesPhysicalRow(candidate,cells),true);
+ assert.equal(gridExplainsOcrHints(candidate,layouts),true);
+ const extra=structuredClone(layouts);extra[0].physical.symbols.push(structuredClone(cells.at(-1)));
+ assert.equal(gridExplainsOcrHints(candidate,extra),false);
+ const outside=structuredClone(layouts);outside[0].hints[0].symbols[0].bbox={x0:0,x1:30,y0:50,y1:150};
+ assert.equal(gridExplainsOcrHints(candidate,outside),false);
+ const otherRow=structuredClone(layouts);otherRow[0].physical.symbols.forEach(s=>{s.bbox.y0+=200;s.bbox.y1+=200;});
+ assert.equal(gridExplainsOcrHints(candidate,otherRow),false);
+ assert.equal(gridExplainsOcrHints({...candidate,score:.05},layouts),false);
+ assert.equal(gridExplainsOcrHints({...candidate,digitMargins:[.01,...Array(7).fill(.14)]},layouts),false);
+});
 
 test('resolution rescue requires two confident neural resolutions and no conflicting reading',()=>{
  const primary=876712.21,neural=[32,48,64].map(inputHeight=>nn(primary,{inputHeight}));

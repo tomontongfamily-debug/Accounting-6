@@ -53,8 +53,8 @@ export function canDismissNineCellHint(proof={},options={}){
   // grayscale sample; a stale array of claimed digits must not rescue a blank
   // or different image. This is combined mask + grayscale evidence, not a
   // claim that every digit passed the grayscale-only verifier.
-  const analysis=totalizerRegions(gray,width,height);
-  const cells=segmentDisplaySymbols(withoutDisplayFrame(analysis.mask,width,region),width,region);
+  const analysis=totalizerRegions(gray,width,height,physical.segmentation==='enhanced'&&physical.maskThreshold===5?5:10);
+  const cells=segmentDisplaySymbols(withoutDisplayFrame(analysis.mask,width,region),width,region,{shear:physical.segmentation==='enhanced',learned:physical.segmentation==='enhanced'});
   if(cells.length!==8||cells.some((symbol,index)=>!isDigit(symbol)||symbol.text!==physical.symbols[index].text||
     !sameBox(symbol.bbox,physical.symbols[index].bbox)))return reject(7,'raw-proof');
   const bodies=cells.filter(symbol=>symbol.text!=='1');
@@ -87,6 +87,27 @@ export function canDismissNineCellHint(proof={},options={}){
     right:symbol.bbox.x1,
   }));
   if(ranges.some((range,index)=>range.right<=range.left||index>0&&range.left<ranges[index-1].right))return reject(11,'cell-ranges');
+  // Enhanced rescue can explain overlapping OCR boxes using a complete,
+  // regularly spaced physical row. The outer center envelope stays fixed:
+  // this cannot absorb an outside leading digit or remove a ninth real cell.
+  // Explaining an alias still supplies no reading; neural agreement is required.
+  if(physical.segmentation==='enhanced'&&cells.filter(c=>c.direct).length>=4&&
+    cells.every(c=>c.bbox.x1-c.bbox.x0<=cellWidth*1.18&&(c.text!=='1'||c.bbox.x1-c.bbox.x0<=cellHeight*.3))&&
+    advances.every(a=>a>=medianAdvance*.7&&a<=medianAdvance*1.3)){
+    const aliases=nine.map(s=>{
+      const b=s.bbox,x=(b.x0+b.x1)/2,y=(b.y0+b.y1)/2;
+      if(x<envelope.left||x>envelope.right||y<envelope.top||y>envelope.bottom||
+        b.x0<envelope.left-padding.x||b.x1>envelope.right+padding.x||
+        b.y0<envelope.top-padding.y||b.y1>envelope.bottom+padding.y||
+        b.x1-b.x0>medianAdvance*1.55||b.y1-b.y0>cellHeight*1.3)return -1;
+      const matches=ranges.flatMap((r,i)=>x>=r.left&&x<=r.right?[i]:[]);
+      return matches.length===1?matches[0]:-1;
+    });
+    const mapped=cells.map((_,i)=>nine.filter((_,j)=>aliases[j]===i));
+    if(aliases.every((a,i)=>a>=0&&(i===0||a>=aliases[i-1]))&&
+      mapped.filter(m=>m.length===2).length===1&&mapped.every((m,i)=>m.length>=1&&m.length<=2&&m.some(s=>s.text===cells[i].text)))
+      return decide(true,0,'proven-cell-slot-alias');
+  }
   const assignments=[];
   for(const [index,symbol]of nine.entries()){
     const box=symbol.bbox;

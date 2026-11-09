@@ -34,9 +34,12 @@ export function decodeTotalizerTokens(data,dims,characters){
   if(!match)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
   const digits=match[1].replace(/[.,]/g,'');
   const explicit=match[1].match(/^(\d{4,5})[.,](\d{2})$/);
-  if(digits.length!==8&&!explicit)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
+  const unscaled=[6,7].includes(digits.length)&&/^\d+$/.test(match[1]);
+  if(digits.length!==8&&!explicit&&!unscaled)return {text,value:null,score:0,integerConfidence:0,fractionConfidence:0};
   const digitScores=[...text].map((c,i)=>({c,p:confidences[i]})).filter(({c})=>/^\d$/.test(c)).map(x=>x.p);
-  return {text,value:Number(digits)/100,score:digitScores.reduce((a,b)=>a+b,0)/digits.length,integerConfidence:Math.min(...digitScores.slice(0,digits.length-2)),fractionConfidence:Math.min(...digitScores.slice(digits.length-2)),digitConfidences:digitScores};
+  return {text,decimalPlaces:match[1].match(/^[0-9]+[.,]([0-9]+)$/)?.[1].length??null,
+    ...(unscaled?{unscaledDigits:digits}:{}),value:unscaled?null:Number(digits)/100,
+    score:digitScores.reduce((a,b)=>a+b,0)/digits.length,integerConfidence:Math.min(...digitScores.slice(0,digits.length-2)),fractionConfidence:Math.min(...digitScores.slice(digits.length-2)),digitConfidences:digitScores};
 }
 
 function tensorForCrop(pixels,width,height,region,inputHeight){
@@ -58,7 +61,7 @@ function tensorForCrop(pixels,width,height,region,inputHeight){
   return {data:result,dims:[1,3,inputHeight,inputWidth]};
 }
 
-export async function neuralTotalizerCandidates(pixels,width,height,regions){
+export async function neuralTotalizerCandidates(pixels,width,height,regions,{shortDigits=null}={}){
   const {ort,session,characters}=await prepareNeuralTotalizer(),readings=[];
   async function read(region,label,inputHeight){
     const input=tensorForCrop(pixels,width,height,region,inputHeight);
@@ -72,7 +75,8 @@ export async function neuralTotalizerCandidates(pixels,width,height,regions){
     }finally{tensor.dispose();}
   }
   for(const [i,region]of regions.slice(0,3).entries())for(const h of[48,32,64])await read(region,'region-'+i,h);
-  if(!readings.some(r=>r.value!==null&&r.score>.9)){
+  if(!readings.some(r=>(r.value!==null||[6,7].includes(shortDigits)&&r.unscaledDigits?.length===shortDigits&&
+    r.integerConfidence>=.9&&r.fractionConfidence>=.95)&&r.score>.9)){
     for(const [i,region]of regions.slice(0,3).entries()){
       if(region.fallback)for(const h of[48,64])await read(region.fallback,'tight-'+i,h);
       for(const [top,bottom]of [[.15,.85],[.3,1]])for(const h of[48,64])await read({...region,y:region.y+region.height*top,height:region.height*(bottom-top)},'vertical-'+i+'-'+top,h);

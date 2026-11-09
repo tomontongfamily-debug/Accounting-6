@@ -6,6 +6,7 @@ import {rememberMeterPhoto} from './meter-photo-preview.js';
 import { pilotPost } from './pilot-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectTotalizerResult as detect } from './totalizer-ocr.js';
+import {totalizerFormatForStation,formatTotalizerSuggestion} from './totalizer-formats.js';
 import {automaticReaderPreparation,subscribeAutomaticReaderPreparation,startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
 import { ERROR_CATEGORIES, denominationTotal, readingComplete, readingWarning,isHighVariance,highVarianceMessage } from './error-reduction.ts';
 import './upgrade.css';
@@ -39,9 +40,10 @@ export async function savePumpReading(report,row,options) {
 }
 export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false,recognize=detect}) {
   const phoneView=usePhoneView();
+  const format=totalizerFormatForStation(report.branch);
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
   const [ocrResult,setOcrResult]=useState(row.ocr_result);
-  const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));const [editing,setEditing]=useState(false);
+  const [draft,setDraft]=useState(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':formatTotalizerSuggestion(row.ocr_detected_reading,format));const [editing,setEditing]=useState(false);
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [finalConfirmation,setFinalConfirmation]=useState(null);
   const confirming=useRef(false);
@@ -80,7 +82,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   useEffect(()=>{
     if(busy || Number(row.readingRevision||0)===revision.current)return;
     revision.current=Number(row.readingRevision||0);setPhoto(row.photo_path||'');setDetected(row.ocr_detected_reading??null);setOcrResult(row.ocr_result);setDraft(row.readingConfirmed?String(row.closing):row.ocr_detected_reading==null?'':String(row.ocr_detected_reading));setEditing(false);
-  },[row,busy]);
+  },[row,busy,format]);
   async function saveReading(next,savedPhoto,options) {
     // Photo upload already committed this report. Reuse that response to show
     // the saved evidence without another mutation or waiting for recognition.
@@ -106,7 +108,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
       if(capture.data.length>2800000) throw Error('Photo is too large. Move closer and take another photo.');
       // Recognize locally while the photo uploads, instead of waiting through
       // several server round trips before starting the OCR worker.
-      const recognition=capture.recognition ||= capture.result?Promise.resolve(capture.result):recognize(recognitionImage||capture.data);
+      const recognition=capture.recognition ||= capture.result?Promise.resolve(capture.result):recognize(recognitionImage||capture.data,{format});
       recognition.then(result=>{
         if(capture.discarded||currentCapture.current!==capture)return;
         capture.captureToReadingMs??=captureDuration(capture);
@@ -140,7 +142,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
       if(!active.current)return;
       setUploading(false);setCaptureStage('reading');
       const result=await recognition,value=result.reading,attempt={...result.attempt,photoSaveMs:capture.photoSaveMs,captureToReadingMs:capture.captureToReadingMs};
-      if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':String(value));
+      if(!active.current)return;setDetected(value);setOcrResult(attempt);setDraft(value===null?'':formatTotalizerSuggestion(value,format));
       setCaptureStage('reading-save');
       const saveStarted=performance.now();
       // Freeze the exact input and ID across explicit retries. A lost response

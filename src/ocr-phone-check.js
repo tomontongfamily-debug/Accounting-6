@@ -5,6 +5,7 @@ import {TOTALIZER_VERSION} from './ocr-evidence.js';
 import {OCR_ASSET_VERSION} from './ocr-assets.js';
 import {parsePhoneBatch,safePhoneBatch,repeatPhoneBatch,redactDiagnosticText,calibrationMetrics,calibrationRequest,validateCalibrationResponse,CALIBRATION_BYTES} from './ocr-phone-batch.js';
 import {analyzeTotalizerFrame} from './totalizer-frame-client.js';
+import {totalizerFormatForStation} from './totalizer-formats.js';
 
 // This entry point intentionally imports no station client or report mutation.
 // Approved signed photo downloads are converted to local blobs. No photo is
@@ -166,6 +167,7 @@ function appendResult(entry){
 async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false,repeat=1,automatic=false}={}){
   if(running||!batch.length)return;
   const attempts=repeatPhoneBatch(batch,repeat);
+  const format=byId('meter-format').value==='mabolo'?totalizerFormatForStation('Mabolo'):null;
   targetMs??=Number(byId('target-ms').value);networkLabel??=byId('network-label').value;deviceNote??=byId('device-note').value.trim();
   running=true;autoPhase='Reading photos';byId('test-controls').disabled=true;byId('read-photos').disabled=true;
   try{
@@ -179,7 +181,7 @@ async function runBatch(batch,{targetMs,networkLabel,deviceNote,trace=false,repe
       try{
         if(!file.type.startsWith('image/')&&!/\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name))throw Error('The selected file is not an image.');
         url=URL.createObjectURL(file);
-        const result=await detectTotalizerResult(url,{timeoutMs:TOTALIZER_TIMEOUT_MS,
+        const result=await detectTotalizerResult(url,{timeoutMs:TOTALIZER_TIMEOUT_MS,format,
           ...(trace?{onTrace:event=>{if(entry.trace.length<120)entry.trace.push(event);}}:{})});
         entry.reading=result.reading;entry.attempt=result.attempt;
         entry.outcome=result.attempt.status==='detected'&&Number.isFinite(result.reading)?'detected':result.attempt.status==='no-reading'?'no-reading':'error';
