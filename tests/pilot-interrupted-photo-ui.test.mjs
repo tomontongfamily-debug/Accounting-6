@@ -19,7 +19,7 @@ for(const failure of ['upload-before-commit','lost-photo-response','lost-reading
    const page=await browser.newPage({viewport:{width,height:1000},timezoneId:'Asia/Manila'});pages.push(page);
    await page.addInitScript(pumpCameraBootstrap);
    page.on('pageerror',e=>errors.push(e.message));
-   await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export async function prepareTotalizer(){};globalThis.recognitionCalls=0;export async function detectTotalizerResult(){globalThis.recognitionCalls++;return{reading:10010,attempt:{status:'detected',version:'interrupted-fixture',durationMs:1234}};}`}));
+   await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){};globalThis.recognitionCalls=0;export async function detectTotalizerResult(){globalThis.recognitionCalls++;await new Promise(resolve=>setTimeout(resolve,2000));return{reading:10010,attempt:{status:'detected',version:'interrupted-fixture',durationMs:1234}};}`}));
    await page.route('**/api/**',async route=>{
     const url=new URL(route.request().url());let result,status=200;
     if(url.pathname==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:state.startDate};

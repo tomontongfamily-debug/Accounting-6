@@ -33,14 +33,15 @@ function evidenceFixture({incremental=true,branch='Liloan',conflict=false}={}){
  };
  f.cvClient={from(){stats.sourceReads++;throw Error('CV source server is offline');}};
  f.db.storage={from(){return{
+  async list(folder,{search}){return{data:objects.has(folder+'/'+search)?[{name:search}]:[]};},
   async upload(path,bytes){stats.uploads++;if(objects.has(path))return{error:{message:'Already exists'}};objects.set(path,Buffer.from(bytes));return{error:null};},
   async download(path){return objects.has(path)?{data:new Blob([objects.get(path)]),error:null}:{error:{message:'Missing'}};},
  };}};
  f.backupPhoto=async(path,bytes)=>{stats.backups++;assert.match(path,/^photos\/live\//);assert.deepEqual(Buffer.from(bytes),Buffer.from([255,216,255,217]));};
  f.db.rpc=async(name,params)=>{
-  if(!['fueltech_pilot_commit_v2','fueltech_pilot_commit'].includes(name))return rpc(name,params);
+  if(!['fueltech_pilot_try_commit_v2','fueltech_pilot_commit'].includes(name))return rpc(name,params);
   stats.commits++;
-  if(conflict&&stats.commits===1)return{error:{code:'PT409'}};
+  if(conflict&&stats.commits===1)return incremental?{data:{committed:false,revision:11}}:{error:{code:'PT409'}};
   if(params.p_data){for(const key of Object.keys(f.state))delete f.state[key];Object.assign(f.state,structuredClone(params.p_data));}
   else{
    for(const row of params.p_patch.upserts){
@@ -49,7 +50,7 @@ function evidenceFixture({incremental=true,branch='Liloan',conflict=false}={}){
    }
    f.state.audit.push(...structuredClone(params.p_patch.audit));
   }
-  return{data:params.p_result};
+  return{data:incremental?{committed:true,revision:params.p_revision+1,result:params.p_result}:params.p_result};
  };
  const call=(route,input,options={})=>execute({role:route==='/api/demo/midshift-reading'||input?.changeId?'Manager':'Cashier',branch},{route,input,mode:'live',startDate:f.state.startDate,mutationId:randomUUID()}, {...f,...options});
  return {...f,key,report,stats,call};
@@ -110,5 +111,32 @@ test('pump photos still require an authoritative station snapshot and correct st
 test('a photo commit conflict retries with immutable upload evidence and still skips unrelated imports',async()=>{
  const f=evidenceFixture({conflict:true});
  const photo=await f.call('/api/demo/photo',{reportKey:f.key,rowId:f.report.pumpRows[0].id,data:'data:image/jpeg;base64,/9j/2Q==',replaceReading:true,revision:0});
- assert.ok(photo.photo_path);assert.equal(f.stats.uploads,2);assert.equal(f.stats.backups,2);assert.equal(f.stats.commits,2);assert.equal(f.stats.sourceReads,0);
+ assert.ok(photo.photo_path);assert.equal(f.stats.uploads,1);assert.equal(f.stats.backups,1);assert.equal(f.stats.commits,2);assert.equal(f.stats.sourceReads,0);
+});
+
+test('a retry revalidates a nozzle changed by another device before reusing photo evidence',async()=>{
+ const f=evidenceFixture(),row=f.report.pumpRows[0],rpc=f.db.rpc;
+ let commits=0;
+ f.db.rpc=async(name,params)=>{
+  if(name==='fueltech_pilot_try_commit_v2'){
+   commits++;f.state.reports[f.key].pumpRows[0].readingRevision=1;
+   return{data:{committed:false,revision:11}};
+  }
+  return rpc(name,params);
+ };
+ await assert.rejects(f.call('/api/demo/photo',{reportKey:f.key,rowId:row.id,data:'data:image/jpeg;base64,/9j/2Q==',replaceReading:true,revision:0}),e=>e.status===409);
+ assert.equal(commits,1);assert.equal(f.stats.uploads,1);assert.equal(f.stats.backups,1);
+ assert.equal(f.state.reports[f.key].pumpRows[0].readingRevision,1);
+});
+
+test('exhausted contention never acknowledges a saved photo or repeats its verified uploads',async()=>{
+ const f=evidenceFixture(),rpc=f.db.rpc;
+ let commits=0;
+ f.db.rpc=async(name,params)=>{
+  if(name==='fueltech_pilot_try_commit_v2'){commits++;return{data:{committed:false,revision:11}};}
+  return rpc(name,params);
+ };
+ await assert.rejects(f.call('/api/demo/photo',{reportKey:f.key,rowId:f.report.pumpRows[0].id,data:'data:image/jpeg;base64,/9j/2Q==',replaceReading:true,revision:0}),e=>e.status===409&&e.retryableConflict===true&&e.saveUncertain===false);
+ assert.equal(commits,5);assert.equal(f.stats.uploads,1);assert.equal(f.stats.backups,1);
+ assert.equal(Object.keys(f.state.photos).length,0);
 });

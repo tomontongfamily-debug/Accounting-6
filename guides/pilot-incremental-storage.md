@@ -18,3 +18,9 @@ The browser caches only verified complete store loads in memory. Later refreshes
 4. Check new `fueltech_pilot_commit_v2` calls, temporary writes per save, journal bytes per save, API errors, memory, swap and disk throughput under normal traffic. Compare equivalent observation windows; I/O budget and cached RAM percentages need time to reflect changed work.
 
 No old backup, audit event, historical accounting record, photo or journal is deleted. Shrinking provisioned disk, changing memory settings and deleting retained snapshots are separate operations.
+
+## Concurrent saves and immutable uploads
+
+Apply `20261109050544_handle_station_save_contention.sql` before deploying the updated repository. The server-only `fueltech_pilot_try_commit_v2` RPC returns `{committed:false,revision}` for an outdated aggregate snapshot rather than raising an expected Postgres error. Accepted saves still use the original transaction writer with its complete revision, historical, audit and receipt checks. The server reloads and revalidates an action after contention, with up to five attempts and bounded backoff. Exhausted retries still return a save conflict; they never acknowledge an uncommitted edit. Existing deployments retain their original RPC.
+
+Photo uploads and independent backups list the exact object name before creating it. Existing objects are reused only after byte-for-byte verification. New paths remain immutable (`upsert:false`); simultaneous cross-server upload races also verify the winning bytes. A single action keeps its verified photo and backup across commit retries instead of uploading them again. No successful upload bypasses the independent backup requirement. Expected conflicts and duplicates remain visible as normal RPC retry results or verified reuse, while actual failures still fail the save.

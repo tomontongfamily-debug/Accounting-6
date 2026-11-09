@@ -23,7 +23,7 @@ test('Opening photos save automatic and reviewed manual readings from a phone an
  async function context(viewport){
   const ctx=await browser.newContext({viewport,timezoneId:'Asia/Manila'});
   await ctx.addInitScript(pumpCameraBootstrap);
-  await ctx.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export async function prepareTotalizer(){};let calls=0;export async function detectTotalizerResult(){const reading=++calls===1?123456.78:null;return {reading,attempt:{status:reading===null?'no-reading':'detected',version:'opening-browser-fixture'}};}`}));
+  await ctx.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){};let calls=0;export async function detectTotalizerResult(){const reading=++calls===1?123456.78:null;return {reading,attempt:{status:reading===null?'no-reading':'detected',version:'opening-browser-fixture'}};}`}));
   await ctx.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;let result,status=200;
    if(path==='/api/pilot/config')result=config;

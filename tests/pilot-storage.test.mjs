@@ -80,6 +80,40 @@ async function prepared(){
  for(const name of ['20260923044349_liloan_pilot_preparation.sql','20260923053901_optimize_pilot_commit_snapshots.sql','20260924014306_fix_pilot_conflict_retry_loop.sql','20261007075000_allow_historical_pos_adjustments.sql'])await db.exec(sql(name));
  return db;
 }
+
+test('expected save contention returns a normal result and preserves snapshots, receipts, history and permissions',async()=>{
+ const pg=await prepared();
+ try{
+  const {state,key}=fixture();
+  await pg.exec("update fueltech_pilot_config set mode='shadow',start_date='2026-09-23'");
+  await pg.query('insert into fueltech_pilot_state values($1,7,$2,now())',['shadow',JSON.stringify(state)]);
+  await pg.exec(sql('20261016072516_pilot_incremental_storage.sql'));
+  await pg.exec(sql('20261109050544_handle_station_save_contention.sql'));
+  const next=structuredClone(state);next.reports[key].notes='Saved safely';next.audit.push({id:randomUUID(),action:'saved'});
+  const patch=statePatch(state,next),id=randomUUID(),result={ok:true,report:next.reports[key]};
+  const commit=(rev,mutation=id,hash='hash',change=patch)=>pg.query('select fueltech_pilot_try_commit_v2($1,$2,$3,$4,$5,$6) v',['shadow',rev,mutation,hash,JSON.stringify(change),JSON.stringify(result)]).then(r=>r.rows[0].v);
+  assert.deepEqual(await commit(6),{committed:false,revision:7});
+  assert.deepEqual((await pg.query('select data from fueltech_pilot_state')).rows[0].data,state);
+  assert.equal((await pg.query('select count(*)::int n from fueltech_pilot_receipts')).rows[0].n,0);
+  assert.deepEqual(await commit(7),{committed:true,revision:8,result});
+  assert.deepEqual(await commit(7),{committed:true,revision:7,result});
+  assert.deepEqual(await commit(7,randomUUID()),{committed:false,revision:8});
+  assert.deepEqual((await pg.query('select data from fueltech_pilot_state')).rows[0].data,next);
+  assert.equal((await pg.query('select count(*)::int n from fueltech_pilot_journal')).rows[0].n,1);
+  assert.deepEqual((await pg.query("select fueltech_pilot_restore_revision('shadow',7) v")).rows[0].v,state);
+  assert.deepEqual((await pg.query("select fueltech_pilot_restore_revision('shadow',8) v")).rows[0].v,next);
+  await assert.rejects(commit(8,id,'different'),/reused/);
+  await assert.rejects(commit(8,randomUUID(),'hash',{upserts:[],removals:[{section:'reports',key}],audit:[]}),/cannot be removed/);
+  const historical=Object.keys(state.reports).find(k=>k!==key);
+  await assert.rejects(commit(8,randomUUID(),'hash',{upserts:[{section:'reports',key:historical,data:{...state.reports[historical],notes:'forbidden'}}],removals:[],audit:[]}),/Historical/);
+  for(const role of ['anon','authenticated']){
+   await pg.exec('set role '+role);await assert.rejects(commit(7,randomUUID()),/permission denied/);await pg.exec('reset role');
+  }
+  // Hosted Supabase grants the server role UPDATE for SELECT ... FOR SHARE.
+  await pg.exec('grant update on public.fueltech_pilot_config to service_role');
+  await pg.exec('set role service_role');assert.deepEqual(await commit(7,randomUUID()),{committed:false,revision:8});await pg.exec('reset role');
+ }finally{await pg.close();}
+});
 test('incremental storage preserves migration, every revision, audit order, POS order, legacy clients and access controls',async()=>{
  const db=await prepared();
  try{
@@ -148,6 +182,7 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
   await pg.exec(sql('20261016074116_optimize_pilot_document_reads.sql'));
   await pg.exec(sql('20261103054839_optimize_liloan_report_reconstruction.sql'));
   await pg.exec(sql('20261103055135_batch_liloan_pos_evidence_reads.sql'));
+  await pg.exec(sql('20261109050544_handle_station_save_contention.sql'));
   let conflict=true;
   const db={from(table){
    const filters=[];let single=false,cols='*';
@@ -155,7 +190,7 @@ test('repository runs real incremental RPCs, returns deltas and preserves receip
     try{const rows=(await pg.query('select '+cols+' from '+table+(filters.length?' where '+filters.map(([c],i)=>c+'=$'+(i+1)).join(' and '):''),filters.map(([,v])=>v))).rows;for(const row of rows)if(row.start_date instanceof Date)row.start_date=row.start_date.toISOString().slice(0,10);resolve({data:single?rows[0]||null:rows,error:null});}catch(e){reject(e);}
    }};return query;
   },async rpc(name,params){
-   if(name==='fueltech_pilot_commit_v2'&&conflict){conflict=false;return {error:{code:'PT409'}};}
+   if(name==='fueltech_pilot_try_commit_v2'&&conflict){conflict=false;return {data:{committed:false,revision:2}};}
    const values=Object.values(params).map(v=>v&&typeof v==='object'?JSON.stringify(v):v);
    try{return {data:(await pg.query('select '+name+'('+values.map((_,i)=>'$'+(i+1)).join(',')+') v',values)).rows[0].v,error:null};}catch(error){return {error};}
   }};

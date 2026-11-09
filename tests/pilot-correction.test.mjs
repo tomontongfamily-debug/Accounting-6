@@ -6,6 +6,10 @@ import { correctionFixture, correctionDatabase } from './correction-fixture.mjs'
 
 for(const status of ['pending','verified'])test(`Approved correction can replace a pump photo with a ${status} deposit and preserve its cash`,async()=>{
   let {state,report,key,admin,cashier}=correctionFixture(status);
+  // Keep this photo-correction fixture within the current submission limits.
+  // Variance-limit rejection has dedicated coverage in pilot-high-variance.
+  for(const row of state.reports[key].pumpRows)row.closing=Number(row.opening)+1;
+  report=structuredClone(state.reports[key]);
   const act=async(session,route,input={},options={})=>{const out=await runAction(state,session,route,input,options);state=out.state;return out.result;};
   const deposits=structuredClone(state.deposits),cash=structuredClone(report.cashDenominations);
   const approval={...report,correctionRequest:{...report.correctionRequest,status:'approved',expiresAt:'2099-01-01T00:00:00Z'}};
@@ -19,8 +23,8 @@ for(const status of ['pending','verified'])test(`Approved correction can replace
   const replaced=await act(cashier,'/api/demo/photo',{reportKey:key,rowId:row.id,revision:row.readingRevision,replaceReading:true,data:'data:image/jpeg;base64,/9j/2Q=='},{uploadPhoto:async()=>{}});
   const cleared=(await act(cashier,'/api/demo/pump-report',{reportKey:key})).report;
   assert.equal(cleared.pumpRows[0].readingConfirmed,false);
-  report=(await act(cashier,'/api/demo/pump-reading',{reportKey:key,revision:replaced.readingRevision,row:{...cleared.pumpRows[0],closing:Number(row.opening)+20,closingEntered:true,readingConfirmed:true,photo_path:replaced.photo_path}})).report;
-  assert.equal(report.pumpRows[0].closing,Number(row.opening)+20);
+  report=(await act(cashier,'/api/demo/pump-reading',{reportKey:key,revision:replaced.readingRevision,row:{...cleared.pumpRows[0],closing:Number(row.opening)+2,closingEntered:true,readingConfirmed:true,photo_path:replaced.photo_path}})).report;
+  assert.equal(report.pumpRows[0].closing,Number(row.opening)+2);
   const checked=await act(cashier,'/api/demo/cash-check',{report});report=checked.report;
   assert.equal(checked.needsRecount,false);
   await assert.rejects(act(cashier,'/api/demo/cash-recount',{report,denominations:{100:6}}),/covered by a deposit/);

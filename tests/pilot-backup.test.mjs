@@ -4,11 +4,12 @@ import {backupImmutable,backupJson} from '../pilot/backup.mjs';
 import {gunzipSync} from 'node:zlib';
 import {createHash,randomBytes} from 'node:crypto';
 test('Off-project photo backup verifies bytes and makes retries safe',async()=>{
- let saved;const bucket={upload:async(_path,bytes)=>{if(saved)return{error:{message:'exists'}};saved=Buffer.from(bytes);return{};},download:async()=>({data:new Blob([saved])})};
+ let saved,uploads=0;const bucket={list:async(_folder,{search})=>({data:saved?[{name:search}]:[]}),upload:async(_path,bytes)=>{uploads++;if(saved)return{error:{message:'exists'}};saved=Buffer.from(bytes);return{};},download:async()=>({data:new Blob([saved])})};
  const db={storage:{from:()=>bucket}},bytes=Buffer.from([255,216,1,2]);
  const first=await backupImmutable('photos/live/test.jpg',bytes,'image/jpeg',db);
  assert.equal(first.reused,false);assert.equal((await backupImmutable('photos/live/test.jpg',bytes,'image/jpeg',db)).sha256,first.sha256);
  await assert.rejects(backupImmutable('photos/live/test.jpg',Buffer.from([255,216,9]),'image/jpeg',db),/could not be verified/);
+ assert.equal(uploads,1);
 });
 
 test('large JSON backups fit the real bucket limit and restore byte for byte',async()=>{

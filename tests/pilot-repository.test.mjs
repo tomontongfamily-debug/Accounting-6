@@ -38,8 +38,8 @@ for(const exhausted of [false,true]) test(`PT409 conflicts re-read the latest st
   const run=()=>execute(cashier,{route:'/api/store/load',mode:'shadow',startDate:state.startDate,mutationId:randomUUID()},{db});
   if(exhausted) await assert.rejects(run(),error=>error.status===409&&/Another device saved first/.test(error.message));
   else assert.ok(await run());
-  assert.deepEqual(revisions,[1,2,3]);
-  assert.equal(loads,3);
+  assert.deepEqual(revisions,exhausted?[1,2,3,4,5]:[1,2,3]);
+  assert.equal(loads,exhausted?5:3);
 });
 test('JSONB key order cannot turn phone and desktop reads into repeated database writes',async()=>{
   const {state,cashier}=fixture();

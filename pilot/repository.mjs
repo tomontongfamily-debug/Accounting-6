@@ -62,7 +62,7 @@ async function allRows(query) {
     rows.push(...data);if(data.length<1000)return rows;
   }
 }
-export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,backupPhoto,attempt=0}={}) {
+export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,backupPhoto,attempt=0,photoUploads=new Map()}={}) {
   if(!['Admin','Approver','Cashier','Manager'].includes(session.role)) throw fail('Invalid station role.',403);
   const config=await configuration(db);
   if(['Cashier','Manager'].includes(session.role)&&!configuredStations(config).includes(session.branch)) throw fail('This station is not enabled.',403);
@@ -133,7 +133,17 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     reconcileSources(state,sources);
   }
   if(usesPos)await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
-  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>persistPumpPhoto(db,path,image,context,backupPhoto)});
+  const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>{
+    const digest=createHash('sha256').update(image).digest('hex'),prior=photoUploads.get(path);
+    if(prior){
+      if(prior.digest!==digest)throw fail('This capture changed while saving. Retry with the original photo.',409);
+      return prior.promise;
+    }
+    const promise=persistPumpPhoto(db,path,image,context,backupPhoto);
+    photoUploads.set(path,{digest,promise});
+    promise.catch(()=>photoUploads.delete(path));
+    return promise;
+  }});
   if(!loaded.data||outcome.changed||!isDeepStrictEqual(before,JSON.parse(JSON.stringify(outcome.state)))) {
     const persisted=JSON.parse(JSON.stringify(outcome.state));
     const patch=incremental?statePatch(loaded.data?before:{},persisted):null;
@@ -141,18 +151,19 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     // Read requests must not acquire the global commit lock or emit a realtime
     // signal for an empty patch. Mutations still commit their idempotent receipt.
     const needsCommit=!readOnly||!loaded.data||!patch||patch.upserts.length||patch.removals.length||patch.audit.length;
-    const saved=needsCommit?await db.rpc(incremental?'fueltech_pilot_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:patch}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result}):{data:outcome.result};
+    const saved=needsCommit?await db.rpc(incremental?'fueltech_pilot_try_commit_v2':'fueltech_pilot_commit',{p_mode:config.mode,p_revision:loaded.data?.revision||0,p_mutation:mutationId,p_hash:hash,...(incremental?{p_patch:patch}:{p_data:persisted}),p_result:readOnly?{ok:true}:outcome.result}):{data:outcome.result};
     // Re-read and revalidate after aggregate contention. Per-report/nozzle checks still
     // reject stale edits; a concurrent refresh must not make saved reports disappear.
-    const conflict=['PT409','40001'].includes(saved.error?.code);
-    if(conflict&&attempt<2) {
+    const conflict=(incremental&&needsCommit&&saved.data?.committed===false)||['PT409','40001'].includes(saved.error?.code);
+    if(conflict&&attempt<4) {
       await new Promise(resolve=>setTimeout(resolve,75*2**attempt+Math.floor(Math.random()*125)));
-      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1});
+      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1,photoUploads});
     }
+    if(incremental&&needsCommit&&!saved.error&&!conflict&&(saved.data?.committed!==true||!Number.isSafeInteger(saved.data.revision)))throw fail('The save could not be verified. Retry with the same request.');
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
-    if(saved.error) throw Object.assign(fail(conflict?'Another device saved first. Your changes are kept on this device. Load the saved shift before retrying.':'The save could not be verified. Retry with the same request.',conflict?409:503),conflict?{retryableConflict:true,saveUncertain:false}:{});
-    if(needsCommit)storeRevision++;
-    if(!readOnly)return saved.data;
+    if(saved.error||conflict) throw Object.assign(fail(conflict?'Another device saved first. Your changes are kept on this device. Load the saved shift before retrying.':'The save could not be verified. Retry with the same request.',conflict?409:503),conflict?{retryableConflict:true,saveUncertain:false}:{});
+    if(needsCommit)storeRevision=incremental?saved.data.revision:storeRevision+1;
+    if(!readOnly)return incremental?saved.data.result:saved.data;
   }
   if(incremental&&route==='/api/demo/audit')outcome.result.nextCursor=loaded.data?.auditCursor??null;
   if(incremental&&route==='/api/store/load'&&input.paged) {

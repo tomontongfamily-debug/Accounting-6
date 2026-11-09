@@ -16,7 +16,7 @@ for(const stage of ['photo','pump-reading'])for(const failure of ['unavailable',
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
   page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(pumpCameraBootstrap);
-  await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export async function prepareTotalizer(){};globalThis.recognitionCalls=0;export async function detectTotalizerResult(){globalThis.recognitionCalls++;return{reading:10010,attempt:{status:'detected',version:'retry-fixture',durationMs:1234}};}`}));
+  await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){};globalThis.recognitionCalls=0;export async function detectTotalizerResult(){globalThis.recognitionCalls++;await new Promise(resolve=>setTimeout(resolve,2000));return{reading:10010,attempt:{status:'detected',version:'retry-fixture',durationMs:1234}};}`}));
   await page.route('**/api/**',async route=>{
    const url=new URL(route.request().url());let result,status=200;
    if(url.pathname==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:'2026-09-23'};
@@ -47,7 +47,7 @@ for(const stage of ['photo','pump-reading'])for(const failure of ['unavailable',
   assert.equal(stage==='photo'?photoAttempts:readingAttempts,1,'Do not automatically double the failed station read');
   failing=false;await retry.click();
   await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
-  await expect(card).toContainText('Automatic reading: 1.2 seconds. Photo transfer and server saving are separate.');
+  await expect(card).toContainText('Automatic reading: 1.2 seconds.');
   assert.equal(await page.evaluate(()=>globalThis.recognitionCalls),1);
   assert.equal(uploads.size,1,'Retrying the reading must not upload another photo');
   assert.equal(photoAttempts,stage==='photo'?2:1);

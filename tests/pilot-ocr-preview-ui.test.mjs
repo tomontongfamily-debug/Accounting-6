@@ -10,14 +10,14 @@ for(const failPhoto of [false,true])test(`a local reading appears during a held 
  const port=failPhoto?44343:44342;
  const server=await createServer({server:{host:'127.0.0.1',port,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
- let releasePhoto,releaseReading;
- const photoGate=new Promise(resolve=>{releasePhoto=resolve;}),readingGate=new Promise(resolve=>{releaseReading=resolve;});
+ let releasePhoto;
+ const photoGate=new Promise(resolve=>{releasePhoto=resolve;});
  let {state,key,report,cashier}=fixture();
- const uploads=new Map();let readingSaveStarted=false;
+ const uploads=new Map();
  try {
   const page=await browser.newPage({viewport:{width:390,height:900},timezoneId:'Asia/Manila'});
   await page.addInitScript(pumpCameraBootstrap);
-  await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export async function prepareTotalizer(){};export async function detectTotalizerResult(){return{reading:10010,attempt:{status:'detected',version:'preview-fixture'}};}`}));
+  await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){};export async function detectTotalizerResult(){return{reading:10010,attempt:{status:'detected',version:'preview-fixture'}};}`}));
   await page.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;let result,status=200;
    if(path==='/api/pilot/config')result={ok:true,mode:'shadow',start_date:'2026-09-23'};
@@ -29,7 +29,6 @@ for(const failPhoto of [false,true])test(`a local reading appears during a held 
      await photoGate;
      if(failPhoto)return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({ok:false,error:'Photo could not be saved. Retry.'})});
     }
-    if(body.route==='/api/demo/pump-reading'){readingSaveStarted=true;await readingGate;}
     try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(_path,image)=>uploads.set(body.mutationId,image)});state=out.state;result=out.result;}
     catch(error){status=error.status||400;result={ok:false,error:error.message};}
    }else result={ok:true,enabled:false};
@@ -53,12 +52,11 @@ for(const failPhoto of [false,true])test(`a local reading appears during a held 
    assert.equal(await card.locator('.totalizer-photo').count(),0);
    assert.equal(uploads.size,0);
   }else{
-   await expect.poll(()=>readingSaveStarted).toBe(true);
-   assert.equal(await card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true}).count(),0);
-   releaseReading();
+   // Fast OCR now joins the photo transaction; confirmation becomes available
+   // only after that held photo and its suggestion are saved together.
    await expect(card.getByRole('button',{name:/^(Yes, confirm reading|Save corrected reading)$/,exact:true})).toBeEnabled();
    assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
    assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,10010);
   }
- }finally{releasePhoto();releaseReading();await browser.close();await server.close();}
+ }finally{releasePhoto();await browser.close();await server.close();}
 });

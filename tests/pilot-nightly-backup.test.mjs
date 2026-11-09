@@ -13,6 +13,7 @@ for(const failArchive of [false,true])test(`nightly backup verifies independent 
  assert.ok(Buffer.byteLength(JSON.stringify(state))>10*1024*1024);
  globalThis.fetch=async(input,init={})=>{
   const url=new URL(typeof input==='string'?input:input.url||input),method=init.method||'GET';
+  if(url.pathname.startsWith('/storage/v1/object/list/'))return new Response('[]',{status:200,headers:{'Content-Type':'application/json'}});
   if(url.pathname.startsWith('/storage/v1/object/')){
    const key=url.pathname.replace('/storage/v1/object/authenticated/','/storage/v1/object/');
    if(method==='POST'){

@@ -30,10 +30,10 @@ export function stationLoadFixture({incremental=true}={}) {
   },async rpc(name,params){
     if(name==='fueltech_pilot_load_compact')return {data:snapshot()};
     if(name==='fueltech_pilot_load_v2'){stats.fullLoads++;throw Error('Unrelated Liloan full-history read is unavailable');}
-    assert.ok(['fueltech_pilot_commit_v2','fueltech_pilot_commit'].includes(name),name);
+    assert.ok(['fueltech_pilot_try_commit_v2','fueltech_pilot_commit'].includes(name),name);
     if(params.p_patch)stats.patches.push(params.p_patch);
     if(params.p_data)stats.legacyWrites.push(params.p_data);
-    return {data:params.p_result};
+    return {data:incremental?{committed:true,revision:params.p_revision+1,result:params.p_result}:params.p_result};
   }};
   const posRead=async()=>{stats.posReads++;throw Error('Unrelated POS connection is offline');};
   return {state,config,db,posRead,stats,posEnv:{FUELTECH_POS_REDEMPTIONS_ENABLED:'true'}};

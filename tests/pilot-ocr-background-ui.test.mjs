@@ -21,7 +21,7 @@ for(const failedReader of [false,true])test(`photos save and pumps remain availa
   // Hold the recognizer indefinitely, including its real serial-queue behavior.
   // Two photo saves must complete before either OCR result is released.
   await page.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`
-   export async function prepareTotalizer(){}
+   export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){}
    let queue=Promise.resolve();globalThis.finishOcr=[];
    export function detectTotalizerResult(){
     const result=queue.then(()=>new Promise(resolve=>globalThis.finishOcr.push(reading=>resolve({reading,attempt:{status:reading===null?'error':'detected',version:'background-fixture'}}))));
