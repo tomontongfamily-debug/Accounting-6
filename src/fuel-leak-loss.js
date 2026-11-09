@@ -29,10 +29,24 @@ export function pumpMeterSales(report, row) {
     .slice().sort((a,b)=>midShiftChangeOrder(a,report.shiftId)-midShiftChangeOrder(b,report.shiftId));
   for(const change of changes) {
     const next=number(midShiftReadingValue(change,row));
-    if(number(change.newPrice)<=0||next<=number(row.opening)||next>=number(row.closing))continue;
+    if(number(change.newPrice)<=0||next<reading||next<number(row.opening)||next>number(row.closing))continue;
     sales+=(next-reading)*price;reading=next;price=Math.max(0,number(change.newPrice));
   }
   return sales+(number(row.closing)-reading)*price;
+}
+
+// Missing units identify historical litres; keep their original meaning.
+export function calibrationAmount(report, row) {
+  if(row.calibrationUnit==='PHP')return Math.max(0,number(row.calibration));
+  const pumps=(report.pumpRows||[]).filter(pump=>pump.product===row.product);
+  const volume=pumps.reduce((sum,pump)=>sum+pumpMeterLiters(pump),0);
+  const sales=pumps.reduce((sum,pump)=>sum+pumpMeterSales(report,pump),0);
+  const price=volume>0?sales/volume:Math.max(0,number(reportStartingPrice(report,row.product)));
+  return Math.max(0,number(row.calibration))*price;
+}
+
+export function calibrationPesoEntry(row,value) {
+  return {...row,calibration:value,calibrationUnit:'PHP'};
 }
 
 export function returnedCalibrationSummary(report) {
@@ -40,18 +54,29 @@ export function returnedCalibrationSummary(report) {
     const pumps=(report.pumpRows || []).filter(row=>row.product===product);
     const meteredLiters=pumps.reduce((sum,row)=>sum+pumpMeterLiters(row),0);
     const grossSales=pumps.reduce((sum,row)=>sum+pumpMeterSales(report,row),0);
-    const calibrationLiters=(report.tankRows || []).filter(row=>row.product===product).reduce((sum,row)=>sum+Math.max(0,number(row.calibration)),0);
     const leakLiters=pumps.reduce((sum,row)=>sum+pumpLeakLiters(report,row),0);
     const averagePrice=meteredLiters>0?grossSales/meteredLiters:0;
-    return {product,meteredLiters,calibrationLiters,availableLiters:Math.max(0,meteredLiters-leakLiters),salesAdjustment:Math.min(meteredLiters,calibrationLiters)*averagePrice};
+    const tanks=(report.tankRows||[]).filter(row=>row.product===product);
+    const legacyLiters=tanks.filter(row=>row.calibrationUnit!=='PHP').reduce((sum,row)=>sum+Math.max(0,number(row.calibration)),0);
+    const pesoAmount=tanks.filter(row=>row.calibrationUnit==='PHP').reduce((sum,row)=>sum+Math.max(0,number(row.calibration)),0);
+    const calibrationLiters=legacyLiters+(averagePrice>0?pesoAmount/averagePrice:0);
+    const amount=legacyLiters*averagePrice+pesoAmount;
+    const leakSales=pumps.reduce((sum,row)=>sum+pumpLeakSales(report,row,pump=>pumpMeterSales(report,pump)),0);
+    return {product,meteredLiters,calibrationLiters,amount,pesoAmount,averagePrice,
+      availableLiters:Math.max(0,meteredLiters-leakLiters),availableSales:Math.max(0,grossSales-leakSales),
+      salesAdjustment:Math.min(grossSales,amount)};
   });
 }
 
 export function validateReturnedCalibration(report) {
   for(const row of report.tankRows || []) {
-    if(row.calibration!==''&&row.calibration!=null&&(!Number.isFinite(Number(row.calibration))||Number(row.calibration)<0))return `${row.product}: returned calibration must be a non-negative number of litres, not pesos.`;
+    if(row.calibrationUnit!=null&&!['PHP','L'].includes(row.calibrationUnit))return `${row.product}: invalid calibration unit.`;
+    if(row.calibration!==''&&row.calibration!=null&&(!Number.isFinite(Number(row.calibration))||Number(row.calibration)<0))return `${row.product}: calibration must be a non-negative ${row.calibrationUnit==='PHP'?'peso amount':'number of litres'}.`;
+    if(row.calibrationUnit==='PHP'&&Math.abs(number(row.calibration)*100-Math.round(number(row.calibration)*100))>0.000001)return `${row.product}: enter calibration pesos with no more than two decimal places.`;
   }
   for(const row of returnedCalibrationSummary(report)) {
+    if(row.pesoAmount>0&&row.averagePrice<=0)return `${row.product}: calibration pesos require completed pump readings and a positive selling price.`;
+    if(row.pesoAmount>0&&row.amount>row.availableSales+0.000001)return `${row.product}: calibration amount cannot exceed available metered fuel sales after leak loss.`;
     if(row.calibrationLiters>row.meteredLiters+0.000001)return `${row.product}: returned calibration (${row.calibrationLiters.toFixed(2)} L) cannot exceed the pump reading difference (${row.meteredLiters.toFixed(2)} L). Enter litres returned to the tank, not pesos.`;
     if(row.calibrationLiters>row.availableLiters+0.000001)return 'Calibration and metered leak loss cannot exceed the total pump volume.';
   }
