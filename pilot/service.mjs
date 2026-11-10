@@ -456,7 +456,7 @@ function validatePriceReadingOrder(report,change) {
       if(Number(input.revision)!==Number(previous.readingRevision||0))reject('This price-change reading changed on another device. Refresh before entering it.',409);
       const value=amount(input.reading);
       if(value<Number(row.opening)||(row.closingEntered&&value>Number(row.closing)))reject('Price-change reading must be between opening and the confirmed closing.');
-      const manualEntry={authorizationId:BARILI_MANUAL_PRICE_GRANT.id,recordedAt:stamp(),role:session.role,rowId:row.id,pumpKey:key,value};
+      const manualEntry={authorizationId:BARILI_MANUAL_PRICE_GRANT.id,recordedAt:stamp(),role:session.role,rowId:row.id,pumpKey:key,value,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,newPrice:Number(change.newPrice)};
       // Keep any original photo and recognition attempt. Never fabricate either.
       const evidence={...previous,readingConfirmed:true,readingRevision:Number(previous.readingRevision||0)+1,manualEntry};
       change.readingPhotos={...change.readingPhotos,[key]:evidence};change.readings={...change.readings,[key]:value};change.confirmedAt='';change.photoRequired=true;

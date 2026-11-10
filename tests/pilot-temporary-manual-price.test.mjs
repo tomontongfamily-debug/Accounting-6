@@ -9,10 +9,26 @@ import {compute} from '../src/accounting-engine.js';
 const now=Date.parse('2026-11-10T17:10:00+08:00');
 function body(f,row,reading=10010){return {reportKey:f.key,changeId:f.change.id,product:f.change.product,effectiveTime:f.change.effectiveTime,rowId:row.id,revision:f.state.reports[f.key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)]?.readingRevision||0,reading};}
 
-test('temporary manual grant is exact, bounded, never follows another change, and closes on confirmation/submission',()=>{
+test('existing Premium manual entries remain valid and new records cannot transfer between product changes or prices',async t=>{
+ t.mock.timers.enable({apis:['Date'],now});
+ const f=bariliManualFixture(),row=f.rows[0],key=midShiftPumpKey(row);
+ const legacy={readingConfirmed:true,manualEntry:{authorizationId:grant.legacyId,recordedAt:new Date(now).toISOString(),role:'Cashier',rowId:row.id,pumpKey:key,value:10010}};
+ assert.equal(validTemporaryManualPriceReading(f.report,f.change,row,legacy),true);
+ assert.equal(validTemporaryManualPriceReading(f.report,{...f.change,id:'other'},row,legacy),false);
+ for(const product of ['Regular','Diesel']){
+  const target=bariliManualFixture(product),pump=target.rows[1];
+  const saved=await runAction(target.state,target.cashier,'/api/demo/temporary-price-reading',body(target,pump));
+  const change=saved.result.report.midShiftPriceChanges[0],evidence=change.readingPhotos[midShiftPumpKey(pump)];
+  assert.equal(validTemporaryManualPriceReading(saved.result.report,change,pump,evidence),true);
+  for(const mutation of [{id:'other'},{effectiveTime:'11:27'},{newPrice:95}])assert.equal(validTemporaryManualPriceReading(saved.result.report,{...change,...mutation},pump,evidence),false);
+ }
+});
+
+test('temporary manual grant covers all products in the exact shift and closes on confirmation/submission or expiry',()=>{
  const f=bariliManualFixture();assert.equal(temporaryManualPriceOpen(f.report,f.change,now),true);
  for(const mutation of [{branch:'Mabolo'},{date:'2026-11-11'},{shiftId:'shift-2'},{baselineReport:true},{confirmed:true}])assert.equal(temporaryManualPriceOpen({...f.report,...mutation},f.change,now),false);
- for(const mutation of [{id:'newer-change'},{product:'Diesel'},{effectiveTime:'11:27'},{newPrice:92},{confirmedAt:'done'}])assert.equal(temporaryManualPriceOpen(f.report,{...f.change,...mutation},now),false);
+ for(const product of ['Premium','Regular','Diesel'])assert.equal(temporaryManualPriceOpen(f.report,{...f.change,id:product,product,newPrice:92},now),true);
+ for(const mutation of [{id:''},{product:'Other'},{effectiveTime:'13:01'},{newPrice:0},{confirmedAt:'done'}])assert.equal(temporaryManualPriceOpen(f.report,{...f.change,...mutation},now),false);
  for(const time of [Date.parse(grant.startsAt)-1,Date.parse(grant.expiresAt)])assert.equal(temporaryManualPriceOpen(f.report,f.change,time),false);
 });
 

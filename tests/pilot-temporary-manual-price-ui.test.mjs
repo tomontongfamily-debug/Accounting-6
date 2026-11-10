@@ -7,9 +7,9 @@ import {bariliManualFixture} from './barili-manual-price-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
 
-test('Barili one-change manual input works on phone and desktop, survives a lost save response, preserves all closing photos, and closes after manager confirmation',async t=>{
+for(const product of ['Premium','Regular','Diesel'])test(`Barili Shift 1 ${product} manual input works on phone/desktop and preserves closing photos`,async t=>{
  const now=Date.parse('2026-11-10T17:10:00+08:00');t.mock.timers.enable({apis:['Date'],now});
- const f=bariliManualFixture();let state=f.state;
+ const f=bariliManualFixture(product);let state=f.state;
  const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true}),errors=[],writes=[],receipts=new Map();let loseResponse=true,queue=Promise.resolve();
  const closing=structuredClone(f.report.pumpRows),original=structuredClone(f.change.readingPhotos[midShiftPumpKey(f.rows[0])]);
@@ -46,7 +46,7 @@ test('Barili one-change manual input works on phone and desktop, survives a lost
   if(lost){await expect(dialog.getByRole('alert')).toContainText('lost manual save response');loseResponse=false;await dialog.getByRole('button',{name:'Confirm manual reading',exact:true}).click();}
   await expect(dialog).toHaveCount(0);await expect.poll(()=>state.reports[f.key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)]?.manualEntry?.value).toBe(10010);
  }
- async function openManagerTask(page){await page.getByRole('button',{name:'Open Shift 1 Premium price change at 11:26',exact:true}).click();await expect(page.getByText('Currently viewing: Barili · 2026-11-10 · Shift 1',{exact:true})).toBeVisible();}
+ async function openManagerTask(page){await page.getByRole('button',{name:`Open Shift 1 ${product} price change at 11:26`,exact:true}).click();await expect(page.getByText('Currently viewing: Barili · 2026-11-10 · Shift 1',{exact:true})).toBeVisible();}
  try{
   const phone=await open('Cashier',390);await phone.getByLabel('Shift to photograph').selectOption(f.key);
   await expect(phone.getByLabel('Photos for')).toHaveValue(f.change.id);
@@ -61,8 +61,8 @@ test('Barili one-change manual input works on phone and desktop, survives a lost
   assert.equal(writes.some(write=>['/api/demo/photo','/api/demo/pump-reading'].includes(write.route)),false);
   const retries=writes.filter(write=>write.route==='/api/demo/temporary-price-reading'&&write.input.rowId===f.rows[1].id);assert.ok(retries.length>=3);assert.equal(new Set(retries.map(write=>write.mutationId)).size,1);
   assert.equal(state.audit.filter(row=>row.action==='price-change-manual-reading-saved').length,5);
-  await manager.reload();await openManagerTask(manager);manager.on('dialog',dialog=>dialog.accept(dialog.type()==='prompt'?'91.90':undefined));
-  await manager.getByRole('button',{name:'Confirm Premium Mid-Shift Price',exact:true}).click();await expect.poll(()=>!!state.reports[f.key].midShiftPriceChanges[0].confirmedAt).toBe(true);
+  await manager.reload();await openManagerTask(manager);manager.on('dialog',dialog=>dialog.accept(dialog.type()==='prompt'?String(f.change.newPrice):undefined));
+  await manager.getByRole('button',{name:`Confirm ${product} Mid-Shift Price`,exact:true}).click();await expect.poll(()=>!!state.reports[f.key].midShiftPriceChanges[0].confirmedAt).toBe(true);
   assert.equal(await manager.getByRole('button',{name:'Enter price-change reading manually',exact:true}).count(),0);assert.deepEqual(state.reports[f.key].pumpRows,closing);assert.deepEqual(errors,[]);
  }finally{await browser.close();await server.close();}
 });

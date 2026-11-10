@@ -38,7 +38,7 @@ export function TemporaryPriceReading({report,change,row,onSaved,onBusy,disabled
     <strong>{row.pump} · {row.nozzle}</strong>
     {row.temporaryManualConfirmed&&row.photo_path&&<img src={row.photo_path} alt="Original saved price-change photo" className="totalizer-photo"/>}
     {row.temporaryManualConfirmed&&<p className="success-box">✓ Manual price-change reading saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
-    {allowed&&<><p><strong>Temporary manual input · Barili 11:26 price change only</strong><br/>Available until manager confirmation or November 11, 5:30 PM Manila time. You can type the price-change reading if the photo step cannot finish.</p>
+    {allowed&&<><p><strong>Temporary manual input · Barili {report.date} {report.shiftId.replace('shift-','Shift ')} · {change.product}</strong><br/>Available until manager confirmation or November 11, 5:30 PM Manila time. You can type the price-change reading if the photo step cannot finish.</p>
       {!editing?<button type="button" className="secondary" disabled={busy||disabled} onClick={()=>{setDraft(row.readingConfirmed?String(row.closing):'');setEditing(true);setError('');}}>Enter price-change reading manually</button>:<>
         <label>Manual price-change reading<input aria-label={`${row.pump} ${row.nozzle} manual price-change reading`} inputMode="decimal" autoComplete="off" value={draft} disabled={busy||disabled} onChange={event=>{setDraft(event.target.value);setError('');}}/></label>
         <small>Opening: {Number(row.opening).toFixed(2)}{row.finalClosing!==''&&row.finalClosing!=null?` · Shift closing: ${Number(row.finalClosing).toFixed(2)}`:''}</small>
