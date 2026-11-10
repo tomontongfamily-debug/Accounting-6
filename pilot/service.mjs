@@ -206,7 +206,7 @@ function validatePricePhotos(report,change) {
     const evidence=change.readingPhotos?.[midShiftPumpKey(row)];
     const photo=database.photos[evidence?.photo_path];
     const value=midShiftReadingValue(change,row);
-    if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject(`Photograph and confirm every affected nozzle with a valid price-change reading. Next: ${row.pump} ${row.nozzle} · ${change.product} at ${change.effectiveTime}. Closing photos are separate; open the price-change photos to finish.`);
+    if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject(`Photograph and confirm every affected nozzle with a valid price-change reading. Next: ${report.date} ${report.shiftId.replace('shift-','Shift ')} · ${row.pump} ${row.nozzle} · ${change.product} at ${change.effectiveTime}. On the manager page, open this saved change under Unfinished price changes. Closing photos are separate.`);
   }
 }
 function validatePriceReadingOrder(report,change) {

@@ -16,6 +16,20 @@ export function pendingPricePhotoChanges(report) {
   return (report.midShiftPriceChanges||[]).filter(change=>!change.confirmedAt&&change.effectiveTime&&Number(change.newPrice)>0);
 }
 
+export function pendingPricePhotoTasks(reports, branch, date) {
+  return Object.values(reports||{}).filter(report=>report.branch===branch&&report.date===date&&!report.confirmed&&!report.baselineReport)
+    .sort((a,b)=>a.shiftId.localeCompare(b.shiftId)).flatMap(report=>(report.midShiftPriceChanges||[])
+      .filter(change=>!change.confirmedAt&&midShiftChangeHasDetails(change)).map(change=>{
+        const rows=(report.pumpRows||[]).filter(row=>row.product===change.product);
+        const missing=rows.filter(row=>{
+          const photo=midShiftPhotoRow(change,row),value=photo.closing;
+          return !photo.photo_path||!photo.readingConfirmed||value===''||value==null||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing));
+        });
+        return {reportKey:`${report.branch}__${report.date}__${report.shiftId}`,branch:report.branch,date:report.date,shiftId:report.shiftId,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,
+          total:rows.length,done:rows.length-missing.length,nextNozzle:missing[0]?`${missing[0].pump} ${missing[0].nozzle}`:'',needsSetup:!change.effectiveTime||Number(change.newPrice)<=0};
+      }));
+}
+
 // Opening an optional change card saves a blank draft, not an actual price change.
 // Keep partial entries active so unfinished real changes still block submission.
 export function midShiftChangeHasDetails(change) {

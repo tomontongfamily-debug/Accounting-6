@@ -32,6 +32,7 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
  change.readings[midShiftPumpKey(first)]=10010;change.readingPhotos[midShiftPumpKey(first)]={photo_path:firstPath,readingConfirmed:true,readingRevision:2};
  state.photos[firstPath]={reportKey:key,rowId:first.id,branch:'Barili',changeId:change.id,product:change.product,effectiveTime:change.effectiveTime};
  report.midShiftBasePrices={...prices};report.midShiftPriceChanges=[change,{id:'blank',product:'Premium',newPrice:0,effectiveTime:'',readings:{},readingPhotos:{}}];state.reports[key]=report;
+ const later=createReport('Barili',report.date,prices,'shift-2');later.midShiftPriceChanges=[{id:'blank-next-shift',product:'Premium',newPrice:0,effectiveTime:'',readings:{},readingPhotos:{}}];state.reports[reportKey(later.branch,later.date,later.shiftId)]=later;
  const closingSnapshot=structuredClone(report.pumpRows),uploads=new Map(),errors=[],writes=[];let queue=Promise.resolve(),failUpload=true;
  async function open(role,width){
   const context=await browser.newContext({viewport:{width,height:900},timezoneId:'Asia/Manila'});await context.addInitScript(pumpCameraBootstrap);
@@ -57,6 +58,18 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
   await expect(phone.getByLabel('Photos for')).toHaveValue(change.id);
   const active=()=>phone.locator('.midshift-photo-readings .reading-card:visible');
   await expect(active()).toHaveAttribute('data-pump-row-id',premium[1].id);
+  // Reproduce the manager's video: after 1 PM the manager opens Shift 2,
+  // while the blocked 11:26 change still belongs to Shift 1.
+  const {page:manager}=await open('Manager',1280);
+  await manager.getByLabel('Price Effective Date',{exact:true}).fill(report.date);
+  await expect(manager.getByText('Currently viewing: Barili · 2026-11-10 · Shift 2',{exact:true})).toBeVisible();
+  const unfinished=manager.getByRole('complementary',{name:'Unfinished price changes',exact:true});
+  await expect(unfinished).toContainText('1 / 6 readings confirmed. Next: Pump 1 Premium2.');
+  assert.equal(await unfinished.getByRole('button').count(),1,'Blank Shift 1/2 draft cards must not become recovery tasks');
+  await unfinished.getByRole('button',{name:'Open Shift 1 Premium price change at 11:26',exact:true}).click();
+  await expect(manager.getByText('Currently viewing: Barili · 2026-11-10 · Shift 1',{exact:true})).toBeVisible();
+  await expect(manager.locator('.midshift-photo-readings .reading-card:visible')).toHaveAttribute('data-pump-row-id',premium[1].id);
+  fs.mkdirSync('test-output',{recursive:true});await manager.screenshot({path:'test-output/barili-manager-resume.png',fullPage:true});
   assert.equal(await active().locator('input[type=file]').getAttribute('capture'),null,'Original price-change photos can be selected from the phone');
   await capturePumpCamera(phone,active());
   await expect(phone.getByRole('button',{name:'Next nozzle',exact:true})).toBeEnabled({timeout:10000});
@@ -82,7 +95,7 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
   assert.ok(!state.reports[key].midShiftPriceChanges[0].confirmedAt,'A cashier cannot confirm the selling price');
   const attempts=writes.filter(write=>write.route==='/api/demo/photo'&&write.input.rowId===premium[2].id);assert.ok(attempts.length>=2);assert.equal(new Set(attempts.map(write=>write.mutationId)).size,1,'Retry reuses the original upload receipt');
   await phone.getByLabel('Photos for').selectOption('closing');await phone.getByRole('heading',{name:'Closing pump readings',exact:true}).waitFor();
-  const {page:manager}=await open('Manager',1280);await manager.getByLabel('Price Effective Date',{exact:true}).fill(report.date);await manager.getByText('Report Shift',{exact:true}).locator('..').locator('select').selectOption('shift-1');await manager.locator('.details-panel').filter({has:manager.getByText('Open only if fuel price changed in the middle of this shift',{exact:true})}).evaluate(node=>node.open=true);
+  await manager.bringToFront();await manager.clock.fastForward(6000);await manager.evaluate(()=>window.dispatchEvent(new Event('focus')));await manager.clock.runFor(5500);
   const confirm=manager.getByRole('button',{name:'Confirm Premium Mid-Shift Price',exact:true}).first();await expect(confirm).toBeEnabled();
   fs.mkdirSync('test-output',{recursive:true});await manager.locator('.midshift-photo-readings').first().screenshot({path:'test-output/barili-price-completed.png'});
   manager.on('dialog',dialog=>dialog.accept(dialog.type()==='prompt'?'91.90':undefined));await confirm.click();await expect.poll(()=>!!state.reports[key].midShiftPriceChanges[0].confirmedAt).toBe(true);

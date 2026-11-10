@@ -17,6 +17,7 @@ import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
 import { readStationSession } from './station-routing.js';
+import {ManagerPricePhotoTasks} from './manager-price-photo-tasks.jsx';
 import { loadStorePages } from './store-pages.js';
 import { createStoreRefreshQueue } from './store-refresh.js';
 import { pilotPost, clearPilotReadCache } from './pilot-client.js';
@@ -2839,6 +2840,7 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState(currentShift.date);
   const [selectedDate, setSelectedDate] = useState(TODAY);
   const [selectedShiftId, setSelectedShiftId] = useState(currentShift.id);
+  const [pricePhotoFocus,setPricePhotoFocus]=useState(null);
   const [pricingCoverage, setPricingCoverage] = useState("Daily");
   const [pricingShiftId, setPricingShiftId] = useState(currentShift.id);
   const [range, setRange] = useState("1 Week");
@@ -4417,7 +4419,7 @@ export default function App() {
               ? <CashierPage onSaveDelivery={saveTankDelivery} isSavingDelivery={isSavingDelivery} onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} onRefreshVouchers={refreshShiftVouchers} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
               : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && branch === "Liloan" && <AdminReportAlerts sessionToken={sessionToken} manager />}
-            {role === "Manager" && <ManagerPage branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
+            {role === "Manager" && <ManagerPage pricePhotoReports={store.reports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={task=>{setSelectedDate(task.date);setSelectedShiftId(task.shiftId);setPricePhotoFocus({...task,requestId:uid()});}} branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
               ? <Section title="Loading Bank Verifications"><p className="neutral">Loading deposits from all stations...</p></Section>
               : initialLoadError
@@ -4987,16 +4989,27 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   );
 }
 
-function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const changes = report.midShiftPriceChanges || [];
   const phoneView = usePhoneView();
   const [busyRows,setBusyRows]=useState({});
   const onBusy=useCallback((id,busy)=>setBusyRows(old=>({...old,[id]:busy})),[]);
   const photoBusy=Object.values(busyRows).some(Boolean);
+  const details=useRef(null);
+  const currentKey=reportKey(report.branch,report.date,report.shiftId);
+  const focusId=pricePhotoFocus?.reportKey===currentKey?pricePhotoFocus.changeId:'';
+  useEffect(()=>{
+    if(!focusId||!details.current)return;
+    details.current.open=true;
+    const target=[...details.current.querySelectorAll('[data-price-change-id]')].find(node=>node.dataset.priceChangeId===focusId);
+    target?.scrollIntoView({behavior:'smooth',block:'start'});
+  },[focusId,pricePhotoFocus?.requestId]);
 
   return (
     <Section title="Price Change During Shift">
-      <details className="details-panel" open={phoneView || undefined}>
+      <ManagerPricePhotoTasks reports={pricePhotoReports} report={report} onOpen={onOpenPriceTask} disabled={photoBusy}/>
+      <p className="neutral"><strong>Currently viewing: {report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')}</strong></p>
+      <details ref={details} className="details-panel" open={phoneView || !!focusId || undefined}>
         <summary>Open only if fuel price changed in the middle of this shift</summary>
         <div className="warning-box">
           Do not overwrite the whole shift price. Enter the exact price-change time and new price, then photograph the affected pump readings.
@@ -5006,7 +5019,7 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
         ) : changes.map((change, changeIndex) => {
           const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
           return (
-            <div className="price-box form-space" key={change.id}>
+            <div className="price-box form-space" key={change.id} data-price-change-id={change.id}>
               <fieldset className="grid four" disabled={photoBusy || report.confirmed}>
                 <Field label="Product"><SelectInput value={change.product} onChange={(value) => patchMidShiftPriceChange(change.id, "product", value)} options={FUEL_TYPES} /></Field>
                 <Field label="Effective Time"><TextInput type="time" value={change.effectiveTime} onChange={(value) => patchMidShiftPriceChange(change.id, "effectiveTime", value)} /></Field>
@@ -5026,7 +5039,7 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
   );
 }
 
-function ManagerPage({ branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function ManagerPage({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const depositReferenceLabel = branch === "Liloan" ? "Minutes and Seconds" : "Reference";
   const phoneView=usePhoneView();
 
@@ -5054,7 +5067,7 @@ function ManagerPage({ branch, selectedDate, setSelectedDate, prices, pricingCov
         </div>
       </Section>}
 
-      <MidShiftPriceChangeSection report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
+      <MidShiftPriceChangeSection pricePhotoReports={pricePhotoReports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={onOpenPriceTask} report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
 
       {!phoneView && <DepositUpgrade branch={branch} />}
     </div>
