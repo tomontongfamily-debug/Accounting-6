@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { demoApi, PumpPhotoWorkflow, savePumpReading } from './upgrade-components.jsx';
+import { demoApi, PumpPhotoWorkflow, MidShiftPhotoReadings, savePumpReading } from './upgrade-components.jsx';
+import {midShiftPumpKey,midShiftPhotoRow,pendingPricePhotoChanges} from './mid-shift-price-change.js';
 import { readingComplete } from './error-reduction.ts';
 import { mergePhoneReadings } from './phone-reading-sync.js';
 import {startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
@@ -16,6 +17,7 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     return preferred?keyOf(preferred):'';
   });
   const [report,setReport]=useState(null);
+  const [task,setTask]=useState('');
   const [error,setError]=useState('');
   const [message,setMessage]=useState('Loading pump readings…');
   const [busyRows,setBusyRows]=useState({});
@@ -28,7 +30,7 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   useEffect(()=>{
     let mounted=true,inFlight=false;
     const version=++generation.current;
-    setReport(null);setError('');setMessage('Loading pump readings…');
+    setReport(null);setTask('');setError('');setMessage('Loading pump readings…');
     async function refresh() {
       if(!selected||busyRef.current||inFlight||document.hidden)return;
       inFlight=true;
@@ -45,12 +47,25 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     window.addEventListener('focus',refresh);
     return()=>{mounted=false;window.clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh);};
   },[selected]);
+  const priceChanges=report&&!report.baselineReport?pendingPricePhotoChanges(report):[];
+  const preferredTask=priceChanges.find(change=>report.pumpRows.some(row=>row.product===change.product&&!readingComplete(midShiftPhotoRow(change,row))))?.id||'closing';
+  const currentTask=task||preferredTask;
+  const change=priceChanges.find(item=>item.id===currentTask);
   async function save(row,savedPhoto,options) {
     const version=generation.current;
     mutations.current+=1;
     const result=savedPhoto||await savePumpReading(report,row,options);
     if(version===generation.current){setReport(current=>mergePhoneReadings(current,result.report)||result.report);setMessage(savedPhoto?'Photo saved. Automatic reading continues; you can photograph the next pump.':row.readingConfirmed?'Reading confirmed and saved. It will appear on the desktop automatically.':'Photo saved. Check and confirm the reading.');setError('');}
     return result.report.pumpRows.find(r=>r.id===row.id);
+  }
+  async function savePriceReading(priceChange,row,savedPhoto,options){
+    const version=generation.current;
+    setTask(priceChange.id);mutations.current+=1;
+    const result=savedPhoto||await demoApi('midshift-reading',{reportKey:selected,changeId:priceChange.id,product:priceChange.product,effectiveTime:priceChange.effectiveTime,row,revision:row.readingRevision||0},options);
+    if(version===generation.current){setReport(current=>mergePhoneReadings(current,result.report)||result.report);setMessage(row.readingConfirmed?'Price-change reading confirmed and saved.':'Price-change photo saved. Check and confirm the number.');setError('');}
+    const savedChange=result.report.midShiftPriceChanges.find(item=>item.id===priceChange.id);
+    const savedRow=result.report.pumpRows.find(item=>midShiftPumpKey(item)===midShiftPumpKey(row));
+    return midShiftPhotoRow(savedChange,savedRow);
   }
   const done=report?.pumpRows.filter(readingComplete).length||0;
   return <main className="app mobile-pump-app"><div className="container">
@@ -60,6 +75,8 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     <p>{report?.baselineReport?'Take the starting pump photos here. Enter tank stock and Coke inventory, then confirm Opening Setup on the desktop.':'Take the pump photos here. Finish cash count and the rest of the report on the desktop.'}</p>
     {error?<p className="error" role="alert">{error} Reconnect or refresh before continuing.</p>:<p role="status">{message}</p>}
     {!choices.length&&<p>No opening setup or shifts are available. Open the station dashboard on the desktop, then refresh this page.</p>}
-    {report&&<><PumpPhotoWorkflow key={selected} report={report} onReading={save} onBusy={onBusy}/>{report.confirmed?<p className="success-box">This report is submitted and locked.</p>:done===report.pumpRows.length&&<p className="success-box">All pump readings are confirmed and saved. Continue the report on the desktop.</p>}</>}
+    {report&&<>{priceChanges.length>0&&<><label className="phone-shift-picker">Photos for<select aria-label="Photos for" disabled={busy} value={change?.id||'closing'} onChange={event=>setTask(event.target.value)}>{priceChanges.map(item=><option key={item.id} value={item.id}>{item.product} price change · {item.effectiveTime}</option>)}<option value="closing">Shift closing readings</option></select></label><p className="warning-box">Price-change photos and shift closing photos are separate. For a price change, use the photos taken at that change time. The manager must confirm the price after all affected nozzle readings are saved.</p></>}
+    {change?<section className="section"><h2>{change.product} price change · {change.effectiveTime}</h2><MidShiftPhotoReadings key={selected+'__'+change.id+'__'+change.product+'__'+change.effectiveTime} report={report} change={change} onReading={savePriceReading} onBusy={onBusy}/></section>:<PumpPhotoWorkflow key={selected} report={report} onReading={save} onBusy={onBusy}/>}
+    {report.confirmed?<p className="success-box">This report is submitted and locked.</p>:!change&&done===report.pumpRows.length&&<p className="success-box">All closing pump readings are confirmed and saved. Continue the report on the desktop.</p>}</>}
   </div></main>;
 }

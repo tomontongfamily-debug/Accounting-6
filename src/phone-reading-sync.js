@@ -8,6 +8,19 @@ export function mergePhoneReadings(local,saved){
     const remote=saved.pumpRows?.find(p=>midShiftPumpKey(p)===midShiftPumpKey(row));
     return remote&&Number(remote.readingRevision||0)>0&&Number(remote.readingRevision)>=Number(row.readingRevision||0)?remote:row;
   })};
+  // Price photos are independently saved evidence too. Never attach a photo
+  // from an earlier product/time to a locally edited price-change context.
+  if(local.midShiftPriceChanges)next.midShiftPriceChanges=local.midShiftPriceChanges.map(change=>{
+    const remote=saved.midShiftPriceChanges?.find(item=>item.id===change.id&&item.product===change.product&&item.effectiveTime===change.effectiveTime);
+    if(!remote)return change;
+    const readingPhotos={...change.readingPhotos},readings={...change.readings};
+    for(const [key,evidence] of Object.entries(remote.readingPhotos||{})){
+      if(Number(evidence.readingRevision||0)>0&&Number(evidence.readingRevision)>=Number(readingPhotos[key]?.readingRevision||0)){
+        readingPhotos[key]=evidence;readings[key]=remote.readings?.[key]??'';
+      }
+    }
+    return {...change,readingPhotos,readings,...(latest>=base?{confirmedAt:remote.confirmedAt}: {})};
+  });
   // Only independently owned phone/POS changes can advance a full draft. Other
   // desktop/manager edits retain their normal conflict checks when saving.
   if(base>=Number(saved.pilotLastNonReadingRevision??latest)&&latest>=base)next.pilotRevision=latest;

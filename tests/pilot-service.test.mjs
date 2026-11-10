@@ -147,8 +147,7 @@ test('Manager phone price photos keep their context and require all affected noz
   for(const row of report.pumpRows.filter(r=>r.product==='Diesel')) {
     const path='/api/pilot/photo?id='+row.id;state.photos[path]={reportKey:key,rowId:row.id,branch:'Liloan',changeId:change.id,product:change.product,effectiveTime:change.effectiveTime};
     const input={reportKey:key,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,revision:0,row:{...row,photo_path:path,closing:Number(row.opening)+5,readingConfirmed:true}};
-    await assert.rejects(act(cashier,'/api/demo/midshift-reading',input),/role/);
-    report=(await act(manager,'/api/demo/midshift-reading',input)).report;
+    report=(await act(cashier,'/api/demo/midshift-reading',input)).report;
     await assert.rejects(act(manager,'/api/demo/midshift-reading',input),/another device/);
   }
   change=report.midShiftPriceChanges[0];

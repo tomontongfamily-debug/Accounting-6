@@ -5015,7 +5015,7 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
               </fieldset>
               <p className="neutral">{report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')} — readings are saved to this shift.</p>
               {change.confirmedAt && <p className="success-box">✓ Price change confirmed</p>}
-              <MidShiftPhotoReadings report={report} change={change} onReading={patchMidShiftPriceReading} onBusy={onBusy} onPrepare={prepareMidShiftPhotos}/>
+              {change.effectiveTime && n(change.newPrice)>0 ? <MidShiftPhotoReadings report={report} change={change} onReading={patchMidShiftPriceReading} onBusy={onBusy} onPrepare={prepareMidShiftPhotos}/> : <p className="neutral">Enter the product, effective time and new price to start the price-change photos.</p>}
               <button type="button" className="confirm-button form-space" disabled={photoBusy || report.confirmed || !change.effectiveTime || n(change.newPrice)<=0 || matchingRows.some(row=>!change.readingPhotos?.[midShiftPumpKey(row)]?.readingConfirmed)} onClick={() => confirmMidShiftPriceChange(change.id)}>Confirm {change.product} Mid-Shift Price</button>
             </div>
           );

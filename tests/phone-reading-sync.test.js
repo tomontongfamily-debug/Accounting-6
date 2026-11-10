@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mergePhoneReadings} from '../src/phone-reading-sync.js';
 const report=()=>({branch:'Liloan',date:'2026-10-03',shiftId:'shift-1',pilotRevision:4,pilotLastNonReadingRevision:4,pumpRows:[{pump:'Pump 1',nozzle:'Premium',product:'Premium',readingRevision:0,closing:''}],cashDenominations:{500:12},tankRows:[{actualDip:123}],notes:'Unsaved local note'});
+
+test('price-change evidence merges by nozzle and context without losing newer photos or manager edits',()=>{
+ const key='Pump 1|Premium|Premium',change={id:'price',product:'Premium',effectiveTime:'11:26',newPrice:71,readings:{},readingPhotos:{}};
+ const local={...report(),midShiftPriceChanges:[change]};
+ const remote={...report(),pilotRevision:6,midShiftPriceChanges:[{...change,readings:{[key]:10010},readingPhotos:{[key]:{readingRevision:2,readingConfirmed:true,photo_path:'price-photo'}}}]};
+ const next=mergePhoneReadings(local,remote);
+ assert.equal(next.midShiftPriceChanges[0].readings[key],10010);assert.equal(next.midShiftPriceChanges[0].readingPhotos[key].readingConfirmed,true);
+ assert.equal(next.pilotRevision,6);assert.equal(next.notes,local.notes);assert.deepEqual(next.pumpRows,local.pumpRows);
+ assert.equal(mergePhoneReadings(next,local),next);
+ const changed={...local,midShiftPriceChanges:[{...change,effectiveTime:'12:00',newPrice:72}]};
+ assert.deepEqual(mergePhoneReadings(changed,remote).midShiftPriceChanges,changed.midShiftPriceChanges);
+ assert.equal(mergePhoneReadings({...local,midShiftPriceChanges:[{...change,newPrice:73}]},remote).midShiftPriceChanges[0].newPrice,73);
+});
 test('Phone evidence merges into a dirty desktop while preserving cash and tank inputs',()=>{
  const local=report(),remote={...report(),pilotRevision:7,notes:'Old server note',cashDenominations:{},tankRows:[{actualDip:0}],pumpRows:[{...local.pumpRows[0],readingRevision:3,closing:439931.31,photo_path:'/api/pilot/photo?id=test',readingConfirmed:true}]};
  const next=mergePhoneReadings(local,remote);

@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fixture} from './pilot-fixture.mjs';
+import {runAction} from '../pilot/service.mjs';
+import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
+
+test('cashier price photos own only the existing change evidence; role, branch, context, revision and confirmed locks remain enforced',async()=>{
+ let {state,key,cashier,manager}=fixture();
+ const report=state.reports[key],row=report.pumpRows[0],change={id:'price',product:row.product,effectiveTime:'11:26',newPrice:71,photoRequired:true,readings:{},readingPhotos:{}};
+ Object.assign(report,{midShiftPriceChanges:[change],pilotRevision:5,pilotLastNonReadingRevision:5,cashReviewState:'checked'});
+ for(const pump of report.pumpRows)pump.setupRequired=false;
+ const closing=structuredClone(report.pumpRows),book=structuredClone(state.priceBook);
+ const input={reportKey:key,rowId:row.id,pumpKey:midShiftPumpKey(row),changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,replaceReading:true,revision:0,data:'data:image/jpeg;base64,/9j/2Q=='};
+ const act=async(session,route,body)=>{const out=await runAction(state,session,route,body,{uploadPhoto:async()=>{}});state=out.state;return out.result;};
+ await assert.rejects(act(cashier,'/api/demo/photo',{...input,effectiveTime:'11:27'}),error=>error.status===409);
+ await assert.rejects(act({...cashier,branch:'Barili'},'/api/demo/photo',input),/station/);
+ const photo=await act(cashier,'/api/demo/photo',input);
+ assert.equal(photo.report.pilotLastNonReadingRevision,5);assert.equal(photo.report.cashReviewState,'');
+ const reading={reportKey:key,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,revision:photo.readingRevision,row:{...row,photo_path:photo.photo_path,closing:Number(row.opening)+5,readingConfirmed:true,newPrice:999}};
+ await assert.rejects(act(cashier,'/api/demo/midshift-reading',{...reading,product:'Wrong'}),error=>error.status===409);
+ const saved=await act(cashier,'/api/demo/midshift-reading',reading);
+ assert.equal(saved.report.midShiftPriceChanges[0].newPrice,71);assert.equal(saved.report.pilotLastNonReadingRevision,5);assert.deepEqual(state.priceBook,book);assert.deepEqual(saved.report.pumpRows,closing);
+ await assert.rejects(act(cashier,'/api/demo/midshift-reading',reading),error=>error.status===409);
+ await assert.rejects(act(cashier,'/api/demo/midshift-confirm',{reportKey:key,changeId:change.id}),error=>error.status===403);
+ await assert.rejects(act(manager,'/api/demo/midshift-confirm',{reportKey:key,changeId:change.id}),/Next: .*11:26/);
+ const savedChange=state.reports[key].midShiftPriceChanges[0];savedChange.confirmedAt=new Date().toISOString();
+ await assert.rejects(act(cashier,'/api/demo/photo',{...input,revision:2}),error=>error.status===423);
+ await assert.rejects(act(cashier,'/api/demo/midshift-reading',{...reading,revision:2}),error=>error.status===423);
+ savedChange.confirmedAt='';state.reports[key].confirmed=true;
+ await assert.rejects(act(cashier,'/api/demo/photo',{...input,revision:2}),error=>error.status===423);
+ await assert.rejects(act(cashier,'/api/demo/midshift-reading',{...reading,revision:2}),error=>error.status===423);
+});

@@ -7,6 +7,15 @@ export function midShiftReadingValue(change, row) {
   return readings[midShiftPumpKey(row)] ?? readings[row.id] ?? "";
 }
 
+export function midShiftPhotoRow(change, row) {
+  const evidence=change.readingPhotos?.[midShiftPumpKey(row)]||{};
+  return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:''};
+}
+
+export function pendingPricePhotoChanges(report) {
+  return (report.midShiftPriceChanges||[]).filter(change=>!change.confirmedAt&&change.effectiveTime&&Number(change.newPrice)>0);
+}
+
 // Opening an optional change card saves a blank draft, not an actual price change.
 // Keep partial entries active so unfinished real changes still block submission.
 export function midShiftChangeHasDetails(change) {

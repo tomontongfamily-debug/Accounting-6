@@ -159,7 +159,7 @@ function storeReport(r,session,action,details={}) {
   if(r.date<stationStartDate(database,r.branch)&&!(r.baselineReport&&isStationOpening(database,r))) reject('Historical reports are read-only in the pilot.',423);
   r.pilot=true; r.pilotRevision=Number(database.reports[keyOf(r)]?.pilotRevision||0)+1;
   const previous=database.reports[keyOf(r)];
-  r.pilotLastNonReadingRevision=action==='pump-reading-saved'
+  r.pilotLastNonReadingRevision=['pump-reading-saved','price-change-photo-saved'].includes(action)
     ? Number(previous?.pilotLastNonReadingRevision??previous?.pilotRevision??0)
     : r.pilotRevision;
   r.pilotCashRevision=Number(previous?.pilotCashRevision||0)+(['cash-confirm','cash-recount','correction-approved'].includes(action)?1:0);
@@ -206,7 +206,7 @@ function validatePricePhotos(report,change) {
     const evidence=change.readingPhotos?.[midShiftPumpKey(row)];
     const photo=database.photos[evidence?.photo_path];
     const value=midShiftReadingValue(change,row);
-    if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject('Photograph and confirm every affected nozzle with a valid price-change reading.');
+    if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject(`Photograph and confirm every affected nozzle with a valid price-change reading. Next: ${row.pump} ${row.nozzle} · ${change.product} at ${change.effectiveTime}. Closing photos are separate; open the price-change photos to finish.`);
   }
 }
 function validatePriceReadingOrder(report,change) {
@@ -442,11 +442,13 @@ function validatePriceReadingOrder(report,change) {
       return send({ok:true,report:exposeReport(saved.report,session)});
     }
     if(route==='/api/demo/midshift-reading') {
-      requireRole(session,'Manager');const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
+      requireRole(session,'Cashier','Manager');const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
       if(old.confirmed) reject('Submitted report is locked.',423);
+      assertCorrectionWindow(old);
       const r=carryForwardOpenings(structuredClone(old),database.reports);
       const change=r.midShiftPriceChanges?.find(c=>c.id===input.changeId);
       if(!change||change.product!==input.product||change.effectiveTime!==input.effectiveTime) reject('The price-change details changed. Refresh before taking another photo.',409);
+      if(session.role==='Cashier'&&(change.confirmedAt||!change.effectiveTime||Number(change.newPrice)<=0))reject('The manager must open an unconfirmed price change before cashier photos can be saved.',423);
       const row=r.pumpRows.find(p=>midShiftPumpKey(p)===midShiftPumpKey(input.row||{})&&p.product===change.product);
       if(!row) reject('This nozzle is not affected by the price change.');
       const key=midShiftPumpKey(row),previous=change.readingPhotos?.[key];
@@ -463,13 +465,15 @@ function validatePriceReadingOrder(report,change) {
       return send(storeReport(r,session,'price-change-photo-saved'));
     }
     if(route==='/api/demo/photo') {
-      requireRole(session,input.changeId?'Manager':'Cashier');const r=database.reports[input.reportKey];branchAccess(session,r?.branch);
+      if(input.changeId)requireRole(session,'Cashier','Manager');else requireRole(session,'Cashier');const r=database.reports[input.reportKey];branchAccess(session,r?.branch);
       if(r.confirmed) reject('Submitted report is locked.',423);
       assertCorrectionWindow(r);
       const photoRow=r.pumpRows.find(row=>input.changeId?midShiftPumpKey(row)===input.pumpKey:row.id===input.rowId);
       if(!photoRow) reject('Unknown nozzle.');
       const change=input.changeId?r.midShiftPriceChanges?.find(c=>c.id===input.changeId):null;
       if(input.changeId&&(!change||!change.effectiveTime||photoRow.product!==change.product)) reject('Save the product and price-change time before taking photos.');
+      if(change&&((input.effectiveTime!==undefined&&input.effectiveTime!==change.effectiveTime)||(input.product!==undefined&&input.product!==change.product)))reject('The price-change details changed. Refresh before taking another photo.',409);
+      if(change&&session.role==='Cashier'&&(change.confirmedAt||Number(change.newPrice)<=0||input.effectiveTime!==change.effectiveTime||input.product!==change.product))reject('The manager must open an unconfirmed price change before cashier photos can be saved.',423);
       const previous=change?change.readingPhotos?.[midShiftPumpKey(photoRow)]:photoRow;
       const previousPhoto=previous?.photo_path,previousOcr=previous?.ocr_detected_reading;
       if(input.replaceReading&&Number(input.revision)!==Number(previous?.readingRevision||0))reject('This reading changed on another device. Refresh before replacing its photo.',409);

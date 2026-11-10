@@ -1,0 +1,11 @@
+# Price-change photo workflow
+
+The manager creates the product, effective time and new price for the correct shift. The photo workflow opens the first unfinished nozzle, offers Previous/Next and direct nozzle buttons, and advances after a successful reading confirmation. Cards remain mounted when moving between nozzles, so background OCR and kept upload retries survive navigation. Camera capture/upload temporarily disables nozzle switching; recognition alone does not.
+
+Cashier phones show a separate **Photos for** selector for saved, unconfirmed price changes. Cashiers can save and confirm those nozzle readings or choose the original price-change photos from their phone. They cannot create/change price metadata or confirm the selling price. The manager reviews and confirms the completed change. Closing readings and their photos remain separate.
+
+Price photos must belong to the same station, shift, change, product, effective time and nozzle. Revision and submission/correction locks remain enforced. Price-change photo saves merge independently into desktop drafts, preserving cash, tank and manager edits. Changing product/time invalidates reuse of evidence from the old context. A blank optional change is not a photo task. A submission error names the next missing nozzle.
+
+If dispensing resumed before the price-change readings were captured, later closing photos cannot establish the missing price boundary. Recover original photos taken at the change time and verify them; do not manufacture readings or mark missing evidence confirmed.
+
+Validation: `pilot-price-photo-handoff-ui.test.mjs` exercises all six Barili Premium nozzles with one already complete, slow background OCR, failed upload/same-ID retry, manual review, reload/resume and cashier-to-manager price confirmation. It verifies all 18 closing rows/photos stay intact. The API handoff and phone-sync tests cover role/station/context/revision locks, incomplete evidence and preservation of newer evidence/local edits. Tests use isolated fixture data, never production writes.
