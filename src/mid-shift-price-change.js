@@ -1,3 +1,5 @@
+import {validTemporaryManualPriceReading} from './temporary-price-reading.js';
+
 export function midShiftPumpKey(row) {
   return `${row.pump}|${row.nozzle}|${row.product}`;
 }
@@ -7,9 +9,14 @@ export function midShiftReadingValue(change, row) {
   return readings[midShiftPumpKey(row)] ?? readings[row.id] ?? "";
 }
 
-export function midShiftPhotoRow(change, row) {
+export function midShiftPhotoRow(change, row, report) {
   const evidence=change.readingPhotos?.[midShiftPumpKey(row)]||{};
-  return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:''};
+  return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:'',temporaryManualConfirmed:validTemporaryManualPriceReading(report,change,row,evidence)};
+}
+
+export function midShiftReadingComplete(report,change,row){
+  const photo=midShiftPhotoRow(change,row,report),value=photo.closing;
+  return Boolean((photo.photo_path||photo.temporaryManualConfirmed)&&photo.readingConfirmed&&value!==''&&value!=null&&Number.isFinite(Number(value))&&Number(value)>=Number(row.opening)&&(!row.closingEntered||Number(value)<=Number(row.closing)));
 }
 
 export function pendingPricePhotoChanges(report) {
@@ -21,10 +28,7 @@ export function pendingPricePhotoTasks(reports, branch, date) {
     .sort((a,b)=>a.shiftId.localeCompare(b.shiftId)).flatMap(report=>(report.midShiftPriceChanges||[])
       .filter(change=>!change.confirmedAt&&midShiftChangeHasDetails(change)).map(change=>{
         const rows=(report.pumpRows||[]).filter(row=>row.product===change.product);
-        const missing=rows.filter(row=>{
-          const photo=midShiftPhotoRow(change,row),value=photo.closing;
-          return !photo.photo_path||!photo.readingConfirmed||value===''||value==null||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing));
-        });
+        const missing=rows.filter(row=>!midShiftReadingComplete(report,change,row));
         return {reportKey:`${report.branch}__${report.date}__${report.shiftId}`,branch:report.branch,date:report.date,shiftId:report.shiftId,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,
           total:rows.length,done:rows.length-missing.length,nextNozzle:missing[0]?`${missing[0].pump} ${missing[0].nozzle}`:'',needsSetup:!change.effectiveTime||Number(change.newPrice)<=0};
       }));

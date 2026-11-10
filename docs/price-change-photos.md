@@ -10,4 +10,12 @@ Price photos must belong to the same station, shift, change, product, effective 
 
 If dispensing resumed before the price-change readings were captured, later closing photos cannot establish the missing price boundary. Recover original photos taken at the change time and verify them; do not manufacture readings or mark missing evidence confirmed.
 
+## Temporary Barili manual recovery
+
+The owner explicitly authorized direct manual input for Barili's latest saved price change on November 10. `temporary-price-reading.js` pins this exception to `Barili__2026-11-10__shift-1`, change `f5zzz9s`, Premium at 11:26, new price 91.90. It never follows a future change or applies to opening/closing readings. Input closes when the manager confirms that change or at November 11, 2026, 17:30 Asia/Manila. Already saved, authorized manual evidence remains valid for later review/submission.
+
+The separate `temporary-price-reading` action checks station/role, exact context, server time, revision and opening/closing/time-order bounds. It stores the staff-confirmed value with a server-generated authorization/time/role/nozzle record. Original photos/OCR evidence remain intact; missing photos and OCR readings are never fabricated. Manual entries are labelled in the capture screen and Admin price-change report and logged as `price-change-manual-reading-saved`. Manager price confirmation and final cash/source/submission checks remain required. Navigation and deployment do not insert any readings.
+
+`pilot-temporary-manual-price.test.mjs` verifies scoped authorization, expiry/confirmation closure, invalid/forged requests, retained original evidence, preserved closing rows and successful manager confirmation/submission. The browser test exercises cashier phone and manager desktop manual entry without camera/OCR and retries a lost response using the same receipt ID.
+
 Validation: `pilot-price-photo-handoff-ui.test.mjs` exercises all six Barili Premium nozzles with one already complete, slow background OCR, failed upload/same-ID retry, manual review, reload/resume and cashier-to-manager price confirmation. It verifies all 18 closing rows/photos stay intact. The API handoff and phone-sync tests cover role/station/context/revision locks, incomplete evidence and preservation of newer evidence/local edits. Tests use isolated fixture data, never production writes.

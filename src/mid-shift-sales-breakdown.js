@@ -1,4 +1,5 @@
 import { midShiftBasePrice, midShiftReadingValue, midShiftChangeHasDetails } from "./mid-shift-price-change.js";
+import {validTemporaryManualPriceReading} from './temporary-price-reading.js';
 
 const SHIFT_BOUNDS = {
   "shift-1": ["04:00", "13:00"],
@@ -44,6 +45,7 @@ export function midShiftReadingRows(report) {
           newPrice: Math.max(0, number(change.newPrice)),
           reading: savedReading === "" || savedReading == null ? null : number(savedReading),
           confirmed: Boolean(change.confirmedAt),
+          manual:validTemporaryManualPriceReading(report,change,pumpRow,change.readingPhotos?.[`${pumpRow.pump}|${pumpRow.nozzle}|${pumpRow.product}`]),
         };
       })
   ));

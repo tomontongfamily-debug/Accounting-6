@@ -7171,7 +7171,7 @@ function AdminPage({ logout, sessionToken, branch, setBranch, selectedDate, setS
                       <td>{row.effectiveTime}</td>
                       <td>{row.reading == null ? <span className="warning-text">Missing</span> : row.reading.toFixed(2)}</td>
                       <td>{peso(row.newPrice)}</td>
-                      <td>{row.confirmed ? "Confirmed" : "Draft"}</td>
+                      <td>{row.confirmed ? "Confirmed" : "Draft"}{row.manual&&<small>Manual entry · temporary authorization</small>}</td>
                     </tr>
                   ))}
                 </Table>

@@ -11,6 +11,7 @@ import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations
 import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
 import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 import { mergeOcrEvidence, pendingOcrAttempt, completedPhotoOcrEvidence } from '../src/ocr-evidence.js';
+import {BARILI_MANUAL_PRICE_GRANT,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
 
 import { accountingTiming, dateOffset } from './integrations.mjs';
 import { storePage } from '../api/_shared/store-page.js';
@@ -206,6 +207,7 @@ function validatePricePhotos(report,change) {
     const evidence=change.readingPhotos?.[midShiftPumpKey(row)];
     const photo=database.photos[evidence?.photo_path];
     const value=midShiftReadingValue(change,row);
+    if(validTemporaryManualPriceReading(report,change,row,evidence))continue;
     if(!evidence?.readingConfirmed||!photo||photo.reportKey!==keyOf(report)||photo.rowId!==row.id||photo.changeId!==change.id||photo.effectiveTime!==change.effectiveTime||photo.product!==change.product||value===''||!Number.isFinite(Number(value))||Number(value)<Number(row.opening)||(row.closingEntered&&Number(value)>Number(row.closing))) reject(`Photograph and confirm every affected nozzle with a valid price-change reading. Next: ${report.date} ${report.shiftId.replace('shift-','Shift ')} · ${row.pump} ${row.nozzle} · ${change.product} at ${change.effectiveTime}. On the manager page, open this saved change under Unfinished price changes. Closing photos are separate.`);
   }
 }
@@ -441,6 +443,29 @@ function validatePriceReadingOrder(report,change) {
       const saved=storeReport(r,session,'pump-reading-saved');
       return send({ok:true,report:exposeReport(saved.report,session)});
     }
+    if(route==='/api/demo/temporary-price-reading') {
+      requireRole(session,'Cashier','Manager');
+      if(database.mode!=='live')reject('Temporary manual input applies only to the authorized live price change.',423);
+      const old=database.reports[input.reportKey];branchAccess(session,old?.branch);assertCorrectionWindow(old);
+      const r=carryForwardOpenings(structuredClone(old),database.reports),change=r.midShiftPriceChanges?.find(item=>item.id===input.changeId);
+      if(!temporaryManualPriceOpen(r,change))reject('Temporary manual input is closed or does not apply to this price change.',423);
+      if(input.product!==change.product||input.effectiveTime!==change.effectiveTime)reject('The price-change details changed. Refresh before entering a reading.',409);
+      const row=r.pumpRows.find(item=>item.id===input.rowId&&item.product===change.product);
+      if(!row)reject('This nozzle is not affected by the authorized price change.');
+      const key=midShiftPumpKey(row),previous=change.readingPhotos?.[key]||{};
+      if(Number(input.revision)!==Number(previous.readingRevision||0))reject('This price-change reading changed on another device. Refresh before entering it.',409);
+      const value=amount(input.reading);
+      if(value<Number(row.opening)||(row.closingEntered&&value>Number(row.closing)))reject('Price-change reading must be between opening and the confirmed closing.');
+      const manualEntry={authorizationId:BARILI_MANUAL_PRICE_GRANT.id,recordedAt:stamp(),role:session.role,rowId:row.id,pumpKey:key,value};
+      // Keep any original photo and recognition attempt. Never fabricate either.
+      const evidence={...previous,readingConfirmed:true,readingRevision:Number(previous.readingRevision||0)+1,manualEntry};
+      change.readingPhotos={...change.readingPhotos,[key]:evidence};change.readings={...change.readings,[key]:value};change.confirmedAt='';change.photoRequired=true;
+      const orderIssues=midShiftReadingIssues({...r,pumpRows:[row],midShiftPriceChanges:r.midShiftPriceChanges.filter(item=>item.confirmedAt||item.id===change.id)});
+      if(orderIssues.length)reject(orderIssues[0]);
+      r.cashReviewState='';r.recountRequired=false;
+      audit('price-change-manual-reading-saved',session,{reportKey:keyOf(r),changeId:change.id,rowId:row.id,manualEntry,photo_path:evidence.photo_path||null});
+      const saved=storeReport(r,session,'price-change-photo-saved');return send({...saved,report:exposeReport(saved.report,session)});
+    }
     if(route==='/api/demo/midshift-reading') {
       requireRole(session,'Cashier','Manager');const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
       if(old.confirmed) reject('Submitted report is locked.',423);
@@ -453,6 +478,7 @@ function validatePriceReadingOrder(report,change) {
       if(!row) reject('This nozzle is not affected by the price change.');
       const key=midShiftPumpKey(row),previous=change.readingPhotos?.[key];
       if(Number(input.revision)!==Number(previous?.readingRevision||0)) reject('This price-change photo changed on another device. Refresh and try again.',409);
+      if(previous?.manualEntry&&!input.row.readingConfirmed)reject('This reading was saved manually. Refresh before changing its evidence.',409);
       const photo=database.photos[input.row.photo_path];
       if(!photo||photo.reportKey!==keyOf(r)||photo.rowId!==row.id||photo.changeId!==change.id||photo.product!==change.product||photo.effectiveTime!==change.effectiveTime) reject('This photo does not belong to this price-change reading.');
       const value=input.row.readingConfirmed?amount(input.row.closing):'';

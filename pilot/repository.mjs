@@ -74,7 +74,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   // Pump evidence and delivered stock do not depend on payment, voucher or
   // POS records. Keep these actions independent of unrelated source imports;
   // cash checks and submission still verify the current financial sources.
-  const physicalEntryOnly=['/api/demo/photo','/api/demo/pump-reading','/api/demo/midshift-reading','/api/demo/pump-report','/api/demo/delivery-save','/api/demo/deposit-receipt'].includes(route);
+  const physicalEntryOnly=['/api/demo/photo','/api/demo/pump-reading','/api/demo/midshift-reading','/api/demo/temporary-price-reading','/api/demo/pump-report','/api/demo/delivery-save','/api/demo/deposit-receipt'].includes(route);
   // Only Liloan imports POS redemptions. A different station must not wait for
   // its full evidence/history import just to load, photograph or save a shift.
   // Admin and Approver still need the complete, current all-station view.

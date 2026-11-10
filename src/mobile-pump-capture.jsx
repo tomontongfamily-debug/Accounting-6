@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { demoApi, PumpPhotoWorkflow, MidShiftPhotoReadings, savePumpReading } from './upgrade-components.jsx';
-import {midShiftPumpKey,midShiftPhotoRow,pendingPricePhotoChanges} from './mid-shift-price-change.js';
+import {midShiftPumpKey,midShiftPhotoRow,midShiftReadingComplete,pendingPricePhotoChanges} from './mid-shift-price-change.js';
 import { readingComplete } from './error-reduction.ts';
 import { mergePhoneReadings } from './phone-reading-sync.js';
 import {startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
@@ -48,7 +48,7 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     return()=>{mounted=false;window.clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh);};
   },[selected]);
   const priceChanges=report&&!report.baselineReport?pendingPricePhotoChanges(report):[];
-  const preferredTask=priceChanges.find(change=>report.pumpRows.some(row=>row.product===change.product&&!readingComplete(midShiftPhotoRow(change,row))))?.id||'closing';
+  const preferredTask=priceChanges.find(change=>report.pumpRows.some(row=>row.product===change.product&&!midShiftReadingComplete(report,change,row)))?.id||'closing';
   const currentTask=task||preferredTask;
   const change=priceChanges.find(item=>item.id===currentTask);
   async function save(row,savedPhoto,options) {
@@ -65,7 +65,7 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
     if(version===generation.current){setReport(current=>mergePhoneReadings(current,result.report)||result.report);setMessage(row.readingConfirmed?'Price-change reading confirmed and saved.':'Price-change photo saved. Check and confirm the number.');setError('');}
     const savedChange=result.report.midShiftPriceChanges.find(item=>item.id===priceChange.id);
     const savedRow=result.report.pumpRows.find(item=>midShiftPumpKey(item)===midShiftPumpKey(row));
-    return midShiftPhotoRow(savedChange,savedRow);
+    return midShiftPhotoRow(savedChange,savedRow,result.report);
   }
   const done=report?.pumpRows.filter(readingComplete).length||0;
   return <main className="app mobile-pump-app"><div className="container">
