@@ -3,11 +3,25 @@ import assert from 'node:assert/strict';
 import {bariliManualFixture} from './barili-manual-price-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {midShiftPumpKey,midShiftReadingComplete} from '../src/mid-shift-price-change.js';
-import {BARILI_MANUAL_PRICE_GRANT as grant,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
+import {BARILI_MANUAL_PRICE_GRANT as grant,BARILI_ROLLBACK_MANUAL_PRICE_GRANT as rollback,temporaryPriceGrant,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
 import {compute} from '../src/accounting-engine.js';
 
 const now=Date.parse('2026-11-10T17:10:00+08:00');
 function body(f,row,reading=10010){return {reportKey:f.key,changeId:f.change.id,product:f.change.product,effectiveTime:f.change.effectiveTime,rowId:row.id,revision:f.state.reports[f.key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)]?.readingRevision||0,reading};}
+
+test('Nov 11 rollback permits all products only in today’s Shift 1, uses its own expiry, and preserves evidence after expiry',async t=>{
+ const time=Date.parse('2026-11-11T08:45:00+08:00');t.mock.timers.enable({apis:['Date'],now:time});
+ for(const product of ['Premium','Regular','Diesel']){
+  const f=bariliManualFixture(product,rollback),row=f.rows[1];
+  assert.equal(temporaryManualPriceOpen(f.report,f.change,time),true);assert.equal(temporaryPriceGrant(f.report,f.change).id,rollback.id);
+  for(const mutation of [{date:'2026-11-12'},{shiftId:'shift-2'},{shiftId:'shift-3'},{branch:'Mabolo'},{confirmed:true},{baselineReport:true}])assert.equal(temporaryManualPriceOpen({...f.report,...mutation},f.change,time),false);
+  for(const end of [Date.parse(rollback.startsAt)-1,Date.parse(rollback.expiresAt)])assert.equal(temporaryManualPriceOpen(f.report,f.change,end),false);
+  const saved=await runAction(f.state,f.cashier,'/api/demo/temporary-price-reading',body(f,row)),change=saved.result.report.midShiftPriceChanges[0],evidence=change.readingPhotos[midShiftPumpKey(row)];
+  assert.equal(evidence.manualEntry.authorizationId,rollback.id);assert.equal(validTemporaryManualPriceReading(saved.result.report,change,row,evidence),true);
+  assert.equal(validTemporaryManualPriceReading({...saved.result.report,date:grant.date},change,row,evidence),false);
+  assert.deepEqual(saved.result.report.pumpRows,f.report.pumpRows);
+ }
+});
 
 test('existing Premium manual entries remain valid and new records cannot transfer between product changes or prices',async t=>{
  t.mock.timers.enable({apis:['Date'],now});

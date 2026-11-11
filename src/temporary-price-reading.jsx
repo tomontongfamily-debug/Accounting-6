@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {pilotPost} from './pilot-client.js';
-import {temporaryManualPriceOpen} from './temporary-price-reading.js';
+import {temporaryPriceGrant,temporaryManualPriceOpen} from './temporary-price-reading.js';
 
 function ManualPriceReview({reading,report,change,row,busy,error,onCancel,onConfirm}){
   const dialog=useRef(null);
@@ -22,6 +22,8 @@ export function TemporaryPriceReading({report,change,row,onSaved,onBusy,disabled
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
   useEffect(()=>{onBusy?.('manual:'+row.id,busy,busy);return()=>onBusy?.('manual:'+row.id,false,false);},[busy,onBusy,row.id]);
   const allowed=window.__fueltechPilotConfig?.mode==='live'&&temporaryManualPriceOpen(report,change,now);
+  const grant=temporaryPriceGrant(report,change);
+  const expiry=grant?new Intl.DateTimeFormat('en-PH',{month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'Asia/Manila'}).format(new Date(grant.expiresAt)):'';
   const value=Number(draft),blocked=draft.trim()===''||!Number.isFinite(value)||value<Number(row.opening)||value>1e12||(row.finalClosing!==''&&row.finalClosing!=null&&value>Number(row.finalClosing));
   if(!allowed&&!row.temporaryManualConfirmed)return null;
   async function confirm(){
@@ -38,7 +40,7 @@ export function TemporaryPriceReading({report,change,row,onSaved,onBusy,disabled
     <strong>{row.pump} · {row.nozzle}</strong>
     {row.temporaryManualConfirmed&&row.photo_path&&<img src={row.photo_path} alt="Original saved price-change photo" className="totalizer-photo"/>}
     {row.temporaryManualConfirmed&&<p className="success-box">✓ Manual price-change reading saved: <strong>{Number(row.closing).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:3})}</strong></p>}
-    {allowed&&<><p><strong>Temporary manual input · Barili {report.date} {report.shiftId.replace('shift-','Shift ')} · {change.product}</strong><br/>Available until manager confirmation or November 11, 5:30 PM Manila time. You can type the price-change reading if the photo step cannot finish.</p>
+    {allowed&&<><p><strong>Temporary manual input · Barili {report.date} {report.shiftId.replace('shift-','Shift ')} · {change.product}</strong><br/>Available until manager confirmation or {expiry} Manila time. You can type the price-change reading if the photo step cannot finish.</p>
       {!editing?<button type="button" className="secondary" disabled={busy||disabled} onClick={()=>{setDraft(row.readingConfirmed?String(row.closing):'');setEditing(true);setError('');}}>Enter price-change reading manually</button>:<>
         <label>Manual price-change reading<input aria-label={`${row.pump} ${row.nozzle} manual price-change reading`} inputMode="decimal" autoComplete="off" value={draft} disabled={busy||disabled} onChange={event=>{setDraft(event.target.value);setError('');}}/></label>
         <small>Opening: {Number(row.opening).toFixed(2)}{row.finalClosing!==''&&row.finalClosing!=null?` · Shift closing: ${Number(row.finalClosing).toFixed(2)}`:''}</small>
