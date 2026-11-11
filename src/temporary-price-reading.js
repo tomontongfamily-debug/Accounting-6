@@ -9,12 +9,16 @@ export const BARILI_ROLLBACK_MANUAL_PRICE_GRANT=Object.freeze({
   id:'barili-20261111-shift1-manual-recovery',branch:'Barili',date:'2026-11-11',shiftId:'shift-1',products:Object.freeze(['Premium','Regular','Diesel']),
   startsAt:'2026-11-11T08:30:00+08:00',expiresAt:'2026-11-12T09:00:00+08:00',
 });
-const grants=[BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT];
+export const BARILI_AFTERNOON_MANUAL_PRICE_GRANT=Object.freeze({
+  id:'barili-20261111-shift2-manual-recovery',branch:'Barili',date:'2026-11-11',shiftId:'shift-2',products:Object.freeze(['Premium','Regular','Diesel']),
+  startsAt:'2026-11-11T15:55:00+08:00',expiresAt:'2026-11-12T09:00:00+08:00',
+});
+const grants=[BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT,BARILI_AFTERNOON_MANUAL_PRICE_GRANT];
 const pumpKey=row=>`${row.pump}|${row.nozzle}|${row.product}`;
 export function temporaryPriceGrant(report,change){
   return grants.find(grant=>!!report&&!!change&&!report.baselineReport&&['branch','date','shiftId'].every(key=>report[key]===grant[key])
     &&typeof change.id==='string'&&change.id.trim()!==''&&grant.products.includes(change.product)
-    &&/^(?:0[4-9]|1[0-2]):[0-5]\d$/.test(change.effectiveTime)&&Number.isFinite(Number(change.newPrice))&&Number(change.newPrice)>0);
+    &&(grant.shiftId==='shift-2'?/^(?:1[3-9]|2[01]):[0-5]\d$/:/^(?:0[4-9]|1[0-2]):[0-5]\d$/).test(change.effectiveTime)&&Number.isFinite(Number(change.newPrice))&&Number(change.newPrice)>0);
 }
 export function matchesTemporaryPriceGrant(report,change){
   return Boolean(temporaryPriceGrant(report,change));

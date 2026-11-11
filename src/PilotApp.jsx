@@ -30,7 +30,7 @@ import { mergeDeliverySave } from './tank-deliveries.js';
 import { recoverCashDraft } from './cash-recovery.js';
 import { initialCashierStep } from './cash-first-workflow.js';
 import { mergePhoneReadings } from './phone-reading-sync.js';
-import { pilotDraftAlreadySaved } from './pilot-draft-recovery.js';
+import { pilotDraftAlreadySaved, recoverManagerPriceDraft } from './pilot-draft-recovery.js';
 import { MobilePumpCapture, usePhoneView } from "./mobile-pump-capture.jsx";
 import { startAutomaticReaderPreparation } from './automatic-reader-preparation.js';
 import { StationHealthReview } from "./shift-health.jsx";
@@ -916,9 +916,10 @@ function draftProgressTotal(report) {
   return Object.values(draftProgress(report)).reduce((total, value) => total + value, 0);
 }
 
-function storeWithLocalDrafts(store = emptyStore(), allowedBranch = "") {
+function storeWithLocalDrafts(store = emptyStore(), allowedBranch = "", role = "") {
   const reports = { ...store.reports };
-  for (const [key, draft] of Object.entries(readLocalDrafts())) {
+  for (const [key, localDraft] of Object.entries(readLocalDrafts())) {
+    const draft=role==='Manager'?recoverManagerPriceDraft(localDraft,reports[key]):localDraft;
     if (shouldDiscardOfflineReport(draft, GLOBAL_OPENING_DATE)) {
       removeQueuedReportByKey(key);
       if (draft) removeLocalDraft(draft);
@@ -2466,7 +2467,7 @@ function removeQueuedReportByKey(key) {
   writeStorageMap(OFFLINE_QUEUE_KEY, queue);
 }
 
-async function flushOfflineReports(sessionToken, allowedBranch = "", onlineReports = {}) {
+async function flushOfflineReports(sessionToken, allowedBranch = "", onlineReports = {}, role = "") {
   let uploaded=false;
   for (const [key, report] of Object.entries(readOfflineQueue()).filter(([, item]) => !allowedBranch || item?.branch === allowedBranch)) {
     if (shouldDiscardOfflineReport(report, GLOBAL_OPENING_DATE)) {
@@ -2478,6 +2479,15 @@ async function flushOfflineReports(sessionToken, allowedBranch = "", onlineRepor
       removeQueuedReport(report);
       if (pilotDraftAlreadySaved(readLocalDrafts()[key], onlineReports[key])) removeLocalDraft(report);
       continue;
+    }
+    if(role==='Manager'){
+      const recovered=recoverManagerPriceDraft(report,onlineReports[key]);
+      if(recovered!==report){
+        keepRecoveryDraft(report);
+        removeQueuedReport(report);
+        cacheLocalDraft(recovered);
+        continue;
+      }
     }
     const clientId = report.clientSave?.clientId || deviceClientId();
     const version = nextDeviceSaveVersion(report.clientSave?.version);
@@ -2896,6 +2906,8 @@ export default function App() {
   const pendingSaveCountRef = useRef(0);
   const pumpMutationVersionRef = useRef(0);
   const pumpRefreshInFlightRef = useRef(false);
+  const pricePhotoBusyRef = useRef(false);
+  const onPricePhotoActivity = useCallback(busy=>{pricePhotoBusyRef.current=busy;},[]);
   const pendingSaveRef = useRef(Promise.resolve());
   const draftSaveTimerRef = useRef(null);
   const pendingDraftReportRef = useRef(null);
@@ -3055,18 +3067,18 @@ export default function App() {
     setInitialLoadError("");
 
     async function refreshOnlineStore(silent = false) {
-      if (silent && (pendingSaveCountRef.current > 0 || isSavingOnlineRef.current || hasUnsavedOnlineChangeRef.current)) return;
+      if (silent && (pendingSaveCountRef.current > 0 || isSavingOnlineRef.current || hasUnsavedOnlineChangeRef.current || pricePhotoBusyRef.current)) return;
       const refreshStartedAtVersion = localChangeVersionRef.current;
       const pumpVersion = pumpMutationVersionRef.current;
       if (!silent) setSyncMessage("Connecting online accounting database...");
       try {
         const { onlineStore, draftSyncError } = await loadReportsWithDraftSync({
           load: () => loadOnlineStore(sessionToken),
-          flush: navigator.onLine && role !== "Approver" ? (onlineStore) => flushOfflineReports(sessionToken, role === "Admin" ? "" : branch, onlineStore.reports) : null,
+          flush: navigator.onLine && role !== "Approver" ? (onlineStore) => flushOfflineReports(sessionToken, role === "Admin" ? "" : branch, onlineStore.reports, role) : null,
         });
         if (!mounted) return;
-        if (refreshStartedAtVersion !== localChangeVersionRef.current || pumpVersion !== pumpMutationVersionRef.current || pendingSaveCountRef.current > 0) return;
-        setStore(role === "Approver" ? onlineStore : storeWithLocalDrafts(onlineStore, role === "Admin" ? "" : branch));
+        if (refreshStartedAtVersion !== localChangeVersionRef.current || pumpVersion !== pumpMutationVersionRef.current || pendingSaveCountRef.current > 0 || (silent && pricePhotoBusyRef.current)) return;
+        setStore(role === "Approver" ? onlineStore : storeWithLocalDrafts(onlineStore, role === "Admin" ? "" : branch, role));
         hasLoadedOnlineStoreRef.current = true;
         if (role === "Admin") {
           loadSystemHealth(sessionToken)
@@ -3547,11 +3559,12 @@ export default function App() {
     // A background upload may return an older snapshot than another nozzle.
     // Merge only revisioned evidence, keeping current cash and manager edits.
     const key=reportKey(saved.branch,saved.date,saved.shiftId);
-    if(activeReportRef.current)activeReportRef.current=mergePhoneReadings(activeReportRef.current,saved);
-    for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=mergePhoneReadings(ref.current,saved);
-    setStore(old=>({...old,reports:{...old.reports,[key]:mergePhoneReadings(old.reports[key]||saved,saved)}}));
-    const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(mergePhoneReadings(cached,saved));
-    const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(mergePhoneReadings(queued,saved));
+    const merge=local=>mergePhoneReadings(role==='Manager'?recoverManagerPriceDraft(local,saved):local,saved);
+    if(activeReportRef.current)activeReportRef.current=merge(activeReportRef.current);
+    for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=merge(ref.current);
+    setStore(old=>({...old,reports:{...old.reports,[key]:merge(old.reports[key]||saved)}}));
+    const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(merge(cached));
+    const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(merge(queued));
   }
 
   async function refreshPhoneReadings() {
@@ -3562,7 +3575,7 @@ export default function App() {
     pumpRefreshInFlightRef.current=true;
     try{
       const {report:saved}=await demoApi('pump-report',{reportKey:key});
-      const local=activeReportRef.current,next=mergePhoneReadings(local,saved);
+      const local=activeReportRef.current,next=mergePhoneReadings(role==='Manager'?recoverManagerPriceDraft(local,saved):local,saved);
       if(next===local)return;
       pumpMutationVersionRef.current+=1;
       acceptReadingReport(saved);
@@ -4427,7 +4440,7 @@ export default function App() {
               ? <CashierPage onSaveDelivery={saveTankDelivery} isSavingDelivery={isSavingDelivery} onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} onRefreshVouchers={refreshShiftVouchers} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
               : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && branch === "Liloan" && <AdminReportAlerts sessionToken={sessionToken} manager />}
-            {role === "Manager" && <ManagerPage pricePhotoReports={store.reports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={task=>{setSelectedDate(task.date);setSelectedShiftId(task.shiftId);setPricePhotoFocus({...task,requestId:uid()});}} branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
+            {role === "Manager" && <ManagerPage onPricePhotoActivity={onPricePhotoActivity} pricePhotoReports={store.reports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={task=>{setSelectedDate(task.date);setSelectedShiftId(task.shiftId);setPricePhotoFocus({...task,requestId:uid()});}} branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
               ? <Section title="Loading Bank Verifications"><p className="neutral">Loading deposits from all stations...</p></Section>
               : initialLoadError
@@ -4997,11 +5010,12 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   );
 }
 
-function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function MidShiftPriceChangeSection({ onPricePhotoActivity, pricePhotoReports, pricePhotoFocus, onOpenPriceTask, report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const changes = report.midShiftPriceChanges || [];
   const [busyRows,setBusyRows]=useState({});
   const onBusy=useCallback((id,busy)=>setBusyRows(old=>({...old,[id]:busy})),[]);
   const photoBusy=Object.values(busyRows).some(Boolean);
+  useEffect(()=>{onPricePhotoActivity?.(photoBusy);return()=>onPricePhotoActivity?.(false);},[onPricePhotoActivity,photoBusy]);
   const details=useRef(null);
   const currentKey=reportKey(report.branch,report.date,report.shiftId);
   const focusId=pricePhotoFocus?.reportKey===currentKey?pricePhotoFocus.changeId:'';
@@ -5051,7 +5065,7 @@ function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpen
   );
 }
 
-function ManagerPage({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
+function ManagerPage({ onPricePhotoActivity, pricePhotoReports, pricePhotoFocus, onOpenPriceTask, branch, selectedDate, setSelectedDate, prices, pricingCoverage, setPricingCoverage, pricingShiftId, setPricingShiftId, report, result, patchEffectivePrice, confirmDailyPrices, depositDate, setDepositDate, depositSalesDate, setDepositSalesDate, depositHistoryFrom, setDepositHistoryFrom, depositHistoryTo, setDepositHistoryTo, depositCoverage, setDepositCoverage, depositDraft, setDepositDraft, depositShiftIds, managerDepositRows, saveDailyBankDeposit, requestDepositRemovalFromReport, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const depositReferenceLabel = branch === "Liloan" ? "Minutes and Seconds" : "Reference";
   const phoneView=usePhoneView();
 
@@ -5079,7 +5093,7 @@ function ManagerPage({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, bran
         </div>
       </Section>}
 
-      <MidShiftPriceChangeSection pricePhotoReports={pricePhotoReports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={onOpenPriceTask} report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
+      <MidShiftPriceChangeSection onPricePhotoActivity={onPricePhotoActivity} pricePhotoReports={pricePhotoReports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={onOpenPriceTask} report={report} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />
 
       {!phoneView && <DepositUpgrade branch={branch} />}
     </div>

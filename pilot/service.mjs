@@ -333,7 +333,7 @@ function validatePriceReadingOrder(report,change) {
         });
         const changed=JSON.stringify(changes)!==JSON.stringify(old.midShiftPriceChanges||[]);
         for(const change of changes.filter(c=>c.confirmedAt))validatePriceReadingOrder({...old,midShiftPriceChanges:changes},change);
-        const result=storeReport({...old,midShiftPriceChanges:changes,midShiftBasePrices:old.midShiftBasePrices||old.prices,...(changed?{cashReviewState:'',recountRequired:false}:{})},session,'mid-shift-price-change');
+        const result=storeReport({...old,midShiftPriceChanges:changes,midShiftBasePrices:old.midShiftBasePrices||old.prices,...(input.report.clientSave?{clientSave:input.report.clientSave}:{}),...(changed?{cashReviewState:'',recountRequired:false}:{})},session,'mid-shift-price-change');
         if(newlyConfirmed.length){
           const carried=carryMidShiftPrices(database,result.report,newlyConfirmed);
           syncUnsubmittedPrices(database,result.report.branch,result.report.date,result.report.shiftId);

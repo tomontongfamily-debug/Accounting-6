@@ -6,10 +6,10 @@ import {createServer} from 'vite';
 import {bariliManualFixture} from './barili-manual-price-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
-import {BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT} from '../src/temporary-price-reading.js';
+import {BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT,BARILI_AFTERNOON_MANUAL_PRICE_GRANT} from '../src/temporary-price-reading.js';
 
-for(const grant of [BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT])for(const product of ['Premium','Regular','Diesel'])test(`Barili ${grant.date} Shift 1 ${product} manual input works on phone/desktop and preserves closing photos`,async t=>{
- const now=Date.parse(grant.date==='2026-11-10'?'2026-11-10T17:10:00+08:00':'2026-11-11T08:45:00+08:00');t.mock.timers.enable({apis:['Date'],now});
+for(const grant of [BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT,BARILI_AFTERNOON_MANUAL_PRICE_GRANT])for(const product of ['Premium','Regular','Diesel'])test(`Barili ${grant.date} ${grant.shiftId} ${product} manual input works on phone/desktop and preserves closing photos`,async t=>{
+ const now=Date.parse(grant.startsAt)+600000;t.mock.timers.enable({apis:['Date'],now});
  const f=bariliManualFixture(product,grant);let state=f.state;
  const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true}),errors=[],writes=[],receipts=new Map();let loseResponse=true,queue=Promise.resolve();
@@ -47,7 +47,7 @@ for(const grant of [BARILI_MANUAL_PRICE_GRANT,BARILI_ROLLBACK_MANUAL_PRICE_GRANT
   if(lost){await expect(dialog.getByRole('alert')).toContainText('lost manual save response');loseResponse=false;await dialog.getByRole('button',{name:'Confirm manual reading',exact:true}).click();}
   await expect(dialog).toHaveCount(0);await expect.poll(()=>state.reports[f.key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)]?.manualEntry?.value).toBe(10010);
  }
- async function openManagerTask(page){await page.getByRole('button',{name:`Open Shift 1 ${product} price change at ${f.change.effectiveTime}`,exact:true}).click();await expect(page.getByText(`Currently viewing: Barili · ${grant.date} · Shift 1`,{exact:true})).toBeVisible();}
+ async function openManagerTask(page){await page.getByRole('button',{name:`Open ${grant.shiftId.replace('shift-','Shift ')} ${product} price change at ${f.change.effectiveTime}`,exact:true}).click();await expect(page.getByText(`Currently viewing: Barili · ${grant.date} · ${grant.shiftId.replace('shift-','Shift ')}`,{exact:true})).toBeVisible();}
  try{
   const phone=await open('Cashier',390);await phone.getByLabel('Shift to photograph').selectOption(f.key);
   await expect(phone.getByLabel('Photos for')).toHaveValue(f.change.id);

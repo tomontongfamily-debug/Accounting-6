@@ -2,8 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runAction } from '../pilot/service.mjs';
 import { fixture } from './pilot-fixture.mjs';
+import {pilotDraftAlreadySaved} from '../src/pilot-draft-recovery.js';
 import { compute } from '../src/accounting-engine.js';
 import { refreshPosEvidence } from '../pilot/pos-redemptions.mjs';
+
+test('a manager metadata save acknowledges the exact local draft so focus cannot replay an older empty form',async()=>{
+ const {state,report,manager}=fixture(),draft={...report,clientSave:{clientId:'manager-phone',version:100,mutationId:'manager-phone:100'},midShiftPriceChanges:[{id:'diesel',product:'Diesel',effectiveTime:'09:00',newPrice:61}]};
+ const saved=await runAction(state,manager,'/api/reports/save',{report:draft});
+ assert.deepEqual(saved.result.report.clientSave,draft.clientSave);assert.equal(pilotDraftAlreadySaved(draft,saved.result.report),true);
+ assert.deepEqual(saved.result.report.pumpRows.map(({setupRequired,...row})=>row),report.pumpRows);
+});
 
 test('cashier enters Cash on Hand before pump photos and the confirmed count survives later readings',async()=>{
   let {state,report,key,cashier}=fixture();
@@ -42,7 +50,8 @@ test('POS-enabled reading and cash actions return saved revisions through recoun
 test('Roles, station scope, stale desktop drafts and nozzle revisions',async()=>{
   let {state,report,key,cashier,manager}=fixture();
   await assert.rejects(runAction(state,{role:'Cashier',branch:'Mabolo'},'/api/store/load'),/another station/);
-  await assert.rejects(runAction(state,manager,'/api/demo/pump-report',{reportKey:key}),/role/);
+  assert.ok((await runAction(state,manager,'/api/demo/pump-report',{reportKey:key})).result.report);
+  await assert.rejects(runAction(state,manager,'/api/demo/pump-reading',{reportKey:key}),/role/);
   const photo='/api/pilot/photo?id=fixture';const row=report.pumpRows[0];state.photos[photo]={branch:'Liloan',reportKey:key,rowId:row.id};
   const payload={reportKey:key,revision:0,row:{...row,closing:Number(row.opening)+10,closingEntered:true,readingConfirmed:true,photo_path:photo}};
   const saved=await runAction(state,cashier,'/api/demo/pump-reading',payload);state=saved.state;

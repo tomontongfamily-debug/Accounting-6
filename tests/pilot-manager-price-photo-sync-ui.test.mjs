@@ -63,7 +63,7 @@ test('Barili PC receives unconfirmed phone photos for every product while an unr
    await expect(card.getByText('1 / 6 photos saved online.',{exact:false})).toBeVisible();
    await expect(gallery.locator('img')).toHaveCount(1);await expect(gallery).toContainText('Photo saved · confirm reading');
    await gallery.getByRole('button').click();await expect(card.locator('.reading-card:visible img').first()).toHaveAttribute('src',state.reports[key].midShiftPriceChanges.find(item=>item.id===change.id).readingPhotos[midShiftPumpKey(report.pumpRows.filter(row=>row.product===change.product)[3])].photo_path);
-   await expect(card.getByText('0 / 6 price-change photos confirmed',{exact:true})).toBeVisible();
+   await expect(card.getByText(/^0 \/ 6 price-change (photos|readings) confirmed$/)).toBeVisible();
   }
   assert.ok(scopedReads>0);assert.equal(fullReads,readsBefore,'The dirty full draft must not block the independent photo read');await expect(price).toHaveValue('91.80');
   assert.deepEqual(state.reports[key].pumpRows,closingSnapshot);assert.equal(state.reports[key].midShiftPriceChanges[0].newPrice,91.9);assert.ok(state.reports[key].midShiftPriceChanges.every(change=>!change.confirmedAt));assert.deepEqual(errors,[]);

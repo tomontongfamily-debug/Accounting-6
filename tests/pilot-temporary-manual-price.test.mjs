@@ -3,11 +3,26 @@ import assert from 'node:assert/strict';
 import {bariliManualFixture} from './barili-manual-price-fixture.mjs';
 import {runAction} from '../pilot/service.mjs';
 import {midShiftPumpKey,midShiftReadingComplete} from '../src/mid-shift-price-change.js';
-import {BARILI_MANUAL_PRICE_GRANT as grant,BARILI_ROLLBACK_MANUAL_PRICE_GRANT as rollback,temporaryPriceGrant,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
+import {BARILI_MANUAL_PRICE_GRANT as grant,BARILI_ROLLBACK_MANUAL_PRICE_GRANT as rollback,BARILI_AFTERNOON_MANUAL_PRICE_GRANT as afternoon,temporaryPriceGrant,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
 import {compute} from '../src/accounting-engine.js';
 
 const now=Date.parse('2026-11-10T17:10:00+08:00');
 function body(f,row,reading=10010){return {reportKey:f.key,changeId:f.change.id,product:f.change.product,effectiveTime:f.change.effectiveTime,rowId:row.id,revision:f.state.reports[f.key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)]?.readingRevision||0,reading};}
+
+test('Nov 11 Shift 2 manual recovery covers every product including the last Diesel pump, expires, and leaves closing readings intact',async t=>{
+ const time=Date.parse(afternoon.startsAt)+600000;t.mock.timers.enable({apis:['Date'],now:time});
+ for(const product of afternoon.products){
+  const f=bariliManualFixture(product,afternoon),row=f.rows.at(-1);assert.equal(row.pump,'Pump 4');assert.equal(temporaryManualPriceOpen(f.report,f.change,time),true);
+  for(const mutation of [{date:'2026-11-12'},{shiftId:'shift-1'},{shiftId:'shift-3'},{branch:'Mabolo'},{confirmed:true},{baselineReport:true}])assert.equal(temporaryManualPriceOpen({...f.report,...mutation},f.change,time),false);
+  for(const effectiveTime of ['12:59','22:00','bad'])assert.equal(temporaryPriceGrant(f.report,{...f.change,effectiveTime}),undefined);
+  for(const end of [Date.parse(afternoon.startsAt)-1,Date.parse(afternoon.expiresAt)])assert.equal(temporaryManualPriceOpen(f.report,f.change,end),false);
+  const saved=await runAction(f.state,f.manager,'/api/demo/temporary-price-reading',body(f,row)),change=saved.result.report.midShiftPriceChanges[0],evidence=change.readingPhotos[midShiftPumpKey(row)];
+  assert.equal(evidence.manualEntry.authorizationId,afternoon.id);assert.equal(evidence.manualEntry.role,'Manager');assert.equal(validTemporaryManualPriceReading(saved.result.report,change,row,evidence),true);assert.ok(!evidence.photo_path);assert.ok(!evidence.ocr_result);
+  assert.deepEqual(saved.result.report.pumpRows,f.report.pumpRows);assert.deepEqual(change.readingPhotos[midShiftPumpKey(f.rows[0])],f.change.readingPhotos[midShiftPumpKey(f.rows[0])]);
+  t.mock.timers.setTime(Date.parse(afternoon.expiresAt)+1);assert.equal(validTemporaryManualPriceReading(saved.result.report,change,row,evidence),true);
+  await assert.rejects(runAction(saved.state,f.cashier,'/api/demo/temporary-price-reading',{...body(f,f.rows[1])}),error=>error.status===423);t.mock.timers.setTime(time);
+ }
+});
 
 test('Nov 11 rollback permits all products only in today’s Shift 1, uses its own expiry, and preserves evidence after expiry',async t=>{
  const time=Date.parse('2026-11-11T08:45:00+08:00');t.mock.timers.enable({apis:['Date'],now:time});
