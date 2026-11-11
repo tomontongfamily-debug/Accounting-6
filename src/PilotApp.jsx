@@ -3543,8 +3543,19 @@ export default function App() {
     setStore(old => ({ ...old, reports: { ...old.reports, [reportKey(next.branch, next.date, next.shiftId)]: normalizeExistingReport(next) } }));
   }
 
+  function acceptReadingReport(saved) {
+    // A background upload may return an older snapshot than another nozzle.
+    // Merge only revisioned evidence, keeping current cash and manager edits.
+    const key=reportKey(saved.branch,saved.date,saved.shiftId);
+    if(activeReportRef.current)activeReportRef.current=mergePhoneReadings(activeReportRef.current,saved);
+    for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=mergePhoneReadings(ref.current,saved);
+    setStore(old=>({...old,reports:{...old.reports,[key]:mergePhoneReadings(old.reports[key]||saved,saved)}}));
+    const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(mergePhoneReadings(cached,saved));
+    const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(mergePhoneReadings(queued,saved));
+  }
+
   async function refreshPhoneReadings() {
-    if(role!=='Cashier'||window.matchMedia('(max-width: 767px)').matches||!hasLoadedOnlineStoreRef.current||pumpRefreshInFlightRef.current)return;
+    if(!['Cashier','Manager'].includes(role)||(role==='Cashier'&&window.matchMedia('(max-width: 767px)').matches)||!hasLoadedOnlineStoreRef.current||pumpRefreshInFlightRef.current)return;
     const current=activeReportRef.current;
     if(!current||current.confirmed)return;
     const key=reportKey(current.branch,current.date,current.shiftId);
@@ -3554,11 +3565,7 @@ export default function App() {
       const local=activeReportRef.current,next=mergePhoneReadings(local,saved);
       if(next===local)return;
       pumpMutationVersionRef.current+=1;
-      activeReportRef.current=next;
-      for(const ref of [pendingDraftReportRef,pendingLocalDraftCacheRef])if(ref.current)ref.current=mergePhoneReadings(ref.current,saved);
-      setStore(old=>({...old,reports:{...old.reports,[key]:mergePhoneReadings(old.reports[key],saved)}}));
-      const cached=readLocalDrafts()[key];if(cached)cacheLocalDraft(mergePhoneReadings(cached,saved));
-      const queued=readOfflineQueue()[key];if(queued)queueOfflineReport(mergePhoneReadings(queued,saved));
+      acceptReadingReport(saved);
     }catch{ /* Keep the latest displayed readings; the next poll retries. */ }
     finally{pumpRefreshInFlightRef.current=false;}
   }
@@ -3743,14 +3750,14 @@ export default function App() {
     await pendingSaveRef.current.catch(()=>{});
   }
 
-  async function patchMidShiftPriceReading(change,row,savedPhoto,options) {
+  async function patchMidShiftPriceReading(change,row,savedPhoto,options,sourceReport) {
     await prepareMidShiftPhotos();
-    const current=latestActiveReportForEdit();
+    const current=sourceReport||latestActiveReportForEdit();
     pumpMutationVersionRef.current += 1;
     let saved;
     try { saved=savedPhoto||await demoApi('midshift-reading',{reportKey:reportKey(current.branch,current.date,current.shiftId),changeId:change.id,product:change.product,effectiveTime:change.effectiveTime,row,revision:row.readingRevision||0},options); }
     finally { pumpMutationVersionRef.current += 1; }
-    acceptDemoReport(saved.report);
+    acceptReadingReport(saved.report);
     const updated=saved.report.midShiftPriceChanges.find(item=>item.id===change.id);
     return {...row,...updated.readingPhotos[midShiftPumpKey(row)],closing:midShiftReadingValue(updated,row)};
   }

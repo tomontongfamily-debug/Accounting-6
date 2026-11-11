@@ -411,7 +411,7 @@ function validatePriceReadingOrder(report,change) {
       return send({ok:true,needsRecount:!!saved.report.recountRequired,report:exposeReport(saved.report,session)});
     }
     if(route==='/api/demo/pump-report' || route==='/api/demo/pump-reading') {
-      requireRole(session,'Cashier');
+      requireRole(session,...(route.endsWith('pump-report')?['Cashier','Manager']:['Cashier']));
       const old=database.reports[input.reportKey];branchAccess(session,old?.branch);
       if(route.endsWith('pump-report')) return send({ok:true,report:exposeReport(isBeginningSetup(old)?old:carryForwardOpenings(old,database.reports),session)});
       if(old.confirmed) reject('Submitted report is locked.',423);

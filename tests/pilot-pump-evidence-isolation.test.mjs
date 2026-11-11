@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {execute} from '../pilot/repository.mjs';
+import {runAction} from '../pilot/service.mjs';
 import {accountingTiming,dateOffset} from '../pilot/integrations.mjs';
 import {createReport,reportKey} from '../src/accounting-engine.js';
 import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
@@ -83,6 +84,12 @@ test('manager price-change photos and readings are independent of offline cash s
  const evidence=saved.report.midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)];
  assert.equal(evidence.photo_path,photo.photo_path);assert.equal(evidence.readingConfirmed,true);
  assert.equal(f.stats.sourceReads,0);assert.equal(f.stats.uploads,1);assert.equal(f.stats.backups,1);
+ const loaded=await execute({role:'Manager',branch:'Liloan'},{route:'/api/demo/pump-report',input:{reportKey:f.key},mode:'live',startDate:f.state.startDate,mutationId:randomUUID()},f);
+ assert.equal(loaded.report.midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(row)].photo_path,photo.photo_path);
+ assert.equal(f.stats.sourceReads,0,'Manager photo refresh must not depend on financial source imports');
+ await assert.rejects(runAction(f.state,{role:'Manager',branch:'Mabolo'},'/api/demo/pump-report',{reportKey:f.key}),/station/i);
+ await assert.rejects(runAction(f.state,{role:'Approver'},'/api/demo/pump-report',{reportKey:f.key}),/role|permission|access/i);
+ await assert.rejects(runAction(f.state,{role:'Manager',branch:'Liloan'},'/api/demo/pump-reading',{reportKey:f.key,row}),/role|permission|access/i);
 });
 
 test('cash checks, final submission and financial actions still require source verification',async()=>{

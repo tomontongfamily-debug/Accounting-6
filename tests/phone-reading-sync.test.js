@@ -22,6 +22,14 @@ test('Phone evidence merges into a dirty desktop while preserving cash and tank 
  assert.deepEqual(next.cashDenominations,local.cashDenominations);assert.deepEqual(next.tankRows,local.tankRows);assert.equal(next.notes,local.notes);
  assert.equal(mergePhoneReadings(next,remote),next);
 });
+
+test('an old background price-photo response cannot erase another pump or product already saved',()=>{
+ const premium='Pump 1|Premium|Premium',diesel='Pump 2|Diesel|Diesel';
+ const change=(id,product,key,revision,path)=>({id,product,effectiveTime:'15:07',newPrice:70,readings:{[key]:10010},readingPhotos:{[key]:{readingRevision:revision,photo_path:path,readingConfirmed:false}}});
+ const local={...report(),pilotRevision:9,midShiftPriceChanges:[change('p','Premium',premium,3,'new-premium'),change('d','Diesel',diesel,1,'saved-diesel')]};
+ const delayed={...report(),pilotRevision:8,midShiftPriceChanges:[change('p','Premium',premium,2,'old-premium'),{id:'d',product:'Diesel',effectiveTime:'15:07',newPrice:70,readings:{},readingPhotos:{}}]};
+ assert.equal(mergePhoneReadings(local,delayed),local);
+});
 test('Another desktop edit does not silently authorize overwriting its fields',()=>{
  const local=report(),remote={...report(),pilotRevision:7,pilotLastNonReadingRevision:6,pumpRows:[{...local.pumpRows[0],readingRevision:3,closing:105}]};
  const next=mergePhoneReadings(local,remote);assert.equal(next.pilotRevision,4);assert.equal(next.pumpRows[0].closing,105);assert.equal(next.notes,local.notes);
