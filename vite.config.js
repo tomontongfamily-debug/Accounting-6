@@ -16,5 +16,5 @@ function versionedOcrAssets(){
 
 export default defineConfig({
   plugins: [versionedOcrAssets(),react()],
-  build: {rollupOptions: {input: {main:'index.html',phoneOcrCheck:'ocr-phone-check.html',captureSaveCheck:'capture-save-check.html'}}},
+  build: {rollupOptions: {input: {main:'index.html',phoneOcrCheck:'ocr-phone-check.html',captureSaveCheck:'capture-save-check.html',midShiftPhoneCheck:'midshift-phone-check.html'}}},
 });
