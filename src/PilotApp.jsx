@@ -52,6 +52,7 @@ import {
   ensureMidShiftBasePrices,
   midShiftPumpKey,
   midShiftReadingValue,
+  midShiftReadingComplete,
   midShiftChangeHasDetails,
   patchMidShiftChange,
   patchMidShiftReading,
@@ -2644,9 +2645,9 @@ function ManagerPriceInput({ value, onCommit, ghostZero = false }) {
   );
 }
 
-function SelectInput({ value, onChange, options }) {
+function SelectInput({ value, onChange, options, disabled = false }) {
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
       {options.map((option) => {
         const optionValue = typeof option === "string" ? option : option.value;
         const optionLabel = typeof option === "string" ? option : option.label;
@@ -4991,7 +4992,6 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
 
 function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpenPriceTask, report, addMidShiftPriceChange, patchMidShiftPriceChange, patchMidShiftPriceReading, prepareMidShiftPhotos, confirmMidShiftPriceChange, removeMidShiftPriceChange }) {
   const changes = report.midShiftPriceChanges || [];
-  const phoneView = usePhoneView();
   const [busyRows,setBusyRows]=useState({});
   const onBusy=useCallback((id,busy)=>setBusyRows(old=>({...old,[id]:busy})),[]);
   const photoBusy=Object.values(busyRows).some(Boolean);
@@ -5000,7 +5000,6 @@ function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpen
   const focusId=pricePhotoFocus?.reportKey===currentKey?pricePhotoFocus.changeId:'';
   useEffect(()=>{
     if(!focusId||!details.current)return;
-    details.current.open=true;
     const target=[...details.current.querySelectorAll('[data-price-change-id]')].find(node=>node.dataset.priceChangeId===focusId);
     target?.scrollIntoView({behavior:'smooth',block:'start'});
   },[focusId,pricePhotoFocus?.requestId]);
@@ -5008,9 +5007,13 @@ function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpen
   return (
     <Section title="Price Change During Shift">
       <ManagerPricePhotoTasks reports={pricePhotoReports} report={report} onOpen={onOpenPriceTask} disabled={photoBusy}/>
+      <Field label="Price-change shift"><SelectInput value={report.shiftId} disabled={photoBusy} onChange={shiftId=>onOpenPriceTask({date:report.date,shiftId,changeId:''})} options={SHIFT_OPTIONS.map(shift=>({value:shift.id,label:shift.label}))}/></Field>
       <p className="neutral"><strong>Currently viewing: {report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')}</strong></p>
-      <details ref={details} className="details-panel" open={phoneView || !!focusId || undefined}>
-        <summary>Open only if fuel price changed in the middle of this shift</summary>
+      <p className="neutral">Forgot to record a price change? Select the original shift, enter the actual change time and choose the photos taken at that time. Saved shift closing readings stay separate.</p>
+      {report.confirmed && <p className="warning-box">This report is already submitted. Ask Admin to reopen it through the correction process before adding a missed price change.</p>}
+      <div ref={details} className="details-panel">
+        <p>Use this when fuel prices change during a shift. Add one change per fuel product.</p>
+        <button type="button" className="secondary" disabled={photoBusy || report.confirmed} onClick={addMidShiftPriceChange}>Add Mid-Shift Price Change</button>
         <div className="warning-box">
           Do not overwrite the whole shift price. Enter the exact price-change time and new price, then photograph the affected pump readings.
         </div>
@@ -5018,6 +5021,7 @@ function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpen
           <p className="neutral">No mid-shift price changes recorded for this report.</p>
         ) : changes.map((change, changeIndex) => {
           const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
+          const missingRows = matchingRows.filter(row=>!midShiftReadingComplete(report,change,row));
           return (
             <div className="price-box form-space" key={change.id} data-price-change-id={change.id}>
               <fieldset className="grid four" disabled={photoBusy || report.confirmed}>
@@ -5027,14 +5031,15 @@ function MidShiftPriceChangeSection({ pricePhotoReports, pricePhotoFocus, onOpen
                 <button type="button" className="small-danger" onClick={() => removeMidShiftPriceChange(change.id)}>Remove Change #{changeIndex + 1}</button>
               </fieldset>
               <p className="neutral">{report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')} — readings are saved to this shift.</p>
+              <p><strong>{change.product}: {peso(reportStartingPrice(report,change.product))} → {n(change.newPrice)>0?peso(change.newPrice):'enter new price'}</strong>{change.effectiveTime?` at ${change.effectiveTime}`:''}</p>
               {change.confirmedAt && <p className="success-box">✓ Price change confirmed</p>}
               {change.effectiveTime && n(change.newPrice)>0 ? <MidShiftPhotoReadings report={report} change={change} onReading={patchMidShiftPriceReading} onBusy={onBusy} onPrepare={prepareMidShiftPhotos}/> : <p className="neutral">Enter the product, effective time and new price to start the price-change photos.</p>}
-              <button type="button" className="confirm-button form-space" disabled={photoBusy || report.confirmed || !change.effectiveTime || n(change.newPrice)<=0 || matchingRows.some(row=>!change.readingPhotos?.[midShiftPumpKey(row)]?.readingConfirmed)} onClick={() => confirmMidShiftPriceChange(change.id)}>Confirm {change.product} Mid-Shift Price</button>
+              {!change.confirmedAt && <p className="neutral" role="status">{!change.effectiveTime || n(change.newPrice)<=0 ? 'Step 1: Enter the product, price-change time and new price.' : missingRows.length ? `Step 2: Save and confirm ${missingRows.length} remaining ${change.product} nozzle reading${missingRows.length===1?'':'s'}. Next: ${missingRows[0].pump} ${missingRows[0].nozzle}.` : photoBusy ? 'Saving the readings. Keep this page open.' : 'Step 3: All readings saved. Confirm the new price below.'}</p>}
+              <button type="button" className="confirm-button form-space" disabled={photoBusy || report.confirmed || !!change.confirmedAt || !change.effectiveTime || n(change.newPrice)<=0 || !matchingRows.length || missingRows.length>0} onClick={() => confirmMidShiftPriceChange(change.id)}>Confirm {change.product} Mid-Shift Price</button>
             </div>
           );
         })}
-        <button type="button" className="secondary" disabled={photoBusy || report.confirmed} onClick={addMidShiftPriceChange}>Add Mid-Shift Price Change</button>
-      </details>
+      </div>
     </Section>
   );
 }

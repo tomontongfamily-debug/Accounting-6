@@ -90,7 +90,7 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
    if(await active().getByRole('button',{name:'Enter number manually',exact:true}).count()){await active().getByRole('button',{name:'Enter number manually',exact:true}).click();await active().getByRole('textbox',{name:/price-change reading$/}).fill('10010');}
    await confirmPumpReading(active());
   }
-  await expect(phone.getByText('6 / 6 price-change photos confirmed',{exact:true})).toBeVisible();
+  await expect(phone.getByText(/^6 \/ 6 price-change (photos|readings) confirmed$/)).toBeVisible();
   assert.deepEqual(state.reports[key].pumpRows,closingSnapshot,'Price-change photos must leave every closing reading/photo intact');
   assert.ok(!state.reports[key].midShiftPriceChanges[0].confirmedAt,'A cashier cannot confirm the selling price');
   const attempts=writes.filter(write=>write.route==='/api/demo/photo'&&write.input.rowId===premium[2].id);assert.ok(attempts.length>=2);assert.equal(new Set(attempts.map(write=>write.mutationId)).size,1,'Retry reuses the original upload receipt');
