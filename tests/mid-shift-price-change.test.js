@@ -59,6 +59,19 @@ test("reading remains attached when a temporary pump row ID changes after save",
   assert.equal(midShiftReadingValue(updated.midShiftPriceChanges[0], afterSave), "12345.67");
 });
 
+test('switching fuel product clears the other fuel price and evidence without touching other changes', () => {
+  const original = {...report, midShiftPriceChanges:[
+    {id:'diesel',product:'Diesel',newPrice:93.7,effectiveTime:'09:00',confirmedAt:'saved',readings:{diesel:100},readingPhotos:{diesel:{readingConfirmed:true}}},
+    {id:'draft',product:'Diesel',newPrice:93.7,effectiveTime:'09:01',readings:{diesel:110},readingPhotos:{diesel:{photo_path:'original'}}},
+  ]};
+  const changed=patchMidShiftChange(original,'draft','product','Premium');
+  assert.deepEqual(changed.midShiftPriceChanges[0],original.midShiftPriceChanges[0]);
+  assert.deepEqual(changed.midShiftPriceChanges[1],{id:'draft',product:'Premium',newPrice:'',effectiveTime:'09:01',readings:{},readingPhotos:{},confirmedAt:''});
+  assert.equal(original.midShiftPriceChanges[1].newPrice,93.7);
+  const sameProduct=patchMidShiftChange(original,'draft','product','Diesel');
+  assert.equal(sameProduct.midShiftPriceChanges[1].newPrice,93.7);
+});
+
 test("historical readings stored by row ID remain readable", () => {
   const row = { id: "legacy-row-id", pump: "Pump 1", nozzle: "Premium", product: "Premium" };
   const legacyChange = { readings: { "legacy-row-id": "321.50" } };

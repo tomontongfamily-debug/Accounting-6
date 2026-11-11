@@ -7,9 +7,9 @@ import {runAction} from '../pilot/service.mjs';
 import {compute} from '../src/accounting-engine.js';
 import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
 
-async function openApp(browser,url,f,role,width=1280){
+async function openApp(browser,url,f,role,width=1280,time='2026-09-23T02:00:00Z'){
  let state=f.state;const page=await browser.newPage({viewport:{width,height:1000},timezoneId:'Asia/Manila'}),errors=[],writes=[];
- page.on('pageerror',error=>errors.push(error.message));await page.clock.install({time:new Date('2026-09-23T02:00:00Z')});
+ page.on('pageerror',error=>errors.push(error.message));await page.clock.install({time:new Date(time)});
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;let result,status=200;
   if(path==='/api/pilot/photo')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg"/>'});
@@ -64,6 +64,37 @@ test('built phone mid-shift confirmation requires exact re-entry after all price
   assert.equal(dialogs.length,2);assert.match(dialogs[0],/Shift 1 · 09:00/);assert.equal(app.writes[0].input.priceReview.typedPrice,'650');assert.deepEqual(app.errors,[]);
  }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}
 });
+test('manager can return to an ended morning draft and confirm its 9 AM change after cash and closing readings were saved',async()=>{
+ const server=await preview({preview:{host:'127.0.0.1',port:0,strictPort:false}}),browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const f=fixture(),report=completedPumps(f),closings=structuredClone(report.pumpRows);
+  const change={id:'missed-9am',product:'Premium',effectiveTime:'09:00',newPrice:69,photoRequired:true,readings:{},readingPhotos:{}};
+  report.midShiftBasePrices={...report.prices};report.midShiftPriceChanges=[change];
+  for(const row of report.pumpRows.filter(row=>row.product==='Premium')){
+   const pump=midShiftPumpKey(row),path='/api/pilot/photo?id=original-9am-'+row.id;
+   change.readings[pump]=Number(row.opening)+5;change.readingPhotos[pump]={photo_path:path,readingConfirmed:true};
+   f.state.photos[path]={branch:'Liloan',reportKey:f.key,rowId:row.id,changeId:change.id,product:change.product,effectiveTime:change.effectiveTime};
+  }
+  const app=await openApp(browser,`http://127.0.0.1:${server.httpServer.address().port}`,f,'Manager',1280,'2026-09-23T07:30:00Z'),{page}=app;
+  await page.getByLabel('Price Effective Date',{exact:true}).fill(report.date);
+  await expect(page.getByText('Currently viewing: Liloan · 2026-09-23 · Shift 2',{exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Price-change shift',exact:true})).toBeVisible();
+  await page.getByRole('combobox',{name:'Price-change shift',exact:true}).selectOption('shift-1');
+  await expect(page.getByText('Currently viewing: Liloan · 2026-09-23 · Shift 1',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Effective Time',{exact:true})).toHaveValue('09:00');
+  await expect(page.getByText('Step 3: All readings saved. Confirm the new price below.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Add Mid-Shift Price Change',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Confirm Premium Mid-Shift Price',exact:true})).toBeEnabled();
+  page.on('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Confirm Premium Mid-Shift Price',exact:true}).click();
+  await expect.poll(()=>!!app.getState().reports[f.key].midShiftPriceChanges[0].confirmedAt).toBe(true);
+  assert.deepEqual(app.getState().reports[f.key].pumpRows,closings);
+  assert.equal(app.getState().reports[f.key].cashCountConfirmed,true);
+  assert.equal(Number(app.getState().reports[f.key].actualCashCounted),1000);
+  assert.equal(Number(app.getState().priceBook.Liloan[report.date].Premium),69);
+  assert.deepEqual(app.errors,[]);
+ }finally{await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}
+});
+
 test('built manual Fuel Redemption is explicitly pesos and saves the same peso deduction; automatic redemption stays read-only',async()=>{
  const server=await preview({preview:{host:'127.0.0.1',port:0,strictPort:false}}),browser=await chromium.launch({channel:'msedge',headless:true});
  try{for(const automatic of [false,true]){

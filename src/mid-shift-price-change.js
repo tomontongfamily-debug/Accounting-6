@@ -120,7 +120,11 @@ export function patchMidShiftChange(report, id, key, value) {
   return {
     ...report,
     midShiftPriceChanges: (report.midShiftPriceChanges || []).map((change) =>
-      change.id === id ? { ...change, [key]: value, confirmedAt: "" } : change
+      change.id === id
+        ? key === 'product' && change.product !== value
+          ? { ...change, product: value, newPrice: '', readings: {}, readingPhotos: {}, confirmedAt: '' }
+          : { ...change, [key]: value, confirmedAt: "" }
+        : change
     ),
   };
 }
