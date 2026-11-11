@@ -40,7 +40,7 @@ export async function demoApi(path,body={},options) {
 export async function savePumpReading(report,row,options) {
   return demoApi('pump-reading',{reportKey:keyOf(report),row,revision:row.readingRevision||0},options);
 }
-export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepare,opening=false,recognize=detect}) {
+export function PhotoReading({row,report,onConfirm,locked,onBusy,onCameraBusy,change,onPrepare,opening=false,recognize=detect}) {
   const phoneView=usePhoneView();
   const format=totalizerFormatForStation(report.branch);
   const [photo,setPhoto]=useState(row.photo_path||'');const [detected,setDetected]=useState(row.ocr_detected_reading??null);
@@ -75,6 +75,7 @@ export function PhotoReading({row,report,onConfirm,locked,onBusy,change,onPrepar
   useEffect(()=>{if(camera&&video.current)video.current.srcObject=stream.current;},[camera]);
   const revision=useRef(row.readingRevision||0);
   useEffect(()=>{onBusy?.(row.id,busy||camera||openingCamera||!!retryCapture,uploading||camera||openingCamera,busy||camera||openingCamera);return()=>onBusy?.(row.id,false,false,false);},[busy,uploading,camera,openingCamera,retryCapture,onBusy,row.id]);
+  useEffect(()=>{onCameraBusy?.(row.id,camera||openingCamera);return()=>onCameraBusy?.(row.id,false);},[camera,openingCamera,onCameraBusy,row.id]);
   useEffect(()=>{
     if(!busy)return;
     const started=Date.now();setElapsed(0);
@@ -319,14 +320,17 @@ export function PumpPhotoWorkflow({report,onReading,onBusy}) {
     {/* Keep cards mounted so changing pumps cannot discard background OCR. */}
     {groups.map(p=><div key={p} className="reading-grid" hidden={p!==pump} style={p!==pump?{display:'none'}:undefined}>{report.pumpRows.filter(r=>r.pump===p).map(row=><PhotoReading key={keyOf(report)+'__'+row.id} row={row} report={report} opening={opening} locked={report.confirmed} onConfirm={onReading} onBusy={onPumpBusy}/>)}</div>)}</section>;
 }
-export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}) {
+export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare,recognize}) {
   const rows=report.pumpRows.filter(row=>row.product===change.product);
   const photoRow=row=>midShiftPhotoRow(change,row,report),complete=row=>midShiftReadingComplete(report,change,row);
   const manualScope=matchesTemporaryPriceGrant(report,change);
   const [selected,setSelected]=useState(()=>(rows.find(row=>!complete(row))||rows[0])?.id);
   const [capturingRows,setCapturingRows]=useState({});
   const [workingRows,setWorkingRows]=useState({});
-  const onPhotoBusy=useCallback((id,busy,capturing=busy,working=busy)=>{setCapturingRows(previous=>({...previous,[id]:capturing}));setWorkingRows(previous=>({...previous,[id]:working}));onBusy?.(change.id+':'+id,busy);},[onBusy,change.id]);
+  const onPhotoBusy=useCallback((id,busy,_capturing=busy,working=busy)=>{setWorkingRows(previous=>({...previous,[id]:working}));onBusy?.(change.id+':'+id,busy);},[onBusy,change.id]);
+  // Cards stay mounted below. Only an open camera needs to hold navigation;
+  // uploading, recognition and save retries belong to their original nozzle.
+  const onCameraBusy=useCallback((id,open)=>setCapturingRows(previous=>({...previous,[id]:open})),[]);
   const capturing=Object.values(capturingRows).some(Boolean);
   const current=rows.find(row=>row.id===selected)||rows[0],index=rows.indexOf(current);
   const done=rows.filter(complete).length;
@@ -343,8 +347,8 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare}
   }
   return <div className="midshift-photo-readings"><p><strong>{done} / {rows.length} price-change {manualScope?'readings':'photos'} confirmed</strong></p><p>{manualScope?`For this Barili Shift 1 ${change.product} change, use temporary manual input below if the photo step cannot finish. Enter the totalizer reading at ${change.effectiveTime}. Shift closing readings are separate.`:'Photograph each affected nozzle at the moment the price changes. Check the detected number and confirm it. To use an existing photo, choose the original photo taken at the price-change time.'}</p>{!report.confirmed&&<ReaderPreparation/>}
     <div className="pump-tabs" role="group" aria-label="Price-change nozzles">{rows.map(row=><button key={row.id} type="button" disabled={capturing} aria-pressed={row.id===current?.id} className={row.id===current?.id?'primary':'secondary'} onClick={()=>setSelected(row.id)}>{row.pump} · {row.nozzle}{complete(row)?' · ✓':''}</button>)}</div>
-    <p role="status">{done===rows.length?'All price-change readings saved. The manager can now confirm this price change.':`Nozzle ${index+1} of ${rows.length} · ${current?.pump} · ${current?.nozzle}. You can photograph the next nozzle while automatic reading finishes.`}</p>
-    {rows.map(row=><div key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} hidden={row.id!==current?.id} style={row.id!==current?.id?{display:'none'}:undefined}>{manualScope&&<TemporaryPriceReading row={photoRow(row)} report={report} change={change} onSaved={save} onBusy={onPhotoBusy} disabled={!!workingRows[row.id]}/>}{!photoRow(row).temporaryManualConfirmed&&<PhotoReading row={photoRow(row)} report={report} change={change} onBusy={onPhotoBusy} onPrepare={onPrepare} locked={report.confirmed || !change.effectiveTime} onConfirm={save}/>}</div>)}
+    <p role="status">{done===rows.length?'All price-change readings saved. The manager can now confirm this price change.':`Nozzle ${index+1} of ${rows.length} · ${current?.pump} · ${current?.nozzle}. You can photograph the next nozzle while this photo saves or automatic reading finishes. Keep this page open until all readings are saved and confirmed.`}</p>
+    {rows.map(row=><div key={change.id+'-'+change.product+'-'+change.effectiveTime+'-'+midShiftPumpKey(row)} hidden={row.id!==current?.id} style={row.id!==current?.id?{display:'none'}:undefined}>{manualScope&&<TemporaryPriceReading row={photoRow(row)} report={report} change={change} onSaved={save} onBusy={onPhotoBusy} disabled={!!workingRows[row.id]}/>}{!photoRow(row).temporaryManualConfirmed&&<PhotoReading row={photoRow(row)} report={report} change={change} onBusy={onPhotoBusy} onCameraBusy={onCameraBusy} onPrepare={onPrepare} recognize={recognize} locked={report.confirmed || !change.effectiveTime} onConfirm={save}/>}</div>)}
     <div className="demo-actions"><button type="button" className="secondary" disabled={capturing||index<=0} onClick={()=>setSelected(rows[index-1].id)}>Previous nozzle</button><button type="button" className="primary" disabled={capturing||index>=rows.length-1} onClick={()=>setSelected(rows[index+1].id)}>Next nozzle</button></div>
   </div>;
 }
