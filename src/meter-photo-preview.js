@@ -43,14 +43,15 @@ async function preparePreview(photo,record){
   }
   finally{delete record.image;}
 }
-export function useMeterPhotoPreview(photo){
+export function useMeterPhotoPreview(photo,{fitDigits=true}={}){
   const [preview,setPreview]=useState({src:'',fitted:false});
   useEffect(()=>{
     let active=true;if(!photo)return;
+    if(!fitDigits){setPreview({src:photo,fitted:false});return;}
     const record=recordFor(photo);setPreview(record.value||{src:'',fitted:false});
     record.promise ||= preparePreview(photo,record).then(value=>{record.value=value;return value;});
     record.promise.then(value=>{if(active)setPreview(value);});
     return()=>{active=false;};
-  },[photo]);
+  },[photo,fitDigits]);
   return preview;
 }

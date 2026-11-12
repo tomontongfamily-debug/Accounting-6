@@ -1,9 +1,9 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import {useMeterPhotoPreview} from './meter-photo-preview.js';
 
-export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCancel,onConfirm}){
+export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCancel,onConfirm,manual=false,busy=false,error=''}){
   const dialog=useRef(null),cancel=useRef(null),title=useId(),description=useId();
-  const preview=useMeterPhotoPreview(photo),[photoReady,setPhotoReady]=useState(false),[photoFailed,setPhotoFailed]=useState(false);
+  const preview=useMeterPhotoPreview(photo,{fitDigits:!manual}),[photoReady,setPhotoReady]=useState(false),[photoFailed,setPhotoFailed]=useState(false);
   const [secondsRemaining,setSecondsRemaining]=useState(3);
   useEffect(()=>{
     setSecondsRemaining(3);
@@ -23,7 +23,7 @@ export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCan
     return()=>{if(element.open)element.close();};
   },[]);
   return <dialog ref={dialog} className="reading-final-confirmation" aria-labelledby={title} aria-describedby={description}
-    onCancel={event=>{event.preventDefault();onCancel();}}>
+    onCancel={event=>{event.preventDefault();if(!busy)onCancel();}}>
     <h2 id={title}>Are you really sure?</h2>
     <p id={description}>Compare the photo with the number you entered. Check every digit and the decimal point.</p>
     <div className="reading-final-comparison">
@@ -35,10 +35,11 @@ export function ReadingFinalConfirmation({reading,photo,pump,shift,warning,onCan
     {photoFailed&&<p className="warning-box">The photo could not be displayed. Cancel and check the photo before confirming.</p>}
     <p className="reading-final-context"><strong>{pump}</strong><br/>{shift}</p>
     {warning&&<p className="warning-box">{warning}<br/>Admin will see this warning.</p>}
+    {error&&<p className="error" role="alert">{error}</p>}
     <div className="reading-final-actions">
-      <button ref={cancel} type="button" className="reading-final-cancel" onClick={onCancel}>Cancel and double-check</button>
+      <button ref={cancel} type="button" className="reading-final-cancel" disabled={busy} onClick={onCancel}>Cancel and double-check</button>
       {photoReady&&!photoFailed&&secondsRemaining===0?
-        <button type="button" className="reading-final-sure" onClick={onConfirm}>I'm really sure</button>:
+        <button type="button" className="reading-final-sure" disabled={busy} onClick={onConfirm}>{busy?'Saving reading…':"I'm really sure"}</button>:
         <div className="reading-final-countdown" role="status">{photoReady&&!photoFailed?`Review the photo · ${secondsRemaining} ${secondsRemaining===1?'second':'seconds'}`:'Waiting for the photo…'}</div>}
     </div>
   </dialog>;

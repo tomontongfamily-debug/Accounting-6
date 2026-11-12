@@ -1,8 +1,8 @@
 import {useEffect,useRef,useState} from 'react';
 import {useMeterPhotoPreview} from './meter-photo-preview.js';
 
-export function MeterReadingEditor({photo,label,value,onChange}){
-  const {src:crop,fitted}=useMeterPhotoPreview(photo);
+export function MeterReadingEditor({photo,label,value,onChange,manual=false}){
+  const {src:crop,fitted}=useMeterPhotoPreview(photo,{fitDigits:!manual});
   const [zoom,setZoom]=useState(1),[full,setFull]=useState(false);
   const editor=useRef(null),input=useRef(null),viewport=useRef(null);
   useEffect(()=>{
@@ -32,6 +32,6 @@ export function MeterReadingEditor({photo,label,value,onChange}){
       <button type="button" onClick={()=>{setFull(true);setZoom(1);}}>Full photo</button>
     </div>
     <small>{fitted&&!full?'All detected digits and the decimal point are shown.':'Full photo shown. Zoom and slide to inspect the digits.'}</small>
-    <label>Corrected reading<input ref={input} aria-label={label} inputMode="decimal" autoComplete="off" autoCorrect="off" spellCheck={false} value={value} onChange={event=>onChange(event.target.value)}/></label>
+    <label>{manual?'Reading shown in photo':'Corrected reading'}<input ref={input} aria-label={label} inputMode="decimal" autoComplete="off" autoCorrect="off" spellCheck={false} value={value} onChange={event=>onChange(event.target.value)}/></label>
   </div>;
 }

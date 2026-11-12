@@ -9,7 +9,7 @@ import {ALL_STATIONS} from './station-rollout.js';
 window.__fueltechPilotConfig={mode:'shadow',start_date:'2026-11-06'};
 const cards=document.getElementById('cards'),evidence=document.getElementById('evidence');
 const root=createRoot(cards),delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let report,change,generation=0,releaseUpload,failures=0,firstId,requests=0;
+let report,change,generation=0,releaseUpload,failures=0,firstId,requests=0,readerCalls=0;
 const audit=[],pending=new Map();
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 const show=message=>{evidence.textContent=[...audit,message].join('\n');};
@@ -24,7 +24,7 @@ function setup(branch,product){
   report.midShiftPriceChanges=[change];
   render();
 }
-function render(){root.render(<div data-fixture-case={generation}><MidShiftPhotoReadings key={generation} report={structuredClone(report)} change={structuredClone(change)} recognize={async()=>{await delay(100);return {reading:10010.12,attempt:{status:'detected',version:'SIMULATED-reader',durationMs:100}};}}
+function render(){root.render(<div data-fixture-case={generation}><MidShiftPhotoReadings key={generation} report={structuredClone(report)} change={structuredClone(change)} recognize={async()=>{readerCalls++;throw Error('Manual mid-shift must not invoke OCR');}}
   onReading={async(current,next,savedPhoto,options)=>{
     const saved=savedPhoto||await demoApi('midshift-reading',{reportKey:`${report.branch}__${report.date}__${report.shiftId}`,changeId:current.id,row:next,revision:next.readingRevision},options);
     render();return midShiftPhotoRow(saved.report.midShiftPriceChanges[0],next,saved.report);
@@ -43,8 +43,8 @@ window.fetch=async(url,options)=>{
   check(Number(input.revision)===Number(previous.readingRevision||0),'Nozzle revision was overwritten.');
   if(route==='/api/demo/photo'){
     pending.set(row.id,mutationId);
-    change.readingPhotos[key]={photo_path:input.data,readingRevision:Number(previous.readingRevision||0)+1,readingConfirmed:false,
-      ocr_detected_reading:input.readyOcr?.reading??null,ocr_result:input.readyOcr?.attempt||{status:'pending'}};
+    check(input.readingMethod==='manual'&&!input.readyOcr,'A manual photo must not contain an automatic reading.');
+    change.readingPhotos[key]={photo_path:input.data,readingRevision:Number(previous.readingRevision||0)+1,readingConfirmed:false,readingMethod:'manual',ocr_detected_reading:null};
     change.readings[key]='';
   }else{
     check(route==='/api/demo/midshift-reading','Unexpected mutation blocked.');
@@ -88,13 +88,18 @@ async function run(){
     button(active(),'Retry saving photo').click();
     for(const row of rows){
       const tab=[...cards.querySelectorAll('.pump-tabs button')].find(node=>node.textContent.startsWith(`${row.pump} · ${row.nozzle}`));tab.click();
-      await until(()=>active()?.dataset.pumpRowId===row.id&&button(active(),'Yes, confirm reading'));
-      button(active(),'Yes, confirm reading').click();await until(()=>cards.querySelector('dialog[open] .reading-final-sure'));
+      await until(()=>active()?.dataset.pumpRowId===row.id&&active().querySelector('input[inputmode="decimal"]'));
+      const input=active().querySelector('input[inputmode="decimal"]');
+      check(input.value==='','The photo must not prefill a reading.');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'10010.12');input.dispatchEvent(new Event('input',{bubbles:true}));
+      await until(()=>button(active(),'Review reading')&&!button(active(),'Review reading').disabled);
+      button(active(),'Review reading').click();await until(()=>cards.querySelector('dialog[open] .reading-final-sure'));
       cards.querySelector('dialog[open] .reading-final-sure').click();await until(()=>midShiftReadingComplete(report,change,row));
     }
     check(JSON.stringify(report.pumpRows)===closing,'Closing readings changed.');
     check(pending.size===rows.length,'Each nozzle must own a saved photo.');
-    audit.push(`PASS · interrupted upload retried / ${rows.length} of ${rows.length} confirmed`,'PASS · closing readings unchanged / no online writes');
+    check(readerCalls===0,'Manual mid-shift invoked automatic reading.');
+    audit.push(`PASS · interrupted upload retried / ${rows.length} of ${rows.length} confirmed`,'PASS · manual typing / photo review / zero OCR calls','PASS · closing readings unchanged / no online writes');
     show(`PASS · Android check complete · ${requests} simulated requests`);
     window.scrollTo(0,0);
   }catch(error){show('FAIL · '+error.message);window.scrollTo(0,0);}

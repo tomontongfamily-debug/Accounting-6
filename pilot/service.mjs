@@ -484,10 +484,11 @@ function validatePriceReadingOrder(report,change) {
       const value=input.row.readingConfirmed?amount(input.row.closing):'';
       if(input.row.readingConfirmed&&(value<Number(row.opening)||(row.closingEntered&&value>Number(row.closing)))) reject('Price-change reading must be between opening and the confirmed closing.');
       const ocr=mergeOcrEvidence(previous,input.row);
-      const evidence={photo_path:input.row.photo_path,readingConfirmed:!!input.row.readingConfirmed,readingRevision:Number(previous?.readingRevision||0)+1,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null&&value!==Number(ocr.ocr_detected_reading)};
+      const manual=photo.readingMethod==='manual'||input.row.readingMethod==='manual';
+      const evidence={photo_path:input.row.photo_path,readingConfirmed:!!input.row.readingConfirmed,readingRevision:Number(previous?.readingRevision||0)+1,...ocr,ocr_was_edited:ocr.ocr_detected_reading!=null&&value!==Number(ocr.ocr_detected_reading),...(manual?{readingMethod:'manual'}:{})};
       change.readingPhotos={...change.readingPhotos,[key]:evidence};change.readings={...change.readings,[key]:value};change.confirmedAt='';change.photoRequired=true;
       r.cashReviewState='';r.recountRequired=false;
-      audit('price-change-reading-saved',session,{reportKey:keyOf(r),changeId:change.id,rowId:row.id,photo_path:evidence.photo_path,final:value,ocr:evidence.ocr_detected_reading,ocr_result:evidence.ocr_result});
+      audit('price-change-reading-saved',session,{reportKey:keyOf(r),changeId:change.id,rowId:row.id,photo_path:evidence.photo_path,final:value,ocr:evidence.ocr_detected_reading,ocr_result:evidence.ocr_result,...(manual?{readingMethod:'manual'}:{})});
       return send(storeReport(r,session,'price-change-photo-saved'));
     }
     if(route==='/api/demo/photo') {
@@ -497,6 +498,8 @@ function validatePriceReadingOrder(report,change) {
       const photoRow=r.pumpRows.find(row=>input.changeId?midShiftPumpKey(row)===input.pumpKey:row.id===input.rowId);
       if(!photoRow) reject('Unknown nozzle.');
       const change=input.changeId?r.midShiftPriceChanges?.find(c=>c.id===input.changeId):null;
+      const manual=!!change&&input.readingMethod==='manual';
+      if(input.readingMethod!==undefined&&(!manual||!input.replaceReading))reject('Manual photo entry is only available for mid-shift price readings.');
       if(input.changeId&&(!change||!change.effectiveTime||photoRow.product!==change.product)) reject('Save the product and price-change time before taking photos.');
       if(change&&((input.effectiveTime!==undefined&&input.effectiveTime!==change.effectiveTime)||(input.product!==undefined&&input.product!==change.product)))reject('The price-change details changed. Refresh before taking another photo.',409);
       if(change&&session.role==='Cashier'&&(change.confirmedAt||Number(change.newPrice)<=0||input.effectiveTime!==change.effectiveTime||input.product!==change.product))reject('The manager must open an unconfirmed price change before cashier photos can be saved.',423);
@@ -507,17 +510,18 @@ function validatePriceReadingOrder(report,change) {
       const image=Buffer.from(input.data.split(',')[1],'base64');
       if(image.length>2*1024*1024 || image[0]!==255 || image[1]!==216) reject('Invalid or oversized photo.');
       const id=mutationId, photoPath='/api/pilot/photo?id='+id;
+      if(manual&&input.readyOcr!==undefined)reject('Manual price-change photos do not accept automatic readings.');
       const readyOcr=input.readyOcr===undefined?null:completedPhotoOcrEvidence(photoPath,input.readyOcr);
       if(input.readyOcr!==undefined&&(!input.replaceReading||!readyOcr))reject('Invalid completed automatic reading evidence.');
       const objectPath=database.mode+'/'+r.branch+'/'+id+'.jpg';
       await uploadPhoto(objectPath,image,{reportKey:keyOf(r),rowId:photoRow.id,branch:r.branch,
         readingRevision:Number(previous?.readingRevision||0),uploadedAt:stamp(),
         ...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})});
-      database.photos[photoPath]={reportKey:input.reportKey,rowId:photoRow.id,branch:r.branch,file:objectPath,...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {})};
+      database.photos[photoPath]={reportKey:input.reportKey,rowId:photoRow.id,branch:r.branch,file:objectPath,...(change?{changeId:change.id,product:change.product,effectiveTime:change.effectiveTime}: {}),...(manual?{readingMethod:'manual'}:{})};
       let readingRevision;
       if(input.replaceReading){
         readingRevision=Number(previous?.readingRevision||0)+1;
-        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,ocr_result:pendingOcrAttempt(),...(readyOcr||{}),ocr_was_edited:false,readingRevision};
+        const cleared={photo_path:photoPath,readingConfirmed:false,closingEntered:false,closing:'',ocr_detected_reading:null,...(manual?{readingMethod:'manual'}:{ocr_result:pendingOcrAttempt(),...(readyOcr||{})}),ocr_was_edited:false,readingRevision};
         if(change){
           const pumpKey=midShiftPumpKey(photoRow);
           change.readingPhotos={...change.readingPhotos,[pumpKey]:cleared};change.readings={...change.readings,[pumpKey]:''};change.confirmedAt='';change.photoRequired=true;
