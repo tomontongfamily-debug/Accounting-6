@@ -8,7 +8,7 @@ export { usePhoneView } from './phone-view.js';
 
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 
-export function MobilePumpCapture({branch,reports,initialDate,logout}) {
+export function MobilePumpCapture({branch,reports,initialDate,logout,correctionPanel}) {
   useEffect(()=>startAutomaticReaderPreparation(),[]);
   const choices=Object.values(reports).filter(r=>r.branch===branch&&(r.baselineReport||r.date>=window.__fueltechPilotConfig.start_date)&&(!r.baselineMissing||r.baselineReport)).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));
   const approvedCorrections=choices.filter(r=>!r.confirmed&&r.correctionRequest?.status==='approved'&&Date.parse(r.correctionRequest.expiresAt||'')>Date.now());
@@ -70,6 +70,7 @@ export function MobilePumpCapture({branch,reports,initialDate,logout}) {
   const done=report?.pumpRows.filter(readingComplete).length||0;
   return <main className="app mobile-pump-app"><div className="container">
     <header className="phone-pump-header"><div><small>FUELTECH · CASHIER</small><h1>Pump photos</h1><strong>{branch}</strong></div><button type="button" className="secondary" disabled={busy} onClick={logout}>Log out</button></header>
+    <fieldset className="phone-correction-request" disabled={busy}>{correctionPanel}</fieldset>
     {approvedCorrections.map(r=><div className="warning-box" key={keyOf(r)}><strong>Approved correction · {r.date} · {r.shiftId.replace('shift-','Shift ')}</strong><p>Replace the incorrect pump photo and confirm its reading. Finish the report on the desktop.</p><button type="button" className="secondary" disabled={busy} onClick={()=>setSelected(keyOf(r))}>Open approved correction</button></div>)}
     <label className="phone-shift-picker">Shift to photograph<select aria-label="Shift to photograph" value={selected} disabled={busy} onChange={e=>setSelected(e.target.value)}>{choices.map(r=><option key={keyOf(r)} value={keyOf(r)}>{r.baselineReport?'Opening Setup · ':''}{r.date} · {r.shiftId.replace('shift-','Shift ')}{r.confirmed?' · Submitted':approvedCorrections.includes(r)?' · Approved correction':''}</option>)}</select></label>
     <p>{report?.baselineReport?'Take the starting pump photos here. Enter tank stock and Coke inventory, then confirm Opening Setup on the desktop.':'Take the pump photos here. Finish cash count and the rest of the report on the desktop.'}</p>

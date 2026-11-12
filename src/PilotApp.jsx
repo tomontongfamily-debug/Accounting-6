@@ -16,6 +16,7 @@ import { PosRedemptions } from './pos-redemptions.jsx';
 import {fuelLeakLossSummary, fuelLeakSalesForLoss, pumpLeakSales, pumpLeakLiters, pumpSaleLiters, returnedCalibrationSummary, calibrationAmount, calibrationPesoEntry} from './fuel-leak-loss.js';
 import AdminReportAlerts from './admin-report-alerts.jsx';
 import { CorrectionDecisionActions } from './correction-decision-actions.jsx';
+import { DateCorrectionRequest } from './date-correction-request.jsx';
 import { readStationSession } from './station-routing.js';
 import {ManagerPricePhotoTasks} from './manager-price-photo-tasks.jsx';
 import { loadStorePages } from './store-pages.js';
@@ -3872,12 +3873,12 @@ export default function App() {
   async function requestDateCorrection() {
     if (!correctionDraft.date || !correctionDraft.shiftId) {
       setSyncMessage("Please select the report date and shift for correction.");
-      return;
+      return {ok:false,error:"Please select the report date and shift for correction."};
     }
 
     if (!correctionDraft.reason.trim()) {
       setSyncMessage("Please enter the reason for the correction request.");
-      return;
+      return {ok:false,error:"Please enter the reason for the correction request."};
     }
 
     const targetReport = reportForTarget(branch, correctionDraft.date, correctionDraft.shiftId);
@@ -3898,16 +3899,19 @@ export default function App() {
     const requestedShiftId = correctionDraft.shiftId;
     if (!navigator.onLine) {
       setSyncMessage("Connect to the internet before sending a correction request.");
-      return;
+      return {ok:false,error:"Connect to the internet before sending a correction request."};
     }
 
     setIsSavingOnline(true);
     setSyncMessage("Sending correction request to admin...");
     try {
       await pendingSaveRef.current.catch(() => {});
+      const {report:savedTarget}=await demoApi('pump-report',{reportKey:reportKey(branch,requestedDate,requestedShiftId)});
+      if(!savedTarget)throw new Error('The saved report could not be verified. Refresh and try again.');
+      const savedRequest=correctionRequest(savedTarget);
       const result = await saveOnlineReport(normalizeExistingReport({
-        ...targetReport,
-        correctionRequest: baseRequest,
+        ...savedTarget,
+        correctionRequest: {...baseRequest,id:savedRequest.status==='pending'&&savedRequest.reason===baseRequest.reason?savedRequest.id||baseRequest.id:baseRequest.id},
       }), sessionToken, "request-correction");
       if (result.report) {
         setStore((old) => ({
@@ -3919,9 +3923,14 @@ export default function App() {
         }));
       }
       setCorrectionDraft((old) => ({ ...old, reason: "" }));
-      setSyncMessage(`Correction request saved online for ${branch}, ${requestedDate}, ${shiftById(requestedShiftId).label}.`);
+      const message=isActiveCorrectionApproval(result.report)
+        ?`Admin already approved ${branch}, ${requestedDate}, ${shiftById(requestedShiftId).label}. Open the approved correction to continue.`
+        :`Correction request saved online for ${branch}, ${requestedDate}, ${shiftById(requestedShiftId).label}. Waiting for Admin approval.`;
+      setSyncMessage(message);
+      return {ok:true,message};
     } catch (error) {
       setSyncMessage(error.message || "Unable to send the correction request.");
+      return {ok:false,error:error.message||"Unable to send the correction request."};
     } finally {
       setIsSavingOnline(false);
     }
@@ -4327,8 +4336,11 @@ export default function App() {
     }
   }
 
+  const dateCorrectionPanel=role==='Cashier'&&accessAllowed&&initialLoadFinished&&!initialLoadError
+    ?<DateCorrectionRequest branch={branch} draft={correctionDraft} setDraft={setCorrectionDraft} shifts={SHIFT_OPTIONS} onRequest={requestDateCorrection} requestReport={correctionCardReport} disabled={isSavingOnline}/>:null;
+
   if (phoneView && role === "Cashier" && accessAllowed && initialLoadFinished && !initialLoadError && (branch==='Liloan'||(Date.now()>=Date.parse(stationStartDate(window.__fueltechPilotConfig,branch)+'T04:00:00+08:00')&&openingReady(store.reports[reportKey(branch,stationOpeningSlot(window.__fueltechPilotConfig,branch).date,'shift-3')],window.__fueltechPilotConfig)))) {
-    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} />;
+    return <MobilePumpCapture branch={branch} reports={store.reports} initialDate={activeDate} logout={logout} correctionPanel={dateCorrectionPanel} />;
   }
 
   if (!role) {
@@ -4428,6 +4440,7 @@ export default function App() {
           )
         ) : (
           <>
+            {dateCorrectionPanel}
             {role === "Cashier" && (cashierInitialLoadPending
               ? <Section title="Loading Saved Reports"><p className="neutral">Checking confirmed shifts and saved drafts online...</p></Section>
               : cashierInitialLoadFailed
@@ -4438,7 +4451,7 @@ export default function App() {
                 </Section>
               : cashierReportOpen
               ? <CashierPage onSaveDelivery={saveTankDelivery} isSavingDelivery={isSavingDelivery} onReading={updatePumpReading} onDemoSaved={acceptDemoReport} onReloadCash={reloadCashShift} onRefreshVouchers={refreshShiftVouchers} report={activeReport} result={activeResult} warnings={activeWarnings} criticalWarnings={activeCriticalWarnings} missingPreviousShift={activeMissingPreviousShift} onGoToMissingShift={goToMissingShift} editingConflict={editingConflict} isSubmittingReport={isSubmittingReport} activeEditors={activeEditors} currentShift={{ date: activeDate, label: displayShiftLabel(branch, activeDate, activeShiftId) }} patchReport={patchReport} updateRows={updateRows} addRow={addRow} removeRow={removeRow} confirmStartingOpening={confirmStartingOpening} confirmReport={confirmReport} onBackToShifts={() => { setCashierReportOpen(false); setCashierReportDateOverride(""); }} />
-              : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionDraft={correctionDraft} setCorrectionDraft={setCorrectionDraft} requestDateCorrection={requestDateCorrection} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
+              : <CashierShiftDashboard branch={branch} date={activeDate} reports={store.reports} openingDate={stationOpeningSlot(window.__fueltechPilotConfig,branch).date} openingShiftId={GLOBAL_OPENING_SHIFT_ID} onOpenOpening={(date, shiftId) => { setCashierReportDateOverride(date); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} onSelect={(shiftId) => { setCashierReportDateOverride(activeDate); setSelectedShiftId(shiftId); setCashierReportOpen(true); }} correctionReport={correctionCardReport} onOpenCorrection={(report) => { setCashierReportDateOverride(report.date); setSelectedShiftId(report.shiftId); setCashierReportOpen(true); }} />)}
             {role === "Manager" && branch === "Liloan" && <AdminReportAlerts sessionToken={sessionToken} manager />}
             {role === "Manager" && <ManagerPage onPricePhotoActivity={onPricePhotoActivity} pricePhotoReports={store.reports} pricePhotoFocus={pricePhotoFocus} onOpenPriceTask={task=>{setSelectedDate(task.date);setSelectedShiftId(task.shiftId);setPricePhotoFocus({...task,requestId:uid()});}} branch={branch} selectedDate={selectedDate} setSelectedDate={setSelectedDate} prices={displayedManagerPrices} pricingCoverage={pricingCoverage} setPricingCoverage={setPricingCoverage} pricingShiftId={pricingShiftId} setPricingShiftId={setPricingShiftId} report={activeReport} result={activeResult} patchEffectivePrice={patchEffectivePrice} confirmDailyPrices={confirmDailyPrices} patchDeposit={patchDeposit} addDeposit={addDeposit} requestDepositRemoval={requestDepositRemoval} depositDate={depositDate} setDepositDate={setDepositDate} depositSalesDate={depositSalesDate} setDepositSalesDate={setDepositSalesDate} depositHistoryFrom={depositHistoryFrom} setDepositHistoryFrom={setDepositHistoryFrom} depositHistoryTo={depositHistoryTo} setDepositHistoryTo={setDepositHistoryTo} depositCoverage={depositCoverage} setDepositCoverage={setDepositCoverage} depositDraft={depositDraft} setDepositDraft={setDepositDraft} depositShiftIds={depositShiftIds} managerDepositRows={managerDepositRows} saveDailyBankDeposit={saveDailyBankDeposit} requestDepositRemovalFromReport={requestDepositRemovalFromReport} addMidShiftPriceChange={addMidShiftPriceChange} patchMidShiftPriceChange={patchMidShiftPriceChange} patchMidShiftPriceReading={patchMidShiftPriceReading} prepareMidShiftPhotos={prepareMidShiftPhotos} confirmMidShiftPriceChange={confirmMidShiftPriceChange} removeMidShiftPriceChange={removeMidShiftPriceChange} />}
             {role === "Approver" && (!initialLoadFinished
@@ -4566,7 +4579,7 @@ function ReportSubmitErrorDialog({ message, onClose, onReload }) {
   );
 }
 
-function CashierShiftDashboard({ branch, date, reports, openingDate, openingShiftId, onOpenOpening, onSelect, correctionDraft, setCorrectionDraft, requestDateCorrection, correctionReport, onOpenCorrection }) {
+function CashierShiftDashboard({ branch, date, reports, openingDate, openingShiftId, onOpenOpening, onSelect, correctionReport, onOpenCorrection }) {
   const shifts = SHIFT_OPTIONS.map((shift) => ({ shift, report: reports[reportKey(branch, date, shift.id)] }));
   const openingReport = reports[reportKey(branch, openingDate, openingShiftId)];
   const openingComplete = openingReady(openingReport, window.__fueltechPilotConfig);
@@ -4613,16 +4626,7 @@ function CashierShiftDashboard({ branch, date, reports, openingDate, openingShif
           );
         })}
       </div>
-      <details className="cashier-dashboard-correction">
-        <summary>Request Date Correction</summary>
-        <p>Use this only when a saved date or shift needs admin approval before it can be corrected.</p>
-        <div className="grid four">
-          <Field label="Report Date"><TextInput type="date" value={correctionDraft.date} onChange={(value) => setCorrectionDraft((old) => ({ ...old, date: value }))} /></Field>
-          <Field label="Shift"><SelectInput value={correctionDraft.shiftId} onChange={(value) => setCorrectionDraft((old) => ({ ...old, shiftId: value }))} options={SHIFT_OPTIONS.map((shift) => ({ value: shift.id, label: shift.label }))} /></Field>
-          <Field label="Reason"><TextInput value={correctionDraft.reason} onChange={(value) => setCorrectionDraft((old) => ({ ...old, reason: value }))} /></Field>
-          <button type="button" className="secondary" onClick={requestDateCorrection}>Send Request to Admin</button>
-        </div>
-      </details>
+
       {correctionReport && (
         <div className="cashier-shift-grid">
           <button type="button" className={`cashier-shift-card ${correctionApproved ? "next" : ""}`} onClick={() => onOpenCorrection(correctionReport)} disabled={!correctionApproved}>

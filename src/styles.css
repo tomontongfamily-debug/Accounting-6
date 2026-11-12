@@ -3732,6 +3732,10 @@ tr:last-child td {
   padding: 16px;
 }
 
+.correction-request-fields {border:0;padding:0;margin:14px 0 0;min-width:0}
+.phone-correction-request {border:0;padding:0;margin:0;min-width:0}
+.correction-request-fields label {display:flex;flex-direction:column;gap:8px;font-weight:700;min-width:0}
+
 .cashier-dashboard-correction summary {
   cursor: pointer;
   font-weight: 900;
