@@ -3,13 +3,11 @@ import { demoApi, PumpPhotoWorkflow, MidShiftPhotoReadings, savePumpReading } fr
 import {midShiftPumpKey,midShiftPhotoRow,midShiftReadingComplete,pendingPricePhotoChanges} from './mid-shift-price-change.js';
 import { readingComplete } from './error-reduction.ts';
 import { mergePhoneReadings } from './phone-reading-sync.js';
-import {startAutomaticReaderPreparation} from './automatic-reader-preparation.js';
 export { usePhoneView } from './phone-view.js';
 
 const keyOf=r=>`${r.branch}__${r.date}__${r.shiftId}`;
 
 export function MobilePumpCapture({branch,reports,initialDate,logout,correctionPanel}) {
-  useEffect(()=>startAutomaticReaderPreparation(),[]);
   const choices=Object.values(reports).filter(r=>r.branch===branch&&(r.baselineReport||r.date>=window.__fueltechPilotConfig.start_date)&&(!r.baselineMissing||r.baselineReport)).sort((a,b)=>keyOf(b).localeCompare(keyOf(a)));
   const approvedCorrections=choices.filter(r=>!r.confirmed&&r.correctionRequest?.status==='approved'&&Date.parse(r.correctionRequest.expiresAt||'')>Date.now());
   const [selected,setSelected]=useState(()=>{

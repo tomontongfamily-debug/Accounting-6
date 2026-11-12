@@ -11,7 +11,7 @@ import {createReport,reportKey} from '../src/accounting-engine.js';
 import {midShiftPumpKey} from '../src/mid-shift-price-change.js';
 import {runAction} from '../pilot/service.mjs';
 
-test('Barili resumes the unfinished price nozzle, advances across all pumps, keeps background OCR and hands cashier photos to the manager',async t=>{
+test('Barili types mid-shift readings beside photos, retries uploads, advances across pumps and hands cashier evidence to the manager without OCR',async t=>{
  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-11-10T05:30:00Z')});
  const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -33,10 +33,11 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
  state.photos[firstPath]={reportKey:key,rowId:first.id,branch:'Barili',changeId:change.id,product:change.product,effectiveTime:change.effectiveTime};
  report.midShiftBasePrices={...prices};report.midShiftPriceChanges=[change,{id:'blank',product:'Premium',newPrice:0,effectiveTime:'',readings:{},readingPhotos:{}}];state.reports[key]=report;
  const later=createReport('Barili',report.date,prices,'shift-2');later.midShiftPriceChanges=[{id:'blank-next-shift',product:'Premium',newPrice:0,effectiveTime:'',readings:{},readingPhotos:{}}];state.reports[reportKey(later.branch,later.date,later.shiftId)]=later;
- const closingSnapshot=structuredClone(report.pumpRows),uploads=new Map(),errors=[],writes=[];let queue=Promise.resolve(),failUpload=true;
+ const closingSnapshot=structuredClone(report.pumpRows),uploads=new Map(),errors=[],writes=[],receipts=new Map();let queue=Promise.resolve(),failUpload=true,loseConfirmation=true;
  async function open(role,width){
   const context=await browser.newContext({viewport:{width,height:900},timezoneId:'Asia/Manila'});await context.addInitScript(pumpCameraBootstrap);
-  await context.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){};let calls=0;export async function detectTotalizerResult(){const call=++calls;if(call===1)await new Promise(resolve=>globalThis.releasePriceReader=resolve);const reading=call===2?null:10010;return {reading,attempt:{status:reading===null?'no-reading':'detected',version:'price-browser-fixture'}};}`}));
+  await context.route('**/src/totalizer-ocr.js*',route=>route.fulfill({contentType:'text/javascript',body:`export function subscribeTotalizerInvalidation(){return ()=>{};}export async function prepareTotalizer(){throw Error('Mid-shift must not prepare OCR');}export async function detectTotalizerResult(){throw Error('Mid-shift must not read the photo');}`}));
+  await context.route('**/src/totalizer-frame-client.js*',route=>route.fulfill({contentType:'text/javascript',body:`export async function analyzeTotalizerFrame(){throw Error('Manual mid-shift must show the original photo without analysis');}`}));
   await context.route('**/api/**',async route=>{
    const path=new URL(route.request().url()).pathname;let result,status=200;
    if(path==='/api/pilot/config')result=config;
@@ -45,7 +46,9 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
    else if(path==='/api/pilot/action'){
     const body=route.request().postDataJSON();writes.push({role,...body});
     if(failUpload&&body.route==='/api/demo/photo'&&body.input.rowId===premium[2].id){status=503;result={ok:false,error:'Fixture upload interruption'};}
-    else try{const out=await(queue=queue.catch(()=>{}).then(async()=>{const next=await runAction(state,{role,branch:'Barili'},body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(path,image)=>uploads.set(body.mutationId,image)});state=next.state;return next;}));result=out.result;}catch(error){status=error.status||400;result={ok:false,error:error.message};}
+    else try{const out=await(queue=queue.catch(()=>{}).then(async()=>{if(receipts.has(body.mutationId))return receipts.get(body.mutationId);const next=await runAction(state,{role,branch:'Barili'},body.route,body.input,{mutationId:body.mutationId,uploadPhoto:async(path,image)=>uploads.set(body.mutationId,image)});state=next.state;receipts.set(body.mutationId,next);return next;}));result=out.result;
+      if(loseConfirmation&&body.route==='/api/demo/midshift-reading'&&body.input.row?.readingConfirmed&&body.input.row?.id===premium[2].id){status=503;result={ok:false,error:'Fixture lost confirmation response. Retry the same confirmation.'};}
+    }catch(error){status=error.status||400;result={ok:false,error:error.message};}
    }else result={ok:true,enabled:false};
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(result)});
   });
@@ -74,24 +77,36 @@ test('Barili resumes the unfinished price nozzle, advances across all pumps, kee
   await capturePumpCamera(phone,active());
   await expect(phone.getByRole('button',{name:'Next nozzle',exact:true})).toBeEnabled({timeout:10000});
   await phone.getByRole('button',{name:'Next nozzle',exact:true}).click();await expect(active()).toHaveAttribute('data-pump-row-id',premium[2].id);
-  await phone.evaluate(()=>globalThis.releasePriceReader());
   await phone.getByRole('button',{name:'Previous nozzle',exact:true}).click();
-  await expect(active().getByRole('button',{name:'Yes, confirm reading',exact:true})).toBeVisible();await confirmPumpReading(active());
+  const typed=active().getByRole('textbox',{name:/price-change reading$/});
+  await expect(typed).toHaveValue('');await expect(active().getByRole('button',{name:'Review reading',exact:true})).toBeDisabled();
+  await typed.fill('9999');await expect(active().getByRole('button',{name:'Review reading',exact:true})).toBeDisabled();
+  await typed.fill('10021');await expect(active().getByRole('button',{name:'Review reading',exact:true})).toBeDisabled();
+  await typed.fill('10010');await active().getByRole('button',{name:'Review reading',exact:true}).click();
+  const review=active().getByRole('dialog',{name:'Are you really sure?',exact:true});await expect(review).toContainText('10010');await expect(review.getByRole('img')).toBeVisible();
+  await review.getByRole('button',{name:'Cancel and double-check',exact:true}).click();assert.ok(!state.reports[key].midShiftPriceChanges[0].readingPhotos[midShiftPumpKey(premium[1])].readingConfirmed);
+  await confirmPumpReading(active());
   await expect(active()).toHaveAttribute('data-pump-row-id',premium[2].id);
   await capturePumpCamera(phone,active());await expect(active().getByRole('button',{name:'Retry saving photo',exact:true})).toBeVisible();failUpload=false;await active().getByRole('button',{name:'Retry saving photo',exact:true}).click();
-  await active().getByRole('button',{name:'Enter number manually',exact:true}).click();await active().getByRole('textbox',{name:/price-change reading$/}).fill('10010');await confirmPumpReading(active());
+  await active().getByRole('textbox',{name:/price-change reading$/}).fill('10010');await confirmPumpReading(active());
+  const retryReview=phone.getByRole('dialog',{name:'Are you really sure?',exact:true});
+  await expect(retryReview.getByRole('alert')).toContainText('lost confirmation');loseConfirmation=false;
+  await retryReview.getByRole('button',{name:"I'm really sure",exact:true}).click();
   await expect(active()).toHaveAttribute('data-pump-row-id',premium[3].id);
   await phone.reload();await phone.getByLabel('Shift to photograph').selectOption(key);await expect(active()).toHaveAttribute('data-pump-row-id',premium[3].id);
-  // The first capture after reloading is the slow-reader fixture again.
-  for(const [index,row] of premium.slice(3).entries()){
+  for(const row of premium.slice(3)){
    await expect(active()).toHaveAttribute('data-pump-row-id',row.id);await capturePumpCamera(phone,active());
-   if(index===0){await expect(phone.getByRole('button',{name:'Next nozzle',exact:true})).toBeEnabled({timeout:10000});await phone.evaluate(()=>globalThis.releasePriceReader());}
-   await expect(active().getByRole('button',{name:/^(Yes, confirm reading|Enter number manually)$/})).toBeVisible({timeout:10000});
-   if(await active().getByRole('button',{name:'Enter number manually',exact:true}).count()){await active().getByRole('button',{name:'Enter number manually',exact:true}).click();await active().getByRole('textbox',{name:/price-change reading$/}).fill('10010');}
+   await expect(active().getByRole('textbox',{name:/price-change reading$/})).toHaveValue('');
+   await active().getByRole('textbox',{name:/price-change reading$/}).fill('10010');
    await confirmPumpReading(active());
   }
   await expect(phone.getByText(/^6 \/ 6 price-change (photos|readings) confirmed$/)).toBeVisible();
   assert.deepEqual(state.reports[key].pumpRows,closingSnapshot,'Price-change photos must leave every closing reading/photo intact');
+  assert.equal(await phone.getByRole('button',{name:'Retry automatic reading',exact:true}).count(),0);
+  assert.equal(writes.filter(write=>write.route==='/api/demo/midshift-reading'&&!write.input.row?.readingConfirmed).length,0,'Manual photos do not create extra OCR suggestion saves');
+  assert.ok(writes.filter(write=>write.route==='/api/demo/photo').every(write=>write.input.readingMethod==='manual'&&!write.input.readyOcr));
+  const confirmationRetries=writes.filter(write=>write.route==='/api/demo/midshift-reading'&&write.input.row?.id===premium[2].id&&write.input.row.readingConfirmed);
+  assert.ok(confirmationRetries.length>=2);assert.equal(new Set(confirmationRetries.map(write=>write.mutationId)).size,1,'A lost manual confirmation response retries the exact saved request');
   assert.ok(!state.reports[key].midShiftPriceChanges[0].confirmedAt,'A cashier cannot confirm the selling price');
   const attempts=writes.filter(write=>write.route==='/api/demo/photo'&&write.input.rowId===premium[2].id);assert.ok(attempts.length>=2);assert.equal(new Set(attempts.map(write=>write.mutationId)).size,1,'Retry reuses the original upload receipt');
   await phone.getByLabel('Photos for').selectOption('closing');await phone.getByRole('heading',{name:'Closing pump readings',exact:true}).waitFor();
