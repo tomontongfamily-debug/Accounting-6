@@ -74,6 +74,56 @@ test('An accidental privilege expansion stops the read and closes the connection
     await assert.rejects(readPosRedemptions('2026-09-23','2026-09-24',{env,clientFactory:()=>c}),/read-only/);assert.equal(selected,false);assert.ok(ended);
   }
 });
+
+test('Growing POS history imports all pages beyond 20,000 records without losing late voids',async()=>{
+  const count=21157;
+  const id=i=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`;
+  const at=i=>new Date(Date.parse('2026-09-23T00:00:00Z')+i*1000).toISOString();
+  const withdrawals=Array.from({length:count},(_,i)=>({...row(at(i),1),WithdrawalId:id(i)}));
+  const points=Array.from({length:count},(_,i)=>({TransactionId:id(i),TransactionDate:at(i),OrgCode:'YTL',Discount:'1.00',Liter:'2.00'}));
+  const voids=points.map(({TransactionDate,OrgCode,Discount,Liter})=>({TransactionDate,OrgCode,Discount,Liter}));
+  const calls=[];let ended=false;
+  const c={async connect(){},async end(){ended=true;},async query(sql,params){
+    calls.push({sql,params});
+    if(sql===POS_PERMISSION_QUERY)return {rows:[permissions]};
+    if(sql===POS_ROWS_QUERY||sql===POS_POINTS_QUERY){
+      const values=sql===POS_ROWS_QUERY?withdrawals:points;
+      const key=sql===POS_ROWS_QUERY?'WithdrawalId':'TransactionId';
+      const offset=params[3]===null?0:values.findIndex(r=>r[key]===params[3])+1;
+      return {rows:values.slice(offset,offset+params[4])};
+    }
+    if(sql===POS_VOIDS_QUERY)return {rows:voids.slice(params[4],params[4]+params[3])};
+    return {rows:[]};
+  }};
+  const result=await readPosRedemptions('2026-09-23','2026-09-24',{env,clientFactory:()=>c});
+  assert.equal(result.rows.length,count);assert.equal(result.points.length,count);
+  assert.equal(result.rows.reduce((total,r)=>total+r.amount,0),count);
+  assert.ok(result.points.every(p=>p.voided&&p.points===null));
+  assert.equal(result.points.find(p=>p.id===id(count-1)).voided,true);
+  for(const query of [POS_ROWS_QUERY,POS_POINTS_QUERY,POS_VOIDS_QUERY]){
+    const pages=calls.filter(c=>c.sql===query);assert.equal(pages.length,22);
+    assert.ok(pages.every(p=>p.params[query===POS_VOIDS_QUERY?3:4]===1000));
+  }
+  assert.equal(calls[0].sql,'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(calls.at(-1).sql,'COMMIT');assert.ok(ended);
+});
+
+test('A late page failure rolls back the complete POS import and retains the previous verified copy',async()=>{
+  const {state,key}=fixture();
+  await refreshPosEvidence(state,{enabled:true,force:true,read:async()=>({rows:normalize([row('2026-09-23T05:00:00+08:00',1553)]),points:[]})});
+  const previous=structuredClone(state.reports[key]);let pages=0,rolledBack=false,ended=false;
+  const first=Array.from({length:1000},()=>row('2026-09-23T05:00:00+08:00'));
+  const c={async connect(){},async end(){ended=true;},async query(sql){
+    if(sql===POS_PERMISSION_QUERY)return {rows:[permissions]};
+    if(sql===POS_ROWS_QUERY){if(pages++===0)return {rows:first};throw Error('Late page failed');}
+    if(sql==='ROLLBACK')rolledBack=true;
+    return {rows:[]};
+  }};
+  await refreshPosEvidence(state,{enabled:true,force:true,read:()=>readPosRedemptions('2026-09-23','2026-09-24',{env,clientFactory:()=>c})});
+  assert.ok(rolledBack&&ended);assert.equal(state.posRedemptionSync.status,'unavailable');
+  assert.equal(state.reports[key].deductions.posRedemption,1553);
+  assert.equal(state.reports[key].posRedemptions.verifiedAt,previous.posRedemptions.verifiedAt);
+});
 test('Liloan reader policy isolates rows and columns and denies business writes in Postgres',async()=>{
   const db=new PGlite();
   try{

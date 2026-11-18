@@ -9,7 +9,9 @@ import { retainReviewOrder } from './review-issues.mjs';
 
 export const POS_PROJECT='zuhvemesqznmbbpzudib';
 export const POS_READER='fueltech_accounting_reader';
-const PAGE_SIZE=1000, MAX_ROWS=20000;
+// Bound each query, not the accumulated history. The reporting window grows
+// daily; rejecting its total after 20,000 rows blocks every later POS refresh.
+const PAGE_SIZE=1000;
 export function posEnabled(mode,env=process.env) {
   return mode==='live'&&env.VERCEL_ENV!=='preview'&&env.FUELTECH_POS_REDEMPTIONS_ENABLED==='true';
 }
@@ -66,7 +68,6 @@ export async function readPosRedemptions(startDate,endDate,{env=process.env,clie
     for(;;) {
       const result=await client.query(POS_ROWS_QUERY,['YTL',start,end,cursor,PAGE_SIZE]);
       rows.push(...result.rows);
-      if(rows.length>MAX_ROWS)throw Error('POS reporting window exceeds the verified import limit.');
       if(result.rows.length<PAGE_SIZE)break;
       const next=result.rows.at(-1).WithdrawalId;
       if(next===cursor)throw Error('POS pagination did not advance.');
@@ -75,14 +76,12 @@ export async function readPosRedemptions(startDate,endDate,{env=process.env,clie
     const points=[];cursor=null;
     for(;;) {
       const result=await client.query(POS_POINTS_QUERY,['YTL',start,end,cursor,PAGE_SIZE]);points.push(...result.rows);
-      if(points.length>MAX_ROWS)throw Error('POS points window exceeds the verified import limit.');
       if(result.rows.length<PAGE_SIZE)break;
       const next=result.rows.at(-1).TransactionId;if(next===cursor)throw Error('POS points pagination did not advance.');cursor=next;
     }
     const voids=[];
     for(let offset=0;;offset+=PAGE_SIZE) {
       const result=await client.query(POS_VOIDS_QUERY,['YTL',start,end,PAGE_SIZE,offset]);voids.push(...result.rows);
-      if(voids.length>MAX_ROWS)throw Error('POS void window exceeds the verified import limit.');
       if(result.rows.length<PAGE_SIZE)break;
     }
     const normalized={rows:normalizePosRedemptions(rows,startDate,endDate),points:normalizePosPoints(attachPosVoids(points,voids),startDate,endDate)};
