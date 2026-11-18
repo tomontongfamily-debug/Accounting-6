@@ -4,7 +4,7 @@ import {loadState} from '../pilot/storage.mjs';
 
 function fixture(){
  const control={revision:4,calls:0,heads:0,fail:false,headFail:false};
- const db={from(table){assert.equal(table,'fueltech_pilot_heads');return {select(){return this;},eq(){return this;},async maybeSingle(){control.heads++;return control.headFail?{error:{message:'unavailable'}}:{data:{revision:control.revision}};}};},async rpc(name,options){control.calls++;await new Promise(resolve=>setTimeout(resolve,8));if(control.fail)return {error:{message:'unavailable'}};return {data:{revision:control.revision,data:{mode:options.p_mode,reports:{saved:{notes:'saved'}},audit:options.p_audit_limit?[options.p_before]:[],fullPos:name==='fueltech_pilot_load_v2'}}};}};
+ const db={from(table){assert.equal(table,'fueltech_pilot_heads');return {select(){return this;},eq(){return this;},async maybeSingle(){control.heads++;return control.headFail?{error:{message:'unavailable'}}:{data:{revision:control.revision}};}};},async rpc(name,options){control.calls++;await new Promise(resolve=>setTimeout(resolve,8));if(control.fail)return {error:{message:'unavailable'}};if(name==='fueltech_pilot_load_delta')return {data:{revision:control.revision,full:false,upserts:[],removals:[]}};return {data:{revision:control.revision,data:{mode:options.p_mode,reports:{saved:{notes:'saved'}},audit:options.p_audit_limit?[options.p_before]:[],fullPos:name==='fueltech_pilot_load_v2'}}};}};
  return {db,control};
 }
 

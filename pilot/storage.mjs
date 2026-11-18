@@ -12,7 +12,7 @@ export function documents(state) {
   add('shape','pos',!Object.hasOwn(state,'posRedemptionSync')?'missing':state.posRedemptionSync===null?'null':'object');
   if(state.posRedemptionSync) {
     for(const [key,value] of Object.entries(state.posRedemptionSync)) {
-      if(!['rows','points','_deferred'].includes(key))add('pos',key,value);
+      if(!['rows','points','_deferred','_window'].includes(key))add('pos',key,value);
     }
     for(const kind of ['rows','points']) {
       const values=state.posRedemptionSync[kind];
@@ -22,7 +22,10 @@ export function documents(state) {
         if(!row.id||ids.has(row.id))throw Error('POS evidence IDs must be unique.');
         ids.add(row.id);add('pos_'+kind,String(row.id),row);
       }
-      add('shape',kind,values.map(row=>String(row.id)));
+      const window=state.posRedemptionSync._window;
+      const replaced=new Set(window?.loaded[kind]||[]);
+      const order=window ? [...(window.order[kind]||[]).filter(id=>!replaced.has(id)),...ids].sort() : [...ids];
+      add('shape',kind,order);
     }
   }
   return rows;
@@ -56,7 +59,26 @@ export function statePatch(before,after) {
 // request. Concurrent devices share one reconstruction; callers always receive
 // separate objects so a draft/action cannot change another request's snapshot.
 const snapshots=new WeakMap();
-const CACHE_LIMIT=6, CACHE_MS=15000;
+const CACHE_LIMIT=6;
+export function applyCompactDelta(snapshot,delta) {
+  const result=structuredClone(snapshot),state=result.data;
+  const apply=({section,key,data},remove=false)=>{
+    if(section==='root'){if(remove)delete state[key];else state[key]=data;}
+    else if(section==='reports'||section==='photos'){if(remove)delete state[section][key];else state[section][key]=data;}
+    else if(section==='pos'){
+      state.posRedemptionSync||={_deferred:true};
+      if(remove)delete state.posRedemptionSync[key];else state.posRedemptionSync[key]=data;
+    }
+  };
+  for(const item of delta.removals)apply(item,true);
+  for(const item of delta.upserts)apply(item);
+  const shape=delta.upserts.find(r=>r.section==='shape'&&r.key==='pos');
+  if(shape?.data==='missing')delete state.posRedemptionSync;
+  else if(shape?.data==='null')state.posRedemptionSync=null;
+  else if(shape?.data==='object')state.posRedemptionSync={...state.posRedemptionSync,_deferred:true};
+  result.revision=delta.revision;
+  return result;
+}
 export async function loadState(db,mode,{audit=false,before=null,fullPos=false,cache=false}={}) {
   const options={p_mode:mode,p_audit_limit:audit?100:0,p_before:before};
   const read=async()=>{
@@ -72,8 +94,18 @@ export async function loadState(db,mode,{audit=false,before=null,fullPos=false,c
   if(!entries){entries=new Map();snapshots.set(db,entries);}
   const key=JSON.stringify([mode,Number(head.data.revision),audit,before,fullPos]);
   let entry=entries.get(key);
-  if(!entry||Date.now()-entry.at>=CACHE_MS){
-    const promise=read();entry={at:Date.now(),promise};entries.set(key,entry);
+  if(!entry){
+    const prior=!audit&&!fullPos&&before===null ? [...entries.values()].filter(e=>e.mode===mode&&e.compact&&e.value&&e.value.revision<Number(head.data.revision)).sort((a,b)=>b.value.revision-a.value.revision)[0] : null;
+    const promise=(async()=>{
+      if(prior){
+        const delta=await db.rpc('fueltech_pilot_load_delta',{p_mode:mode,p_since:prior.value.revision});
+        if(delta.error)throw Object.assign(Error('Unable to load changed station records.'),{status:503});
+        if(delta.data&&!delta.data.full)return applyCompactDelta(prior.value,delta.data);
+      }
+      return read();
+    })();
+    entry={mode,compact:!audit&&!fullPos&&before===null,promise};entries.set(key,entry);
+    promise.then(value=>{entry.value=value;},()=>{});
     while(entries.size>CACHE_LIMIT)entries.delete(entries.keys().next().value);
     // A failed reconstruction must be retried, never served as a successful read.
     promise.catch(()=>{if(entries.get(key)===entry)entries.delete(key);});

@@ -5,11 +5,13 @@ export const SHIFT_IDS = ["shift-1", "shift-2", "shift-3"];
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://chqinknijqtixeenhtvu.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+let adminClient;
 
 export function supabaseAdmin() {
   if(process.env.VERCEL_ENV==='preview') throw new Error('Use the isolated Liloan pilot in this preview.');
   if (!SUPABASE_KEY) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-  return createClient(SUPABASE_URL, SUPABASE_KEY);
+  adminClient ||= createClient(SUPABASE_URL, SUPABASE_KEY, {auth:{persistSession:false,autoRefreshToken:false}});
+  return adminClient;
 }
 
 export function readBody(req) {

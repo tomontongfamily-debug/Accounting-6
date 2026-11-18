@@ -10,6 +10,8 @@ The journal and original checkpoint reconstruct any revision since migration thr
 
 The browser caches only verified complete store loads in memory. Later refreshes request revisions after that snapshot. Global dependency changes return complete pages; report-only changes transfer affected reports. Server scope checks prevent cached records from being reused across roles or branches, and interrupted pages never publish a partial cache.
 
+The November 18 egress optimization also caches compact snapshots in warm server instances. Every read checks the current head revision. A matching revision reuses a private copy; a newer revision reads changed documents using `fueltech_pilot_load_delta`. Cursors outside retained journal coverage fall back to a full reconstruction. POS checks compare daily source digests on the POS server, and `fueltech_pilot_load_pos_window` loads Accounting evidence only for changed dates. Its transient window metadata retains the full evidence ID order while ordinary document patches preserve outside-window rows. These helpers are read-only, security-invoker RPCs callable only by the existing service role. Cash checks and submission still force fresh Pay, PO, CV and POS verification.
+
 ## Rollout and verification
 
 1. Apply the migration transactionally; any preservation mismatch aborts it.

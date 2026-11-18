@@ -43,6 +43,20 @@ export const POS_POINTS_QUERY=`SELECT t."TransactionId",to_char(t."TransactionDa
 export const POS_VOIDS_QUERY=`SELECT to_char("TransactionDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "TransactionDate","OrgCode","Discount","Liter"
  FROM public."VoidedTransactions" WHERE "OrgCode"=$1 AND "TransactionDate">=$2::timestamptz AND "TransactionDate"<$3::timestamptz
  ORDER BY "TransactionDate","Discount","Liter" LIMIT $4 OFFSET $5`;
+// Hash every permitted source field, including duplicate void tuples, inside
+// the same read-only snapshot as any detail reads. Old edits, deletes and late
+// voids change a day's digest even without an updated_at column or ordered IDs.
+export const POS_PARTITIONS_QUERY=`WITH evidence AS (
+ SELECT 'rows' AS kind,to_char(("WithdrawalDate" AT TIME ZONE 'Asia/Manila')-interval '4 hours','YYYY-MM-DD') AS day,
+ md5(jsonb_build_array("WithdrawalId",to_char("WithdrawalDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),"Type","CokeQuantity","RedeemedPoints","OrgCode")::text) AS hash
+ FROM public."Withdrawals" WHERE "OrgCode"=$1 AND "WithdrawalDate">=$2::timestamptz AND "WithdrawalDate"<$3::timestamptz
+ UNION ALL SELECT 'points',to_char(("TransactionDate" AT TIME ZONE 'Asia/Manila')-interval '4 hours','YYYY-MM-DD'),
+ md5(jsonb_build_array("TransactionId",to_char("TransactionDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),"OrgCode","Discount","Liter")::text)
+ FROM public."Transactions" WHERE "OrgCode"=$1 AND "TransactionDate">=$2::timestamptz AND "TransactionDate"<$3::timestamptz
+ UNION ALL SELECT 'voids',to_char(("TransactionDate" AT TIME ZONE 'Asia/Manila')-interval '4 hours','YYYY-MM-DD'),
+ md5(jsonb_build_array(to_char("TransactionDate" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),"OrgCode","Discount","Liter")::text)
+ FROM public."VoidedTransactions" WHERE "OrgCode"=$1 AND "TransactionDate">=$2::timestamptz AND "TransactionDate"<$3::timestamptz)
+ SELECT kind,day,count(*)::text AS count,md5(string_agg(hash,'' ORDER BY hash)) AS digest FROM evidence GROUP BY kind,day ORDER BY day,kind`;
 function numericKey(value) {
   const [whole,fraction='']=String(value).split('.');
   const integer=whole.replace(/^0+(?=\d)/,''),decimals=fraction.replace(/0+$/,'');
@@ -55,7 +69,7 @@ export function attachPosVoids(transactions,voids) {
   for(const r of voids)voidCounts.set(tupleKey(r),(voidCounts.get(tupleKey(r))||0)+1);
   return transactions.map(r=>({...r,tuple_matches:counts.get(tupleKey(r)),void_matches:voidCounts.get(tupleKey(r))||0}));
 }
-export async function readPosRedemptions(startDate,endDate,{env=process.env,clientFactory=options=>new Client(options)}={}) {
+export async function readPosRedemptions(startDate,endDate,{env=process.env,clientFactory=options=>new Client(options),partitions,requiredDates=[]}={}) {
   const start=`${dateOffset(startDate,0)}T04:00:00+08:00`, end=`${dateOffset(endDate,1)}T04:00:00+08:00`;
   if(startDate>endDate)throw Error('Invalid POS reporting window.');
   const client=clientFactory(posConnectionOptions(env));
@@ -64,27 +78,41 @@ export async function readPosRedemptions(startDate,endDate,{env=process.env,clie
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const {rows:[permission]}=await client.query(POS_PERMISSION_QUERY);
     if(!permission||permission.reader!==POS_READER||permission.read_only!=='on'||permission.rls!==true||['memberships','privileged','can_write','executable_definer','private_fields'].some(k=>permission[k]!==false))throw Error('POS connection does not satisfy the read-only access rules.');
-    const rows=[];let cursor=null;
+    let nextPartitions,windows;
+    if(partitions!==undefined){
+      const summary=await client.query(POS_PARTITIONS_QUERY,['YTL',start,end]);
+      const days=new Map();
+      for(const item of summary.rows){
+        if(!['rows','points','voids'].includes(item.kind)||dateOffset(item.day,0)!==item.day||item.day<startDate||item.day>endDate||!/^\d+$/.test(item.count)||!/^[a-f0-9]{32}$/.test(item.digest))throw Error('Invalid POS partition evidence.');
+        const values=days.get(item.day)||[];values.push([item.kind,item.count,item.digest]);days.set(item.day,values);
+      }
+      nextPartitions=Object.fromEntries([...days].sort(([a],[b])=>a.localeCompare(b)).map(([day,values])=>[day,createHash('sha256').update(JSON.stringify(values.sort())).digest('hex')]));
+      if(partitions)windows=[...new Set([...Object.keys(partitions),...Object.keys(nextPartitions),...requiredDates])].filter(day=>day>=startDate&&day<=endDate&&(partitions[day]!==nextPartitions[day]||requiredDates.includes(day))).sort();
+    }
+    const rows=[],points=[],voids=[];
+    for(const day of windows??[null]){
+    const rangeStart=day?`${dateOffset(day,0)}T04:00:00+08:00`:start,rangeEnd=day?`${dateOffset(day,1)}T04:00:00+08:00`:end;
+    let cursor=null;
     for(;;) {
-      const result=await client.query(POS_ROWS_QUERY,['YTL',start,end,cursor,PAGE_SIZE]);
+      const result=await client.query(POS_ROWS_QUERY,['YTL',rangeStart,rangeEnd,cursor,PAGE_SIZE]);
       rows.push(...result.rows);
       if(result.rows.length<PAGE_SIZE)break;
       const next=result.rows.at(-1).WithdrawalId;
       if(next===cursor)throw Error('POS pagination did not advance.');
       cursor=next;
     }
-    const points=[];cursor=null;
+    cursor=null;
     for(;;) {
-      const result=await client.query(POS_POINTS_QUERY,['YTL',start,end,cursor,PAGE_SIZE]);points.push(...result.rows);
+      const result=await client.query(POS_POINTS_QUERY,['YTL',rangeStart,rangeEnd,cursor,PAGE_SIZE]);points.push(...result.rows);
       if(result.rows.length<PAGE_SIZE)break;
       const next=result.rows.at(-1).TransactionId;if(next===cursor)throw Error('POS points pagination did not advance.');cursor=next;
     }
-    const voids=[];
     for(let offset=0;;offset+=PAGE_SIZE) {
-      const result=await client.query(POS_VOIDS_QUERY,['YTL',start,end,PAGE_SIZE,offset]);voids.push(...result.rows);
+      const result=await client.query(POS_VOIDS_QUERY,['YTL',rangeStart,rangeEnd,PAGE_SIZE,offset]);voids.push(...result.rows);
       if(result.rows.length<PAGE_SIZE)break;
     }
-    const normalized={rows:normalizePosRedemptions(rows,startDate,endDate),points:normalizePosPoints(attachPosVoids(points,voids),startDate,endDate)};
+    }
+    const normalized={rows:normalizePosRedemptions(rows,startDate,endDate),points:normalizePosPoints(attachPosVoids(points,voids),startDate,endDate),...(nextPartitions?{partitions:nextPartitions}:{}),...(windows?{windows}:{})};
     await client.query('COMMIT');
     return normalized;
   } catch(error) {
@@ -129,7 +157,7 @@ export async function attachPosVerification(db,reportRows) {
 }
 export function refreshPosReport(report,sync) {
   if(report.branch!=='Liloan'||report.baselineReport||!sync||report.date<sync.startDate)return report;
-  if(sync._deferred){
+  if(sync._deferred||(sync._window&&!sync._window.dates.includes(report.date))){
     // These summaries came from a committed, verified import. User input never
     // supplies them; keep enforcing imported totals without loading all points.
     if(!report.posRedemptions?.automatic)return report;
@@ -165,20 +193,31 @@ export function refreshPosReport(report,sync) {
   }
   return next;
 }
-export async function refreshPosEvidence(state,{enabled,read=readPosRedemptions,now=new Date().toISOString(),force=false}={}) {
-  if(state.posRedemptionSync?._deferred)return;
+export async function refreshPosEvidence(state,{enabled,read=readPosRedemptions,hydrate,now=new Date().toISOString(),force=false}={}) {
+  const missingSummary=Object.values(state.reports).some(r=>r.branch==='Liloan'&&!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic);
   if(!enabled) {
     if(state.posRedemptionSync&&state.posRedemptionSync.status!=='disabled')state.posRedemptionSync.status='disabled';
-  } else if(force||(state.posRedemptionSync?.status==='verified'&&!Array.isArray(state.posRedemptionSync.points))||!state.posRedemptionSync?.attemptedAt||Date.parse(now)-Date.parse(state.posRedemptionSync.attemptedAt)>60000) {
-    const previous=state.posRedemptionSync;
+  } else if(force||missingSummary||state.posRedemptionSync?.status==='disabled'||(state.posRedemptionSync?.status==='verified'&&!state.posRedemptionSync._deferred&&!Array.isArray(state.posRedemptionSync.points))||!state.posRedemptionSync?.attemptedAt||Date.parse(now)-Date.parse(state.posRedemptionSync.attemptedAt)>60000) {
+    let previous=state.posRedemptionSync;
     try {
       const startDate=Object.values(state.reports).filter(r=>r.branch==='Liloan'&&!r.baselineReport).reduce((d,r)=>r.date<d?r.date:d,state.startDate);
-      const result=await read(startDate,accountingTiming(now).date);
+      const requiredDates=[...new Set(Object.values(state.reports).filter(r=>r.branch==='Liloan'&&!r.baselineReport&&r.date>=startDate&&!r.posRedemptions?.automatic).map(r=>r.date))];
+      const result=await read(startDate,accountingTiming(now).date,{partitions:previous?.partitions||null,requiredDates});
       const {rows,points}=Array.isArray(result)?{rows:result,points:undefined}:result;
-      const fingerprint=createHash('sha256').update(JSON.stringify({rows,points})).digest('hex');
-      state.posRedemptionSync={status:'verified',startDate,verifiedAt:now,attemptedAt:now,rows,points,fingerprint};
-      if(previous?.fingerprint!==fingerprint)state.audit.push({id:randomUUID(),at:now,action:'pos-redemptions-read',role:'System',branch:'Liloan',count:rows.length,source:'FuelTech POS',fingerprint});
+      const windows=result.windows;
+      if(previous?._deferred&&(!windows||windows.length)){
+        if(!hydrate)throw Error('Saved POS evidence must be loaded before merging changes.');
+        previous=await hydrate(windows??null);
+      }
+      const fingerprint=createHash('sha256').update(JSON.stringify(result.partitions||{rows,points})).digest('hex');
+      const evidence=windows ? {
+        ...previous,
+        ...(!previous?._deferred?{rows:[...(previous?.rows||[]).filter(r=>!windows.includes(r.date)),...rows].sort((a,b)=>a.id.localeCompare(b.id)),points:[...(previous?.points||[]).filter(r=>!windows.includes(r.date)),...points].sort((a,b)=>a.id.localeCompare(b.id))}:{})
+      } : {rows,points};
+      state.posRedemptionSync={...evidence,status:'verified',startDate,verifiedAt:now,attemptedAt:now,fingerprint,...(result.partitions?{partitions:result.partitions}:{})};
+      if(previous?.fingerprint!==fingerprint)state.audit.push({id:randomUUID(),at:now,action:'pos-redemptions-read',role:'System',branch:'Liloan',count:rows.length,...(windows?{changedDates:windows}:{}),source:'FuelTech POS',fingerprint});
     } catch(error) {
+      if(error.code==='POS_SNAPSHOT_CHANGED')throw error;
       state.posRedemptionSync={...previous,startDate:previous?.startDate||state.startDate,status:'unavailable',attemptedAt:now};
       if(previous?.status!=='unavailable')state.audit.push({id:randomUUID(),at:now,action:'pos-redemptions-unavailable',role:'System',branch:'Liloan',source:'FuelTech POS',code:/^[A-Z0-9_]{1,40}$/.test(error.code||'')?error.code:'POS_READ_FAILED'});
     }

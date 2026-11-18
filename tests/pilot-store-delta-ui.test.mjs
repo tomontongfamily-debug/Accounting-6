@@ -39,7 +39,9 @@ test('built pilot refresh requests only changes and retains the existing report 
   await expect.poll(()=>activeLoads).toBe(0);
   holdLoads=true;const before=inputs.length;
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
-  await expect.poll(()=>inputs.length).toBe(before+1);
+  // A silent refresh waits for the existing five-second cooldown. Leave room
+  // for the browser to process the response rather than timing out at its edge.
+  await expect.poll(()=>inputs.length,{timeout:10000}).toBe(before+1);
   for(let i=0;i<10;i++)await page.evaluate(()=>{
    window.dispatchEvent(new Event('focus'));
    window.dispatchEvent(new Event('online'));
@@ -49,7 +51,7 @@ test('built pilot refresh requests only changes and retains the existing report 
   await page.clock.runFor(15000);
   assert.equal(inputs.length,before+1);assert.equal(maxActiveLoads,1);
   holdLoads=false;releaseLoad();
-  await expect.poll(()=>inputs.length).toBe(before+2);
+  await expect.poll(()=>inputs.length,{timeout:10000}).toBe(before+2);
   await expect.poll(()=>activeLoads).toBe(0);
   assert.equal(maxActiveLoads,1);
   await page.getByRole('button',{name:'Error Analytics',exact:true}).first().waitFor();

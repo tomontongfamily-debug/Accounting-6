@@ -4,7 +4,7 @@ import { getEffectivePricing } from '../src/accounting-engine.js';
 import { createClient } from '@supabase/supabase-js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { accountingTiming, dateOffset, loadSources } from './integrations.mjs';
+import { accountingTiming, loadSources } from './integrations.mjs';
 import { initialState, ensureCurrentReports, reconcileSources } from './state.mjs';
 import { runAction } from './service.mjs';
 import { launchStatus } from './launch.mjs';
@@ -51,7 +51,7 @@ export async function refreshLivePilotSources(db,session,{forceSources=false}={}
   const saved=await db.from('fueltech_pilot_state').select('revision').eq('mode','live').maybeSingle();
   if(saved.error)throw fail('Unable to verify Liloan source records.');
   if(!saved.data)return;
-  await execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/realtime/config',mutationId:randomUUID()},{db,forceSources});
+  await execute(session,{mode:'live',startDate:config.data.start_date,route:'/api/realtime/config',mutationId:randomUUID()},{db,forceSources,cacheState:true});
   return true;
 }
 async function allRows(query) {
@@ -62,7 +62,7 @@ async function allRows(query) {
     rows.push(...data);if(data.length<1000)return rows;
   }
 }
-export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,backupPhoto,attempt=0,photoUploads=new Map()}={}) {
+export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posRead,posEnv=process.env,forceSources=false,backupPhoto,attempt=0,photoUploads=new Map(),cacheState=db===sharedDatabase}={}) {
   if(!['Admin','Approver','Cashier','Manager'].includes(session.role)) throw fail('Invalid station role.',403);
   const config=await configuration(db);
   if(['Cashier','Manager'].includes(session.role)&&!configuredStations(config).includes(session.branch)) throw fail('This station is not enabled.',403);
@@ -82,26 +82,17 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
   const readOnly=['/api/store/load','/api/prices/load','/api/realtime/config','/api/reports/lease','/api/demo/pump-report','/api/demo/cv-status','/api/demo/deposits','/api/demo/audit','/api/admin/system-health'].includes(route);
   if(!/^\/api\/(demo\/|store\/|prices\/|reports\/|realtime\/|admin\/)/.test(route||'')||!/^\w{8}-\w{4}-4\w{3}-[89ab]\w{3}-\w{12}$/i.test(mutationId||'')) throw fail('Invalid pilot request.',400);
   const hash=createHash('sha256').update(JSON.stringify({role:session.role,branch:session.branch,...envelope})).digest('hex');
-  const receipt=await db.from('fueltech_pilot_receipts').select('request_hash,result').eq('mode',config.mode).eq('mutation_id',mutationId).maybeSingle();
+  const receipt=readOnly?{data:null}:await db.from('fueltech_pilot_receipts').select('request_hash,result').eq('mode',config.mode).eq('mutation_id',mutationId).maybeSingle();
   if(receipt.error) throw fail('Unable to verify the save receipt.');
   if(receipt.data&&!readOnly) {
     if(receipt.data.request_hash!==hash) throw fail('This save ID was already used for different data.',409);
     return receipt.data.result;
   }
   const incremental=config.storage_version===2;
-  const loaded=incremental?{data:await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,cache:db===sharedDatabase})}:await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
+  const loaded=incremental?{data:await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,cache:cacheState})}:await db.from('fueltech_pilot_state').select('revision,data').eq('mode',config.mode).maybeSingle();
   if(loaded.error) throw fail('Unable to load the pilot records.');
   let storeRevision=loaded.data?.revision||0;
   let state=loaded.data?.data;
-  const sync=state?.posRedemptionSync;
-  if(incremental&&usesPos&&sync?._deferred){
-    const enabled=posEnabled(config.mode,posEnv),today=accountingTiming(new Date().toISOString()).date;
-    const missingShift=[dateOffset(today,-1),today].filter(date=>date>=state.startDate).some(date=>['shift-1','shift-2','shift-3'].some(shift=>!state.reports[`Liloan__${date}__${shift}`]));
-    const needsEvidence=requiresFresh||(enabled&&(!sync.attemptedAt||Date.now()-Date.parse(sync.attemptedAt)>60000))
-      ||enabled!==(sync.status!=='disabled')||missingShift
-      ||(enabled&&Object.values(state.reports).some(r=>r.branch==='Liloan'&&!r.baselineReport&&r.date>=state.startDate&&!r.posRedemptions?.automatic));
-    if(needsEvidence){loaded.data=await loadState(db,config.mode,{audit:route==='/api/demo/audit',before:input.before??null,fullPos:true,cache:db===sharedDatabase});state=loaded.data?.data;storeRevision=loaded.data?.revision||0;}
-  }
   if(state&&(state.mode!==config.mode||state.startDate!==config.start_date)) throw fail('Cutover differs from saved pilot records. Restore or review configuration before continuing.');
   if(!state) {
     const launch=await launchStatus(db,config);
@@ -132,7 +123,20 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const sources=await loadSources(db,cvClient,state.startDate,accountingTiming(new Date().toISOString()).date,{branches:configuredStations(state),stationStarts:state.stationStarts});
     reconcileSources(state,sources);
   }
-  if(usesPos)await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh});
+  if(usesPos){
+    try{await refreshPosEvidence(state,{enabled:posEnabled(config.mode,posEnv),read:posRead,force:requiresFresh,hydrate:incremental?async dates=>{
+      const result=await db.rpc('fueltech_pilot_load_pos_window',{p_mode:config.mode,p_dates:dates});
+      if(result.error)throw fail('Unable to load saved POS evidence.');
+      if(!result.data||result.data.revision!==storeRevision)throw Object.assign(fail('Station records changed during payment verification. Retry the check.',409),{code:'POS_SNAPSHOT_CHANGED',retryableConflict:true,saveUncertain:false});
+      // Compare changed evidence with the same revision the action loaded.
+      // Outside-window documents and their ID order remain untouched.
+      before.posRedemptionSync=structuredClone(result.data.data);
+      return result.data.data;
+    }:undefined});}catch(error){
+      if(error.code==='POS_SNAPSHOT_CHANGED'&&attempt<4)return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1,photoUploads,cacheState});
+      throw error;
+    }
+  }
   const outcome=await runAction(state,session,route,input,{mutationId,uploadPhoto:(path,image,context)=>{
     const digest=createHash('sha256').update(image).digest('hex'),prior=photoUploads.get(path);
     if(prior){
@@ -157,7 +161,7 @@ export async function execute(session,envelope,{db=pilotDatabase(),cvClient,posR
     const conflict=(incremental&&needsCommit&&saved.data?.committed===false)||['PT409','40001'].includes(saved.error?.code);
     if(conflict&&attempt<4) {
       await new Promise(resolve=>setTimeout(resolve,75*2**attempt+Math.floor(Math.random()*125)));
-      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1,photoUploads});
+      return execute(session,envelope,{db,cvClient,posRead,posEnv,forceSources,backupPhoto,attempt:attempt+1,photoUploads,cacheState});
     }
     if(incremental&&needsCommit&&!saved.error&&!conflict&&(saved.data?.committed!==true||!Number.isSafeInteger(saved.data.revision)))throw fail('The save could not be verified. Retry with the same request.');
     if(saved.error) console.error('Pilot commit failed',{code:saved.error.code,message:saved.error.message});
