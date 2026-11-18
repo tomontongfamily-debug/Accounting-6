@@ -101,7 +101,8 @@ test('cash checks, final submission and financial actions still require source v
  await assert.rejects(f.call('/api/demo/pump-report',{reportKey:f.key},{forceSources:true}),/Financial source server is offline/);
  assert.ok(f.stats.sourceReads>0,'Explicit source-refresh requests must not be skipped');
  const liloan=evidenceFixture();
- await assert.rejects(liloan.call('/api/demo/pump-report',{reportKey:liloan.key},{forceSources:true}),/Unrelated Liloan full-history read is unavailable/);
+ await assert.rejects(liloan.call('/api/demo/pump-report',{reportKey:liloan.key},{forceSources:true}),/Financial source server is offline/);
+ assert.ok(liloan.stats.sourceReads>0);assert.equal(liloan.stats.fullLoads,0);
 });
 
 test('pump photos still require an authoritative station snapshot and correct station access',async()=>{

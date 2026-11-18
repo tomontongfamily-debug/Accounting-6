@@ -105,3 +105,12 @@ test("adds a correction request without changing a locked submitted report", () 
     completedAt: "",
   });
 });
+
+test("a deposit saved from an older manager screen preserves submitted prices and readings", () => {
+  const existing = {branch:"Pondol",date:"2026-11-03",shiftId:"shift-1",confirmed:true,prices:{Diesel:95},
+    midShiftPriceChanges:[{id:"d",product:"Diesel",newPrice:99,readings:{n:120},confirmedAt:"original"}]};
+  const saved = mergeReportForRole({role:"Manager"}, {...existing,midShiftPriceChanges:[],midShiftBasePrices:{Diesel:99},deposits:[{amount:1000}]},existing);
+  assert.deepEqual(saved.midShiftPriceChanges,existing.midShiftPriceChanges);
+  assert.equal(saved.midShiftBasePrices,undefined);
+  assert.equal(saved.deposits[0].amount,1000);
+});

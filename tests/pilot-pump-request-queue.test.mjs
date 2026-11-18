@@ -29,17 +29,19 @@ async function clientFixture(t){
 test('multiple held pump polls do not queue minutes of reads ahead of a photo or confirmation',async t=>{
  const {post,calls}=await clientFixture(t),reportKey='Liloan__2026-09-23__shift-1';
  const reads=Array.from({length:6},()=>post('/api/demo/pump-report',{reportKey}));
- await until(()=>calls.length===6);
+ await until(()=>calls.length===1);
  const photo=post('/api/demo/photo',{reportKey,rowId:'nozzle',revision:0});
  const confirm=post('/api/demo/pump-reading',{reportKey,row:{id:'nozzle'},revision:1});
- await until(()=>calls.length===7);
- assert.equal(calls[6].route,'/api/demo/photo');
+ await until(()=>calls.length===2);
+ assert.equal(calls[1].route,'/api/demo/photo');
  assert.equal(calls.some(call=>call.route==='/api/demo/pump-reading'),false,'Confirmation must still follow the photo write');
- calls[6].respond({ok:true,report:{pilotRevision:1}});await photo;
- await until(()=>calls.length===8);assert.equal(calls[7].route,'/api/demo/pump-reading');
- calls[7].respond({ok:true,report:{pilotRevision:2}});await confirm;
- for(const call of calls.slice(0,6))call.respond({ok:true,report:{pilotRevision:0}});
- await Promise.all(reads);
+ calls[1].respond({ok:true,report:{pilotRevision:1}});await photo;
+ await until(()=>calls.length===3);assert.equal(calls[2].route,'/api/demo/pump-reading');
+ calls[2].respond({ok:true,report:{pilotRevision:2}});await confirm;
+ calls[0].respond({ok:true,report:{pilotRevision:0}});
+ const results=await Promise.all(reads);
+ assert.ok(results.every(result=>result.report.pilotRevision===0));
+ assert.equal(calls.filter(call=>call.route==='/api/demo/pump-report').length,1);
 });
 
 test('a pump poll awaits its existing write snapshot but never blocks later writes or advances their revision',async t=>{

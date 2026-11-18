@@ -1,4 +1,7 @@
-import { midShiftBasePrice, midShiftReadingValue, midShiftChangeHasDetails } from "./mid-shift-price-change.js";
+import { hasPumpOpening } from "./fuel-leak-loss.js";
+import { clockMinutes, midShiftChangeOrder } from "./shift-time.js";
+export { midShiftChangeOrder } from "./shift-time.js";
+import { midShiftBasePrice, numericMidShiftReading, midShiftChangeHasDetails } from "./mid-shift-price-change.js";
 import {validTemporaryManualPriceReading} from './temporary-price-reading.js';
 
 const SHIFT_BOUNDS = {
@@ -10,16 +13,6 @@ const SHIFT_BOUNDS = {
 function number(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function clockMinutes(value) {
-  const [hours, minutes] = String(value || "").split(":").map(Number);
-  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : -1;
-}
-
-export function midShiftChangeOrder(change, shiftId) {
-  const minutes = clockMinutes(change?.effectiveTime);
-  return shiftId === "shift-3" && minutes >= 0 && minutes < 240 ? minutes + 1440 : minutes;
 }
 
 function clockLabel(value) {
@@ -35,7 +28,7 @@ export function midShiftReadingRows(report) {
     (report?.pumpRows || [])
       .filter((pumpRow) => pumpRow.product === change.product)
       .map((pumpRow, pumpIndex) => {
-        const savedReading = midShiftReadingValue(change, pumpRow);
+        const savedReading = numericMidShiftReading(change, pumpRow);
         return {
           id: `${change.id || changeIndex}-${pumpRow.id || pumpIndex}`,
           pump: pumpRow.pump,
@@ -43,7 +36,7 @@ export function midShiftReadingRows(report) {
           product: pumpRow.product,
           effectiveTime: clockLabel(change.effectiveTime),
           newPrice: Math.max(0, number(change.newPrice)),
-          reading: savedReading === "" || savedReading == null ? null : number(savedReading),
+          reading: savedReading,
           confirmed: Boolean(change.confirmedAt),
           manual:validTemporaryManualPriceReading(report,change,pumpRow,change.readingPhotos?.[`${pumpRow.pump}|${pumpRow.nozzle}|${pumpRow.product}`]),
         };
@@ -57,7 +50,7 @@ export function midShiftSalesBreakdown(report) {
     const changes = (report.midShiftPriceChanges || [])
       .filter((change) => change.product === pumpRow.product && midShiftChangeHasDetails(change))
       .sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
-    if (!changes.length) return [];
+    if (!changes.length || !hasPumpOpening(pumpRow)) return [];
 
     const opening = number(pumpRow.opening);
     const closing = number(pumpRow.closing);
@@ -67,8 +60,8 @@ export function midShiftSalesBreakdown(report) {
     const rows = [];
 
     changes.forEach((change, index) => {
-      const readingTo = number(midShiftReadingValue(change, pumpRow));
-      if (number(change.newPrice) <= 0 || readingTo < opening || readingTo > closing || readingTo < readingFrom) return;
+      const readingTo = numericMidShiftReading(change, pumpRow);
+      if (readingTo === null || number(change.newPrice) <= 0 || readingTo < opening || readingTo > closing || readingTo < readingFrom) return;
       const liters = readingTo - readingFrom;
       if (liters > 0) {
         rows.push({

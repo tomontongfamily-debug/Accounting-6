@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import { midShiftPriceReviewContext, priceReviewKey } from '../src/price-confirmation.js';
+import { pumpMeterSales } from '../src/fuel-leak-loss.js';
 import { fixture } from './pilot-fixture.mjs';
 import { runAction } from '../pilot/service.mjs';
 import { createReport, compute, getEffectivePricing, reportKey } from '../src/accounting-engine.js';
-import { midShiftPumpKey, midShiftReadingValue } from '../src/mid-shift-price-change.js';
+import { midShiftPumpKey } from '../src/mid-shift-price-change.js';
 import { midShiftSalesBreakdown } from '../src/mid-shift-sales-breakdown.js';
 const selling=p=>Object.fromEntries(['Premium','Regular','Diesel'].map(k=>[k,p[k]]));
 
@@ -88,14 +88,31 @@ for(const boundary of ['opening','closing'])test(`a price-change reading at the 
   assert.equal(midShiftSalesBreakdown(report).filter(r=>r.product==='Regular').reduce((a,r)=>a+r.sales,0),expected);
 });
 
-test('Admin, Liloan and server calculations all accept opening and closing price-change readings',()=>{
-  const row={pump:'Pump 2',nozzle:'Diesel',product:'Diesel',opening:199038.55,closing:199117.70};
-  for(const file of ['App.jsx','PilotApp.jsx','accounting-engine.js']){
-    const source=readFileSync(new URL('../src/'+file,import.meta.url),'utf8');
-    const body=source.match(/function validMidShiftChangeForRow\(change, row\) \{[\s\S]*?\n\}/)?.[0];
-    assert(body,file);
-    const validate=vm.runInNewContext('('+body+')',{n:v=>Number(v)||0,midShiftReadingValue});
-    for(const reading of [row.opening,row.closing])assert.equal(validate({newPrice:99.2,readings:{[midShiftPumpKey(row)]:reading}},row),true,file);
-    for(const reading of [row.opening-1,row.closing+1])assert.equal(validate({newPrice:99.2,readings:{[midShiftPumpKey(row)]:reading}},row),false,file);
+test('out-of-range meter changes do not reprice any liters',()=>{
+  const row={id:'d',pump:'Pump 2',nozzle:'Diesel',product:'Diesel',opening:100,closing:110};
+  for(const reading of [99,111]){
+    const report={shiftId:'shift-1',prices:{Diesel:80},midShiftPriceChanges:[{product:'Diesel',effectiveTime:'09:00',newPrice:90,readings:{d:reading}}]};
+    assert.equal(pumpMeterSales(report,row),800);
   }
+});
+
+test('a manager save cannot insert a time into the wrong shift, including a legacy card', async()=>{
+  const {state,manager,report,key}=prepared();
+  for(const photoRequired of [true,false]){
+    const incoming=structuredClone(report);
+    incoming.midShiftPriceChanges[0].effectiveTime='03:00';
+    await assert.rejects(runAction(state,manager,'/api/reports/save',{report:incoming}),/03:00 belongs to Shift 3/);
+    const legacy=structuredClone(state);
+    Object.assign(legacy.reports[key].midShiftPriceChanges[0],{photoRequired,effectiveTime:'03:00'});
+    await assert.rejects(runAction(legacy,manager,'/api/demo/midshift-confirm',{reportKey:key,changeId:'Premium'}),/03:00 belongs to Shift 3/);
+    assert.equal(state.reports[key].midShiftPriceChanges[0].effectiveTime,'09:00');
+  }
+});
+
+test('a previously reviewed price cannot confirm a concurrent edit back to the base price',async()=>{
+  const {state,manager,report,key}=prepared(),change=report.midShiftPriceChanges[0];
+  const priceReview={reviewKey:priceReviewKey(midShiftPriceReviewContext(report,change))};
+  change.newPrice=report.prices.Premium;
+  await assert.rejects(runAction(state,manager,'/api/demo/midshift-confirm',{reportKey:key,changeId:change.id,priceReview}),e=>e.status===409);
+  assert.ok(!state.reports[key].midShiftPriceChanges[0].confirmedAt);
 });

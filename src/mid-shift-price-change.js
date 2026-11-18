@@ -1,3 +1,4 @@
+import { midShiftChangeOrder, midShiftTimeError } from "./shift-time.js";
 import {validTemporaryManualPriceReading} from './temporary-price-reading.js';
 
 export function midShiftPumpKey(row) {
@@ -9,14 +10,21 @@ export function midShiftReadingValue(change, row) {
   return readings[midShiftPumpKey(row)] ?? readings[row.id] ?? "";
 }
 
+export function numericMidShiftReading(change, row) {
+  const raw = midShiftReadingValue(change, row);
+  if ((typeof raw !== "string" && typeof raw !== "number") || String(raw).trim() === "") return null;
+  const reading = Number(raw);
+  return Number.isFinite(reading) && reading >= 0 ? reading : null;
+}
+
 export function midShiftPhotoRow(change, row, report) {
   const evidence=change.readingPhotos?.[midShiftPumpKey(row)]||{};
   return {...row,...evidence,closing:midShiftReadingValue(change,row),photo_path:evidence.photo_path||'',readingConfirmed:!!evidence.readingConfirmed,closingEntered:!!evidence.readingConfirmed,readingRevision:evidence.readingRevision||0,finalClosing:row.closingEntered?row.closing:'',temporaryManualConfirmed:validTemporaryManualPriceReading(report,change,row,evidence)};
 }
 
 export function midShiftReadingComplete(report,change,row){
-  const photo=midShiftPhotoRow(change,row,report),value=photo.closing;
-  return Boolean((photo.photo_path||photo.temporaryManualConfirmed)&&photo.readingConfirmed&&value!==''&&value!=null&&Number.isFinite(Number(value))&&Number(value)>=Number(row.opening)&&(!row.closingEntered||Number(value)<=Number(row.closing)));
+  const photo=midShiftPhotoRow(change,row,report),value=numericMidShiftReading(change,row);
+  return Boolean((photo.photo_path||photo.temporaryManualConfirmed)&&photo.readingConfirmed&&value!==null&&Number(value)>=Number(row.opening)&&(!row.closingEntered||Number(value)<=Number(row.closing)));
 }
 
 export function pendingPricePhotoChanges(report) {
@@ -44,23 +52,38 @@ export function midShiftChangeHasDetails(change) {
     || Object.values(change.readingPhotos || {}).some(photo => photo?.photo_path || photo?.photoId || photo?.readingConfirmed));
 }
 
+export function midShiftSubmissionIssue(report) {
+  const changes = (report.midShiftPriceChanges || []).filter(midShiftChangeHasDetails);
+  if (!changes.length) return "";
+  for (const change of changes) {
+    const timeError = midShiftTimeError(change.effectiveTime, report.shiftId);
+    if (timeError) return `${change.product} price change: ${timeError}`;
+    if (!Number.isFinite(Number(change.newPrice)) || Number(change.newPrice) <= 0)
+      return `Enter the new ${change.product} price for the ${change.effectiveTime} change before submission.`;
+    if (change.photoRequired && !change.confirmedAt) {
+      const missing = (report.pumpRows || []).find(row => row.product === change.product && !midShiftReadingComplete(report, change, row));
+      return missing
+        ? `Photograph and confirm ${missing.pump} ${missing.nozzle} for the ${change.effectiveTime} ${change.product} price change before submission.`
+        : `Manager must confirm the ${change.effectiveTime} ${change.product} price change before submission.`;
+    }
+  }
+  return midShiftReadingIssues(report)[0] || "";
+}
+
 // Meter totals must move forward as prices change, including across midnight.
 export function midShiftReadingIssues(report) {
   const issues = [];
-  const order = change => {
-    const [hours, minutes] = String(change.effectiveTime || '').split(':').map(Number);
-    const value = hours * 60 + minutes;
-    return report.shiftId === 'shift-3' && value < 240 ? value + 1440 : value;
-  };
   for (const row of report.pumpRows || []) {
     let previous = Number(row.opening);
-    const changes = (report.midShiftPriceChanges || []).filter(c => c.product === row.product && midShiftChangeHasDetails(c)).sort((a, b) => order(a) - order(b));
+    const changes = (report.midShiftPriceChanges || []).filter(c => c.product === row.product && midShiftChangeHasDetails(c)).sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
     for (const change of changes) {
-      const raw = midShiftReadingValue(change, row), reading = Number(raw);
-      if (raw === '' || raw == null || !Number.isFinite(reading) || reading < previous
-          || ((row.closingEntered || report.confirmed) && reading > Number(row.closing))) {
-        issues.push(`${row.pump} ${row.nozzle}: price-change readings must increase from opening to closing in time order.`);
-      } else previous = reading;
+      const reading = numericMidShiftReading(change, row);
+      const label = `${row.pump} ${row.nozzle} · ${change.product} at ${change.effectiveTime || "time pending"}`;
+      if (reading === null) issues.push(`${label}: enter the meter reading at the price change.`);
+      else if (reading < previous) issues.push(`${label}: ${reading} is below ${previous}. Check the readings in time order.`);
+      else if ((row.closingEntered || report.confirmed) && reading > Number(row.closing))
+        issues.push(`${label}: the price-change reading ${reading} exceeds the closing reading ${row.closing}.`);
+      else previous = reading;
     }
   }
   return [...new Set(issues)];
@@ -123,7 +146,9 @@ export function patchMidShiftChange(report, id, key, value) {
       change.id === id
         ? key === 'product' && change.product !== value
           ? { ...change, product: value, newPrice: '', readings: {}, readingPhotos: {}, confirmedAt: '' }
-          : { ...change, [key]: value, confirmedAt: "" }
+          : key === "effectiveTime" && change.effectiveTime !== value && (change.photoRequired || Object.keys(change.readingPhotos || {}).length > 0)
+            ? { ...change, effectiveTime: value, readings: {}, readingPhotos: {}, confirmedAt: "" }
+            : { ...change, [key]: value, confirmedAt: "" }
         : change
     ),
   };

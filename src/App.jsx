@@ -1,4 +1,4 @@
-import { hasPumpOpening } from './fuel-leak-loss.js';
+import { hasPumpOpening, pumpMeterSales as pumpRowSales } from './fuel-leak-loss.js';
 import {isHighVariance,highVarianceMessage,HIGH_SHORTAGE_MESSAGE,HIGH_OVERAGE_MESSAGE} from './error-reduction.ts';
 import {HighVarianceNotice} from './high-variance-notice.jsx';
 import ManagerReconciliation from './ManagerReconciliation.jsx';
@@ -26,20 +26,24 @@ import { buildReviewMessage } from "./review-message.js";
 import { formatCashCountInput, normalizeCashCountInput } from "./cash-count-input.js";
 import { isStationPreOpeningSlot, isLiloanOpeningSlot, openingSlotHealth } from "./opening-health.js";
 import { normalizeBranchPinDraft } from "./pin-input.js";
+import { MidShiftTimeInput } from "./mid-shift-time-input.jsx";
 import { shiftIdForEffectiveTime } from "./shift-time.js";
 import { isCleanRestartRejection, shouldDiscardOfflineReport } from "./offline-report.js";
 import {
   addMidShiftChange,
   ensureMidShiftBasePrices,
   midShiftPumpKey,
+  midShiftReadingIssues,
+  midShiftSubmissionIssue,
   midShiftReadingValue,
+  numericMidShiftReading,
   midShiftChangeHasDetails,
   patchMidShiftChange,
   patchMidShiftReading,
   reportStartingPrice,
   removeMidShiftChange,
 } from "./mid-shift-price-change.js";
-import { midShiftChangeOrder, midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
+import { midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
 import { applyEffectivePricing } from "./report-price-sync.js";
 import { subscribeToStoreChanges } from "./realtime-store.js";
 
@@ -785,7 +789,7 @@ function reportWarnings(report, result) {
     if (!change.effectiveTime) warnings.push(`${change.product}: mid-shift price change is missing the effective time.`);
     if (n(change.newPrice) <= 0) warnings.push(`${change.product}: mid-shift price change is missing the new price.`);
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) warnings.push(`${change.product}: enter the pump reading at the price-change time for every matching nozzle.`);
   });
 
@@ -960,39 +964,6 @@ function tankVarianceAmount(report, row, expectedDip) {
   return n(row.actualDip) - expectedDip;
 }
 
-function sortedMidShiftChanges(report, product) {
-  return (report.midShiftPriceChanges || [])
-    .filter((change) => change.product === product)
-    .sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
-}
-
-function validMidShiftChangeForRow(change, row) {
-  const reading = n(midShiftReadingValue(change, row));
-  return n(change.newPrice) > 0 && reading >= n(row.opening) && reading <= n(row.closing);
-}
-
-function pumpRowSales(report, row) {
-  const opening = n(row.opening);
-  const closing = n(row.closing);
-  if (!hasPumpOpening(row) || closing <= opening) return 0;
-
-  let currentReading = opening;
-  let currentPrice = Math.max(0, n(reportStartingPrice(report, row.product)));
-  let sales = 0;
-
-  sortedMidShiftChanges(report, row.product).forEach((change) => {
-    if (!validMidShiftChangeForRow(change, row)) return;
-    const changeReading = n(midShiftReadingValue(change, row));
-    if (changeReading < currentReading) return;
-    sales += (changeReading - currentReading) * currentPrice;
-    currentReading = changeReading;
-    currentPrice = Math.max(0, n(change.newPrice));
-  });
-
-  sales += (closing - currentReading) * currentPrice;
-  return sales;
-}
-
 function compute(report) {
   const fuelLiters = { Premium: 0, Regular: 0, Diesel: 0 };
   const fuelSalesByProduct = { Premium: 0, Regular: 0, Diesel: 0 };
@@ -1155,7 +1126,7 @@ function cashVarianceCauseHints(report, result = compute(report)) {
   (report.midShiftPriceChanges || []).forEach((change) => {
     if (!midShiftChangeHasDetails(change)) return;
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) {
       hints.push(`${change.product} price-change readings: some pump readings are missing or incomplete.`);
     }
@@ -3522,38 +3493,7 @@ export default function App() {
 
   function patchMidShiftPriceChange(id, key, value) {
     const reportWithBasePrices = ensureMidShiftBasePrices(latestActiveReportForEdit());
-    const nextReport = patchMidShiftChange(reportWithBasePrices, id, key, value);
-
-    if (key === "effectiveTime") {
-      const targetShiftId = shiftIdForEffectiveTime(value);
-      if (targetShiftId && targetShiftId !== nextReport.shiftId) {
-        const movedChange = nextReport.midShiftPriceChanges.find((change) => change.id === id);
-        const sourceReport = removeMidShiftChange(nextReport, id);
-        const targetBaseReport = ensureMidShiftBasePrices(reportForTarget(branch, nextReport.date, targetShiftId));
-        const targetReport = {
-          ...targetBaseReport,
-          midShiftPriceChanges: [
-            ...(targetBaseReport.midShiftPriceChanges || []).filter((change) => change.id !== id),
-            movedChange,
-          ],
-        };
-
-        setSyncMessage(`Assigning ${value} price change to ${shiftById(targetShiftId).label}...`);
-        const targetSave = saveReport(targetReport, "immediate");
-        if (!targetSave) return;
-        targetSave.then((result) => {
-          if (result?.ok === false) return null;
-          return saveReport(sourceReport, "immediate");
-        }).then((result) => {
-          if (!result || result.ok === false) return;
-          setSelectedShiftId(targetShiftId);
-          setSyncMessage(`Price change assigned to ${shiftById(targetShiftId).label}.`);
-        });
-        return;
-      }
-    }
-
-    saveReport(nextReport);
+    saveReport(patchMidShiftChange(reportWithBasePrices, id, key, value));
   }
 
   function patchMidShiftPriceReading(id, rowId, value) {
@@ -3572,8 +3512,14 @@ export default function App() {
       return;
     }
     const matchingRows = (latestReport.pumpRows || []).filter((row) => row.product === change.product);
-    if (matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0)) {
+    const readingIssues = midShiftReadingIssues({...latestReport, midShiftPriceChanges:
+      latestReport.midShiftPriceChanges.filter(item => item.id === id || item.confirmedAt)});
+    if (!matchingRows.length || matchingRows.some(row => numericMidShiftReading(change, row) === null)) {
       setSyncMessage(`Complete every ${change.product} price-change pump reading before confirming.`);
+      return;
+    }
+    if (readingIssues.length) {
+      setSyncMessage(readingIssues[0]);
       return;
     }
     const confirmedReport = {
@@ -3768,6 +3714,8 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
+    const priceIssue = midShiftSubmissionIssue(activeReport);
+    if (priceIssue) { setSubmitReportError(priceIssue); return; }
     if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance)){setSubmitReportError(highVarianceMessage(activeResult.cashVariance));return;}
     if (activeReport.confirmed) {
       setSyncMessage(`This report is locked${activeReport.serverMeta?.reportId ? ` as ${activeReport.serverMeta.reportId}` : ""}. Request an admin correction to change it.`);
@@ -3829,6 +3777,8 @@ export default function App() {
   }
 
   function submitConfirmedReport(extra = {}) {
+    const priceIssue = midShiftSubmissionIssue(activeReport);
+    if (priceIssue) return Promise.reject(new Error(priceIssue));
     if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance))return Promise.reject(new Error(highVarianceMessage(activeResult.cashVariance)));
     return saveReport({
       ...activeReport,
@@ -4436,6 +4386,7 @@ function CashierPage({ report, result, warnings, criticalWarnings, missingPrevio
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
+    !reportCompleted(report) ? midShiftSubmissionIssue(report) : "",
     !reportCompleted(report)&&!report.baselineReport&&isHighVariance(result.cashVariance)?highVarianceMessage(result.cashVariance):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
     !String(report.cashierName || "").trim() ? "Cashier name is required. Complete Step 7 before submitting." : "",
@@ -4809,6 +4760,8 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
         <div className="warning-box">
           Do not overwrite the whole shift price. Enter the exact price-change time, the new price, and each pump reading at the moment the price changed.
         </div>
+        {report.confirmed && <p className="warning-box">This report is submitted. Request an Admin correction to change its prices or readings.</p>}
+        <fieldset disabled={report.confirmed}>
         {changes.length === 0 ? (
           <p className="neutral">No mid-shift price changes recorded for this report.</p>
         ) : changes.map((change, changeIndex) => {
@@ -4817,7 +4770,7 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
             <div className="price-box form-space" key={change.id}>
               <div className="grid four">
                 <Field label="Product"><SelectInput value={change.product} onChange={(value) => patchMidShiftPriceChange(change.id, "product", value)} options={FUEL_TYPES} /></Field>
-                <Field label="Effective Time"><TextInput type="time" value={change.effectiveTime} onChange={(value) => patchMidShiftPriceChange(change.id, "effectiveTime", value)} /></Field>
+                <MidShiftTimeInput key={[report.branch, report.date, report.shiftId, change.id, change.effectiveTime].join("|")} shiftId={report.shiftId} value={change.effectiveTime || ""} onCommit={value => patchMidShiftPriceChange(change.id, "effectiveTime", value)} />
                 <Field label="New Manager Price"><ManagerPriceInput ghostZero value={change.newPrice} onCommit={(value) => patchMidShiftPriceChange(change.id, "newPrice", value)} /></Field>
                 <button type="button" className="small-danger" onClick={() => removeMidShiftPriceChange(change.id)}>Remove Change #{changeIndex + 1}</button>
               </div>
@@ -4837,6 +4790,7 @@ function MidShiftPriceChangeSection({ report, addMidShiftPriceChange, patchMidSh
           );
         })}
         <button type="button" className="secondary" onClick={addMidShiftPriceChange}>Add Mid-Shift Price Change</button>
+        </fieldset>
       </details>
     </Section>
   );

@@ -1,4 +1,4 @@
-import { hasPumpOpening } from './fuel-leak-loss.js';
+import { hasPumpOpening, pumpMeterSales as pumpRowSales } from './fuel-leak-loss.js';
 import { managerReconciliationAdjustments } from './manager-reconciliation.js';
 import { cvFuelIssueSummary } from './cv-fuel-issues.js';
 import { additionalReviewFlags } from './accounting-review.js';
@@ -19,14 +19,14 @@ import {
   addMidShiftChange,
   ensureMidShiftBasePrices,
   midShiftPumpKey,
-  midShiftReadingValue,
+  numericMidShiftReading,
   midShiftChangeHasDetails,
   patchMidShiftChange,
   patchMidShiftReading,
   reportStartingPrice,
   removeMidShiftChange,
 } from "./mid-shift-price-change.js";
-import { midShiftChangeOrder, midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
+import { midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
 import { applyEffectivePricing } from "./report-price-sync.js";
 import { subscribeToStoreChanges } from "./realtime-store.js";
 
@@ -772,7 +772,7 @@ function reportWarnings(report, result) {
     if (!change.effectiveTime) warnings.push(`${change.product}: mid-shift price change is missing the effective time.`);
     if (n(change.newPrice) <= 0) warnings.push(`${change.product}: mid-shift price change is missing the new price.`);
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) warnings.push(`${change.product}: enter the pump reading at the price-change time for every matching nozzle.`);
   });
 
@@ -947,39 +947,6 @@ function tankVarianceAmount(report, row, expectedDip) {
   return n(row.actualDip) - expectedDip;
 }
 
-function sortedMidShiftChanges(report, product) {
-  return (report.midShiftPriceChanges || [])
-    .filter((change) => change.product === product)
-    .sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
-}
-
-function validMidShiftChangeForRow(change, row) {
-  const reading = n(midShiftReadingValue(change, row));
-  return n(change.newPrice) > 0 && reading >= n(row.opening) && reading <= n(row.closing);
-}
-
-function pumpRowSales(report, row) {
-  const opening = n(row.opening);
-  const closing = n(row.closing);
-  if (!hasPumpOpening(row) || closing <= opening) return 0;
-
-  let currentReading = opening;
-  let currentPrice = Math.max(0, n(reportStartingPrice(report, row.product)));
-  let sales = 0;
-
-  sortedMidShiftChanges(report, row.product).forEach((change) => {
-    if (!validMidShiftChangeForRow(change, row)) return;
-    const changeReading = n(midShiftReadingValue(change, row));
-    if (changeReading < currentReading) return;
-    sales += (changeReading - currentReading) * currentPrice;
-    currentReading = changeReading;
-    currentPrice = Math.max(0, n(change.newPrice));
-  });
-
-  sales += (closing - currentReading) * currentPrice;
-  return sales;
-}
-
 function compute(report) {
   const fuelLiters = { Premium: 0, Regular: 0, Diesel: 0 };
   const fuelSalesByProduct = { Premium: 0, Regular: 0, Diesel: 0 };
@@ -1144,7 +1111,7 @@ function cashVarianceCauseHints(report, result = compute(report)) {
   (report.midShiftPriceChanges || []).forEach((change) => {
     if (!midShiftChangeHasDetails(change)) return;
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) {
       hints.push(`${change.product} price-change readings: some pump readings are missing or incomplete.`);
     }

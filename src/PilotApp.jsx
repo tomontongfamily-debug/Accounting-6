@@ -1,4 +1,4 @@
-import { hasPumpOpening } from './fuel-leak-loss.js';
+import { hasPumpOpening, pumpMeterSales as pumpRowSales } from './fuel-leak-loss.js';
 import AdminStoreGate from './admin-store-gate.jsx';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from './zero-sales.js';
 import {isHighVariance,highVarianceMessage,HIGH_SHORTAGE_MESSAGE,HIGH_OVERAGE_MESSAGE} from './error-reduction.ts';
@@ -45,6 +45,7 @@ import { buildReviewMessage } from "./review-message.js";
 import { formatCashCountInput, normalizeCashCountInput } from "./cash-count-input.js";
 import { isStationPreOpeningSlot, isLiloanOpeningSlot, openingSlotHealth } from "./opening-health.js";
 import { normalizeBranchPinDraft } from "./pin-input.js";
+import { MidShiftTimeInput } from "./mid-shift-time-input.jsx";
 import { shiftIdForEffectiveTime } from "./shift-time.js";
 import { isCleanRestartRejection, shouldDiscardOfflineReport } from "./offline-report.js";
 import {
@@ -52,14 +53,16 @@ import {
   ensureMidShiftBasePrices,
   midShiftPumpKey,
   midShiftReadingValue,
+  numericMidShiftReading,
   midShiftReadingComplete,
+  midShiftSubmissionIssue,
   midShiftChangeHasDetails,
   patchMidShiftChange,
   patchMidShiftReading,
   reportStartingPrice,
   removeMidShiftChange,
 } from "./mid-shift-price-change.js";
-import { midShiftChangeOrder, midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
+import { midShiftReadingRows, midShiftSalesBreakdown } from "./mid-shift-sales-breakdown.js";
 import { applyEffectivePricing } from "./report-price-sync.js";
 import { subscribeToStoreChanges } from "./realtime-store.js";
 
@@ -797,7 +800,7 @@ function reportWarnings(report, result) {
     if (!change.effectiveTime) warnings.push(`${change.product}: mid-shift price change is missing the effective time.`);
     if (n(change.newPrice) <= 0) warnings.push(`${change.product}: mid-shift price change is missing the new price.`);
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) warnings.push(`${change.product}: enter the pump reading at the price-change time for every matching nozzle.`);
   });
 
@@ -1001,39 +1004,6 @@ function tankVarianceAmount(report, row, expectedDip) {
   return n(row.actualDip) - expectedDip;
 }
 
-function sortedMidShiftChanges(report, product) {
-  return (report.midShiftPriceChanges || [])
-    .filter((change) => change.product === product)
-    .sort((a, b) => midShiftChangeOrder(a, report.shiftId) - midShiftChangeOrder(b, report.shiftId));
-}
-
-function validMidShiftChangeForRow(change, row) {
-  const reading = n(midShiftReadingValue(change, row));
-  return n(change.newPrice) > 0 && reading >= n(row.opening) && reading <= n(row.closing);
-}
-
-function pumpRowSales(report, row) {
-  const opening = n(row.opening);
-  const closing = n(row.closing);
-  if (!hasPumpOpening(row) || closing <= opening) return 0;
-
-  let currentReading = opening;
-  let currentPrice = Math.max(0, n(reportStartingPrice(report, row.product)));
-  let sales = 0;
-
-  sortedMidShiftChanges(report, row.product).forEach((change) => {
-    if (!validMidShiftChangeForRow(change, row)) return;
-    const changeReading = n(midShiftReadingValue(change, row));
-    if (changeReading < currentReading) return;
-    sales += (changeReading - currentReading) * currentPrice;
-    currentReading = changeReading;
-    currentPrice = Math.max(0, n(change.newPrice));
-  });
-
-  sales += (closing - currentReading) * currentPrice;
-  return sales;
-}
-
 function compute(report) {
   const fuelLiters = { Premium: 0, Regular: 0, Diesel: 0 };
   const fuelSalesByProduct = { Premium: 0, Regular: 0, Diesel: 0 };
@@ -1197,7 +1167,7 @@ function cashVarianceCauseHints(report, result = compute(report)) {
   (report.midShiftPriceChanges || []).forEach((change) => {
     if (!midShiftChangeHasDetails(change)) return;
     const matchingRows = (report.pumpRows || []).filter((row) => row.product === change.product);
-    const missingReading = matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0);
+    const missingReading = matchingRows.some((row) => numericMidShiftReading(change, row) === null);
     if (missingReading) {
       hints.push(`${change.product} price-change readings: some pump readings are missing or incomplete.`);
     }
@@ -3716,38 +3686,11 @@ export default function App() {
 
   function patchMidShiftPriceChange(id, key, value) {
     const reportWithBasePrices = ensureMidShiftBasePrices(latestActiveReportForEdit());
-    const nextReport = patchMidShiftChange(reportWithBasePrices, id, key, value);
-
-    if (key === "effectiveTime") {
-      const targetShiftId = shiftIdForEffectiveTime(value);
-      if (targetShiftId && targetShiftId !== nextReport.shiftId) {
-        const movedChange = nextReport.midShiftPriceChanges.find((change) => change.id === id);
-        const sourceReport = removeMidShiftChange(nextReport, id);
-        const targetBaseReport = ensureMidShiftBasePrices(reportForTarget(branch, nextReport.date, targetShiftId));
-        const targetReport = {
-          ...targetBaseReport,
-          midShiftPriceChanges: [
-            ...(targetBaseReport.midShiftPriceChanges || []).filter((change) => change.id !== id),
-            movedChange,
-          ],
-        };
-
-        setSyncMessage(`Assigning ${value} price change to ${shiftById(targetShiftId).label}...`);
-        const targetSave = saveReport(targetReport, "immediate");
-        if (!targetSave) return;
-        targetSave.then((result) => {
-          if (result?.ok === false) return null;
-          return saveReport(sourceReport, "immediate");
-        }).then((result) => {
-          if (!result || result.ok === false) return;
-          setSelectedShiftId(targetShiftId);
-          setSyncMessage(`Price change assigned to ${shiftById(targetShiftId).label}.`);
-        });
-        return;
-      }
-    }
-
-    saveReport(nextReport);
+    const change = reportWithBasePrices.midShiftPriceChanges.find(item => item.id === id);
+    if (change && change[key] !== value && (key === "product" || key === "effectiveTime") &&
+        Object.keys(change.readingPhotos || {}).length &&
+        !window.confirm("Changing the product or time clears the readings attached to this price change. Continue?")) return false;
+    saveReport(patchMidShiftChange(reportWithBasePrices, id, key, value));
   }
 
   async function prepareMidShiftPhotos() {
@@ -3755,9 +3698,10 @@ export default function App() {
     if (draftSaveTimerRef.current) {
       window.clearTimeout(draftSaveTimerRef.current);draftSaveTimerRef.current=null;
       const pending=pendingDraftReportRef.current;pendingDraftReportRef.current=null;
-      if(pending) await persistReport(pending,"save",true);
+      if (pending) return persistReport(pending, "save", true);
     }
-    await pendingSaveRef.current.catch(()=>{});
+    if (pendingSaveCountRef.current > 0) return pendingSaveRef.current;
+    return null;
   }
 
   async function patchMidShiftPriceReading(change,row,savedPhoto,options,sourceReport) {
@@ -3777,7 +3721,11 @@ export default function App() {
   }
 
   async function confirmMidShiftPriceChange(id) {
-    await prepareMidShiftPhotos();
+    const prepared = await prepareMidShiftPhotos().catch(error => ({ok: false, error: error.message}));
+    if (prepared?.ok === false || prepared?.queued) {
+      setSyncMessage(prepared.error || "Save the price-change details online before confirming.");
+      return;
+    }
     const latestReport = latestActiveReportForEdit();
     const change = (latestReport.midShiftPriceChanges || []).find((item) => item.id === id);
     if (!change?.effectiveTime || n(change.newPrice) <= 0) {
@@ -3785,7 +3733,7 @@ export default function App() {
       return;
     }
     const matchingRows = (latestReport.pumpRows || []).filter((row) => row.product === change.product);
-    if (matchingRows.some((row) => n(midShiftReadingValue(change, row)) <= 0 || !change.readingPhotos?.[midShiftPumpKey(row)]?.readingConfirmed)) {
+    if (!matchingRows.length || matchingRows.some(row => !midShiftReadingComplete(latestReport, change, row))) {
       setSyncMessage(`Photograph and confirm every ${change.product} nozzle before confirming the price change.`);
       return;
     }
@@ -3970,6 +3918,8 @@ export default function App() {
 
   async function confirmReport() {
     setSubmitReportError("");
+    const priceIssue = midShiftSubmissionIssue(activeReport);
+    if (priceIssue) { setSubmitReportError(priceIssue); return; }
     if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance)){setSubmitReportError(highVarianceMessage(activeResult.cashVariance));return;}
     const calibrationError=validateReturnedCalibration(activeReport);
     if(calibrationError){setSubmitReportError(calibrationError);setSyncMessage(calibrationError);return;}
@@ -4033,6 +3983,8 @@ export default function App() {
   }
 
   function submitConfirmedReport(extra = {}) {
+    const priceIssue = midShiftSubmissionIssue(activeReport);
+    if (priceIssue) return Promise.reject(new Error(priceIssue));
     if(!activeReport.baselineReport&&isHighVariance(activeResult.cashVariance))return Promise.reject(new Error(highVarianceMessage(activeResult.cashVariance)));
     return saveReport({
       ...activeReport,
@@ -4647,6 +4599,7 @@ function CashierPage({ onSaveDelivery, isSavingDelivery, onReading, onDemoSaved,
   const fieldWarnings = pumpFieldWarnings(report);
   const openingSetupMode = Boolean(report.baselineMissing || report.baselineReport);
   const requiredFieldBlockers = [
+    !reportCompleted(report) ? midShiftSubmissionIssue(report) : "",
     !reportCompleted(report)&&!report.baselineReport&&isHighVariance(result.cashVariance)?highVarianceMessage(result.cashVariance):'',
     !reportCompleted(report)?validateReturnedCalibration(report):'',
     !hasActualCashCounted(report) ? "End-of-shift cash count is required. Complete Step 1 before submitting." : "",
@@ -5047,12 +5000,12 @@ function MidShiftPriceChangeSection({ onPricePhotoActivity, pricePhotoReports, p
             <div className="price-box form-space" key={change.id} data-price-change-id={change.id}>
               <fieldset className="grid four" disabled={photoBusy || report.confirmed}>
                 <Field label="Product"><SelectInput value={change.product} onChange={(value) => patchMidShiftPriceChange(change.id, "product", value)} options={FUEL_TYPES} /></Field>
-                <Field label="Effective Time"><TextInput type="time" value={change.effectiveTime} onChange={(value) => patchMidShiftPriceChange(change.id, "effectiveTime", value)} /></Field>
+                <MidShiftTimeInput key={[report.branch, report.date, report.shiftId, change.id, change.effectiveTime].join("|")} shiftId={report.shiftId} value={change.effectiveTime || ""} onCommit={value => patchMidShiftPriceChange(change.id, "effectiveTime", value)} />
                 <Field label="New Manager Price"><ManagerPriceInput ghostZero value={change.newPrice} onCommit={(value) => patchMidShiftPriceChange(change.id, "newPrice", value)} /></Field>
                 <button type="button" className="small-danger" onClick={() => removeMidShiftPriceChange(change.id)}>Remove Change #{changeIndex + 1}</button>
               </fieldset>
               <p className="neutral">{report.branch} · {report.date} · {report.shiftId.replace('shift-','Shift ')} — readings are saved to this shift.</p>
-              <p><strong>{change.product}: {peso(reportStartingPrice(report,change.product))} → {n(change.newPrice)>0?peso(change.newPrice):'enter new price'}</strong>{change.effectiveTime?` at ${change.effectiveTime}`:''}</p>
+              <p><strong>{change.product}: {peso(midShiftPriceReviewContext(report,change).previousPrice)} → {n(change.newPrice)>0?peso(change.newPrice):'enter new price'}</strong>{change.effectiveTime?` at ${change.effectiveTime}`:''}</p>
               {change.confirmedAt && <p className="success-box">✓ Price change confirmed</p>}
               {change.effectiveTime && n(change.newPrice)>0 ? <MidShiftPhotoReadings report={report} change={change} onReading={patchMidShiftPriceReading} onBusy={onBusy} onPrepare={prepareMidShiftPhotos}/> : <p className="neutral">Enter the product, effective time and new price to start the price-change photos.</p>}
               {!change.confirmedAt && <p className="neutral" role="status">{!change.effectiveTime || n(change.newPrice)<=0 ? 'Step 1: Enter the product, price-change time and new price.' : missingRows.length ? `Step 2: Save and confirm ${missingRows.length} remaining ${change.product} nozzle reading${missingRows.length===1?'':'s'}. Next: ${missingRows[0].pump} ${missingRows[0].nozzle}.` : photoBusy ? 'Saving the readings. Keep this page open.' : 'Step 3: All readings saved. Confirm the new price below.'}</p>}

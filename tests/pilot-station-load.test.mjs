@@ -22,10 +22,14 @@ test('station cashier and manager loads survive an offline Liloan POS without ch
   }
 });
 
-test('Liloan, Admin and Approver continue to require their full POS evidence',async()=>{
+test('Liloan, Admin and Approver attempt verification and surface offline POS without downloading its full history',async()=>{
   for(const session of [{role:'Cashier',branch:'Liloan'},{role:'Manager',branch:'Liloan'},{role:'Admin',branch:''},{role:'Approver',branch:''}]) {
     const f=stationLoadFixture();
-    await assert.rejects(execute(session,{route:'/api/store/load',input:{paged:true},mode:'live',startDate:f.state.startDate,mutationId:randomUUID()},f),/Liloan full-history read is unavailable/);
-    assert.equal(f.stats.fullLoads,1);
+    const result=await execute(session,{route:'/api/store/load',input:{paged:true},mode:'live',startDate:f.state.startDate,mutationId:randomUUID()},f);
+    assert.equal(result.ok,true);
+    assert.equal(f.stats.posReads,1);
+    assert.equal(f.stats.fullLoads,0);
+    assert.ok(f.stats.patches.some(patch=>patch.upserts.some(doc=>doc.section==='pos'&&doc.key==='status'&&doc.data==='unavailable')));
+    assert.ok(f.stats.patches.every(patch=>patch.removals.every(doc=>!['pos_rows','pos_points'].includes(doc.section))));
   }
 });

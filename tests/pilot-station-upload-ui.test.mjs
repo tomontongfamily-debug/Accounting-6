@@ -41,6 +41,8 @@ test('All station photos auto-fill through the phone camera flow',{skip:!process
     assert.equal(await page.locator('input[type=file]').count(),0);
     await capturePumpCamera(page,card);
     await expect(card.getByRole('button',{name:'Retake photo',exact:true})).toBeEnabled({timeout:30000});
+    await expect.poll(()=>state.reports[key].pumpRows[0].ocr_result?.status,{timeout:45000})
+      .toMatch(/^(detected|no-reading|error)$/);
     const input=card.locator('input[inputmode=decimal]');
     const reading=await input.count()&&((await input.inputValue())!=='')?Number(await input.inputValue()):null;
     const savedRow=state.reports[key].pumpRows[0];
@@ -56,7 +58,9 @@ test('All station photos auto-fill through the phone camera flow',{skip:!process
      assert.equal(state.reports[key].pumpRows[0].ocr_detected_reading,reading);
     }
     assert.equal(state.reports[key].pumpRows[0].readingConfirmed,false);
-    assert.deepEqual(writes,['/api/demo/photo','/api/demo/pump-reading'],'Photo and OCR suggestion need only two server saves');
+    assert.equal(writes[0],'/api/demo/photo');
+    assert.ok(writes.length===1 || (writes.length===2 && writes[1]==='/api/demo/pump-reading'),
+      'A ready reading shares the photo save. Background recognition saves its result once.');
     assert.equal(state.reports[key].confirmed,false);assert.deepEqual(errors,[]);
    }finally{await context.close();}
   }

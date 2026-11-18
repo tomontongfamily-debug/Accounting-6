@@ -1,5 +1,5 @@
-import {midShiftReadingValue, reportStartingPrice} from './mid-shift-price-change.js';
-import {midShiftChangeOrder} from './mid-shift-sales-breakdown.js';
+import {numericMidShiftReading, reportStartingPrice} from './mid-shift-price-change.js';
+import {midShiftChangeOrder} from './shift-time.js';
 
 const products = ['Premium', 'Regular', 'Diesel'];
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -28,8 +28,8 @@ export function pumpMeterSales(report, row) {
   const changes=(report.midShiftPriceChanges||[]).filter(change=>change.product===row.product)
     .slice().sort((a,b)=>midShiftChangeOrder(a,report.shiftId)-midShiftChangeOrder(b,report.shiftId));
   for(const change of changes) {
-    const next=number(midShiftReadingValue(change,row));
-    if(number(change.newPrice)<=0||next<reading||next<number(row.opening)||next>number(row.closing))continue;
+    const next=numericMidShiftReading(change,row);
+    if(next===null||number(change.newPrice)<=0||next<reading||next<number(row.opening)||next>number(row.closing))continue;
     sales+=(next-reading)*price;reading=next;price=Math.max(0,number(change.newPrice));
   }
   return sales+(number(row.closing)-reading)*price;

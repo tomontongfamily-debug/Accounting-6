@@ -1,5 +1,6 @@
 import { BRANCHES, SHIFT_IDS } from "./supabase.js";
 import { isStationPreOpeningSlot, openingSlotHealth } from "../../src/opening-health.js";
+import { pumpMeterLiters, pumpMeterSales } from "../../src/fuel-leak-loss.js";
 import { compute } from "../../src/accounting-engine.js";
 
 export function manilaDateOffset(days = 0) {
@@ -53,27 +54,6 @@ function countedDeductions(deductions = {}) {
   return Object.entries(deductions).filter(([key]) => !removedDeductionKeys.has(key));
 }
 
-function pumpRowSales(report, row) {
-  const opening = numberValue(row.opening);
-  const closing = numberValue(row.closing);
-  if (opening <= 0 || closing <= opening) return { liters: 0, sales: 0 };
-  let currentReading = opening;
-  let currentPrice = Math.max(0, numberValue(report.prices?.[row.product]));
-  let sales = 0;
-  (report.midShiftPriceChanges || [])
-    .filter((change) => change.product === row.product)
-    .sort((a, b) => String(a.effectiveTime || "").localeCompare(String(b.effectiveTime || "")))
-    .forEach((change) => {
-      const reading = numberValue(change.readings?.[row.id]);
-      if (numberValue(change.newPrice) <= 0 || reading <= currentReading || reading >= closing) return;
-      sales += (reading - currentReading) * currentPrice;
-      currentReading = reading;
-      currentPrice = Math.max(0, numberValue(change.newPrice));
-    });
-  sales += (closing - currentReading) * currentPrice;
-  return { liters: closing - opening, sales };
-}
-
 export function computeReportFuel(report = {}) {
   if (report.branch === "Liloan" || report.pilot === true) {
     const totals = reportTotals(report);
@@ -82,9 +62,8 @@ export function computeReportFuel(report = {}) {
   const fuelByProduct = {};
   (report.pumpRows || []).forEach((row) => {
     const totals = fuelByProduct[row.product] || { liters: 0, sales: 0, calibration: 0 };
-    const rowResult = pumpRowSales(report, row);
-    totals.liters += rowResult.liters;
-    totals.sales += rowResult.sales;
+    totals.liters += pumpMeterLiters(row);
+    totals.sales += pumpMeterSales(report, row);
     fuelByProduct[row.product] = totals;
   });
   (report.tankRows || []).forEach((row) => {

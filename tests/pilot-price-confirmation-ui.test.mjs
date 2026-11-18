@@ -82,6 +82,13 @@ test('manager can return to an ended morning draft and confirm its 9 AM change a
   await page.getByRole('combobox',{name:'Price-change shift',exact:true}).selectOption('shift-1');
   await expect(page.getByText('Currently viewing: Liloan · 2026-09-23 · Shift 1',{exact:true})).toBeVisible();
   await expect(page.getByLabel('Effective Time',{exact:true})).toHaveValue('09:00');
+  const time=page.getByLabel('Effective Time',{exact:true});
+  await time.fill('03:00');
+  await page.getByText('Currently viewing: Liloan · 2026-09-23 · Shift 1',{exact:true}).click();
+  await expect(page.getByRole('alert').filter({hasText:'03:00 belongs to Shift 3'})).toBeVisible();
+  await expect(time).toHaveValue('09:00');
+  await expect(page.getByRole('combobox',{name:'Price-change shift',exact:true})).toHaveValue('shift-1');
+  assert.equal(app.getState().reports[f.key].midShiftPriceChanges[0].effectiveTime,'09:00');
   await expect(page.getByText('Step 3: All readings saved. Confirm the new price below.',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Add Mid-Shift Price Change',exact:true})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Confirm Premium Mid-Shift Price',exact:true})).toBeEnabled();

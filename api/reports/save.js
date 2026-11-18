@@ -7,10 +7,11 @@ import { authoritativePoRowsForReport } from "../_shared/po.js";
 import { hasTemporaryPumpLimitException } from "../../src/pump-reading-warnings.js";
 import { isLiloanArchivedSlot } from "../../src/opening-health.js";
 import { saveLivePilotCorrection } from "../../pilot/repository.mjs";
-import { validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
+import { hasPumpOpening, validateFuelLeakLosses } from "../../src/fuel-leak-loss.js";
 import {compute} from '../../src/accounting-engine.js';
 import {isHighVariance,highVarianceMessage} from '../../pilot/domain.mjs';
-import { midShiftReadingIssues } from "../../src/mid-shift-price-change.js";
+import { midShiftTimeError } from "../../src/shift-time.js";
+import { midShiftSubmissionIssue } from "../../src/mid-shift-price-change.js";
 
 const LEASE_MS = 2 * 60_000;
 const CLEAN_START_DATE = "2026-07-29";
@@ -66,15 +67,15 @@ export function mergeReportForRole(session, incomingReport, existingReport = {})
       date: incomingReport.date,
       shiftId: incomingReport.shiftId,
       deposits: incomingReport.deposits || [],
-      midShiftPriceChanges: incomingReport.midShiftPriceChanges || [],
-      midShiftBasePrices: existingReport.midShiftBasePrices || incomingReport.midShiftBasePrices || incomingReport.prices || {},
+      midShiftPriceChanges: (existingReport.confirmed ? existingReport.midShiftPriceChanges : incomingReport.midShiftPriceChanges) || [],
+      ...(existingReport.confirmed ? {} : {midShiftBasePrices: existingReport.midShiftBasePrices || incomingReport.midShiftBasePrices || incomingReport.prices || {}}),
     };
   }
   return existingReport;
 }
 
 function validNumber(value) {
-  return value !== "" && Number.isFinite(Number(value));
+  return (typeof value === "number" || typeof value === "string") && String(value).trim() !== "" && Number.isFinite(Number(value));
 }
 
 export function validOpeningReading(value) {
@@ -98,18 +99,18 @@ function validateOpeningReadings(report) {
 }
 
 export function validateSubmission(report) {
-  const priceReadingIssues = midShiftReadingIssues({...report, confirmed: true});
-  if (priceReadingIssues.length) return priceReadingIssues[0];
+  const priceIssue = midShiftSubmissionIssue({...report, confirmed: true});
+  if (priceIssue) return priceIssue;
   if (!String(report.cashierName || "").trim()) return "Cashier name is required.";
   if (!Array.isArray(report.pumpRows) || report.pumpRows.length === 0) return "Pump readings are required.";
   for (const row of report.pumpRows) {
     if (!row.closingEntered) return `${row.pump || "Pump"} ${row.nozzle || "reading"}: current closing must be entered.`;
     if (!row.id || !validNumber(row.opening) || !validNumber(row.closing)) return `${row.pump || "Pump"} ${row.nozzle || "reading"} is incomplete.`;
-    if (Number(row.opening) <= 0) return `${row.pump} ${row.nozzle}: previous closing is missing.`;
+    if (!hasPumpOpening(row)) return `${row.pump} ${row.nozzle}: previous closing is missing.`;
     const litersSold = Number(row.closing) - Number(row.opening);
     if (litersSold < 0) return `${row.pump} ${row.nozzle} (${row.product}): negative liters are not allowed. Current closing cannot be below previous closing.`;
     if (litersSold > MAX_PUMP_LITERS_PER_SHIFT && !hasTemporaryPumpLimitException(report, row)) return `${row.pump} ${row.nozzle} (${row.product}): ${litersSold.toFixed(2)} liters is too high or unusual and exceeds the ${MAX_PUMP_LITERS_PER_SHIFT.toLocaleString("en-US")} L maximum for one shift.`;
-    if (litersSold > 0 && Number(report.prices?.[row.product]) <= 0) return `${row.product}: pump price is missing or zero.`;
+    if (litersSold > 0 && (!validNumber(report.prices?.[row.product]) || Number(report.prices[row.product]) <= 0)) return `${row.product}: pump price is missing or zero.`;
   }
   if (!Array.isArray(report.tankRows) || report.tankRows.some((row) => !validNumber(row.actualDip))) return "Underground tank readings are incomplete.";
   if (!validNumber(report.actualCashCounted)) return "End-of-shift cash count is required.";
@@ -387,7 +388,27 @@ export default async function handler(req, res) {
       return res.status(409).json({ ok: false, conflict: true, error: "A newer version of this report is already online. Reload before editing.", version: currentVersion });
     }
 
+    if (auth.session.role === "Manager" && existingReport.confirmed && (report.midShiftPriceChanges || []).some(change =>
+        change.confirmedAt && change.confirmedAt !== existingReport.midShiftPriceChanges?.find(previous => previous.id === change.id)?.confirmedAt)) {
+      return res.status(423).json({ok: false, error: "Request an Admin correction before confirming prices on a submitted report."});
+    }
     const safeReport = mergeReportForRole(auth.session, report, existingReport);
+    if (auth.session.role !== "Cashier") {
+      for (const change of safeReport.midShiftPriceChanges || []) {
+        const previous = existingReport?.midShiftPriceChanges?.find(item => item.id === change.id);
+        if ((change.effectiveTime && change.effectiveTime !== previous?.effectiveTime) || (change.confirmedAt && !previous?.confirmedAt)) {
+          const issue = midShiftTimeError(change.effectiveTime, safeReport.shiftId);
+          if (issue) return res.status(422).json({ok: false, error: issue});
+        }
+        if (change.confirmedAt && change.confirmedAt !== previous?.confirmedAt) {
+          if (!(safeReport.pumpRows || []).some(row => row.product === change.product))
+            return res.status(422).json({ok: false, error: "Load the pump readings before confirming this price change."});
+          const confirmedChanges = {...safeReport, midShiftPriceChanges: safeReport.midShiftPriceChanges.filter(item => item.confirmedAt)};
+          const issue = midShiftSubmissionIssue(confirmedChanges);
+          if (issue) return res.status(422).json({ok: false, error: issue});
+        }
+      }
+    }
     const leakLossError = validateFuelLeakLosses(safeReport, {requireNotes: operation === "submit"});
     if (leakLossError) return res.status(422).json({ok: false, error: leakLossError});
     safeReport.poRows = await authoritativePoRowsForReport(supabase, safeReport);

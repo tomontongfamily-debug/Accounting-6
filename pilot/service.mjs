@@ -1,7 +1,7 @@
 import { pendingVouchersForReport } from '../src/pending-vouchers.js';
 import { requiresZeroSalesConfirmation, zeroSalesReviewKey } from '../src/zero-sales.js';
 import {isHighVariance,highVarianceMessage} from './domain.mjs';
-import {priceReviewError,midShiftPriceReviewContext} from '../src/price-confirmation.js';
+import {priceReviewKey,priceReviewError,midShiftPriceReviewContext} from '../src/price-confirmation.js';
 import { configuredStations, stationStartDate, isStationOpening } from '../src/station-rollout.js';
 import { refreshFuelCVReview } from '../src/cv-fuel-issues.js';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +9,8 @@ import { createReport, compute, carryForwardOpenings, getEffectivePricing, getEf
 import { CASH_DENOMINATIONS, amount, automaticTransactions, cashNeedsRecount, datePlus, denominationTotal, depositAmounts, depositCoverage, money, permittedDay, readingComplete, readingWarning, reportIssues, reservedReportCash, availableCarryover } from './domain.mjs';
 import { accountingCashVouchers, accountingFuelVouchers } from './cv-allocations.mjs';
 import { refreshManagerReconciliation, managerDepositCoverageIssues } from '../src/manager-reconciliation.js';
-import { midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
+import { midShiftTimeError } from "../src/shift-time.js";
+import { midShiftSubmissionIssue, midShiftPumpKey, midShiftReadingValue, midShiftReadingIssues, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
 import { mergeOcrEvidence, pendingOcrAttempt, completedPhotoOcrEvidence } from '../src/ocr-evidence.js';
 import {temporaryPriceGrant,temporaryManualPriceOpen,validTemporaryManualPriceReading} from '../src/temporary-price-reading.js';
 
@@ -199,8 +200,8 @@ function exposeReport(report,session) {
 }
 function validatePricePhotos(report,change) {
   if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||amount(change.newPrice)<=0) reject('Enter the price-change time and new price.');
-  const hour=Number(change.effectiveTime.slice(0,2)),shift=hour<4||hour>=22?'shift-3':hour<13?'shift-1':'shift-2';
-  if(shift!==report.shiftId) reject('The price-change time belongs to a different shift.');
+  const timeError = midShiftTimeError(change.effectiveTime, report.shiftId);
+  if (timeError) reject(timeError);
   const rows=report.pumpRows.filter(row=>row.product===change.product);
   if(!rows.length) reject('No configured nozzles for this product.');
   for(const row of rows) {
@@ -321,9 +322,13 @@ function validatePriceReadingOrder(report,change) {
         const changes=incoming.map(c=>{
           if(!['Premium','Regular','Diesel'].includes(c.product)) reject('Unknown fuel product.');
           const previous=old.midShiftPriceChanges?.find(p=>p.id===c.id);
+          if ((c.effectiveTime && c.effectiveTime !== previous?.effectiveTime) || c.confirmedAt) {
+            const issue = midShiftTimeError(c.effectiveTime, old.shiftId);
+            if (issue) reject(issue);
+          }
           const sameContext=previous?.product===c.product&&previous?.effectiveTime===c.effectiveTime;
           const next={id:c.id,product:c.product,effectiveTime:c.effectiveTime,newPrice:c.newPrice,photoRequired:previous?!!previous.photoRequired:true,readings:sameContext?(previous.readings||{}):{},readingPhotos:sameContext?(previous.readingPhotos||{}):{},confirmedAt:''};
-          if(sameContext&&previous.newPrice===c.newPrice) next.confirmedAt=previous.confirmedAt||'';
+          if(sameContext&&Number(previous.newPrice)===Number(c.newPrice)) next.confirmedAt=previous.confirmedAt||'';
           if(c.confirmedAt) {
             if(next.photoRequired)validatePricePhotos({...old,midShiftPriceChanges:[next]},next);
             if(!next.confirmedAt){const issue=priceReviewError(midShiftPriceReviewContext(old,next),input.priceReview?.[next.id]);if(issue)reject(issue);}
@@ -344,6 +349,8 @@ function validatePriceReadingOrder(report,change) {
       }
       const r=candidate(input.report,session);
       if(input.operation==='submit') {
+        const priceIssue = midShiftSubmissionIssue(r);
+        if (priceIssue) reject(priceIssue);
         if(!r.baselineReport&&isHighVariance(compute(r).cashVariance))reject(highVarianceMessage(compute(r).cashVariance));
         if(r.posRedemptions?.automatic&&(r.posRedemptions.status!=='verified'||!r.posRedemptions.verifiedAt||Date.now()-Date.parse(r.posRedemptions.verifiedAt)>120000))reject('Verify automatic POS redemptions before submission.');
         const leakLossError=validateFuelLeakLosses(r,{requireNotes:true});
@@ -548,10 +555,15 @@ function validatePriceReadingOrder(report,change) {
       const change=old.midShiftPriceChanges?.find(c=>c.id===input.changeId);
       if(!change)reject('This price change no longer exists. Refresh first.',409);
       if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(change.effectiveTime)||amount(change.newPrice)<=0)reject('Enter the price-change time and new price.');
+      const timeError = midShiftTimeError(change.effectiveTime, old.shiftId);
+      if (timeError) reject(timeError);
       if(change.photoRequired)validatePricePhotos(old,change);
       validatePriceReadingOrder(old,change);
+      const reviewContext = midShiftPriceReviewContext(old,change);
+      if (input.priceReview && input.priceReview.reviewKey !== priceReviewKey(reviewContext))
+        reject("The saved price change differs from the one you reviewed. Refresh the shift and review the saved price and time.",409);
       if(change.confirmedAt)return send({ok:true,report:old,alreadyConfirmed:true,priceDate:old.date,dailyPricePatch:confirmedDailyPricePatch(database,old.branch,old.date,[change.product])});
-      const reviewError=priceReviewError(midShiftPriceReviewContext(old,change),input.priceReview);
+      const reviewError=priceReviewError(reviewContext,input.priceReview);
       if(reviewError)reject(reviewError);
       const report={...old,midShiftBasePrices:old.midShiftBasePrices||old.prices,midShiftPriceChanges:old.midShiftPriceChanges.map(c=>c.id===change.id?{...c,confirmedAt:stamp()}:c),cashReviewState:'',recountRequired:false};
       const result=storeReport(report,session,'mid-shift-price-confirmed');

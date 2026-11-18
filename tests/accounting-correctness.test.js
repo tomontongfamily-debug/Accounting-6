@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { compute, normalizeReport } from '../src/accounting-engine.js';
 import { additionalReviewFlags } from '../src/accounting-review.js';
-import { midShiftReadingIssues, midShiftReadingValue, reportStartingPrice, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
-import { midShiftChangeOrder, midShiftSalesBreakdown } from '../src/mid-shift-sales-breakdown.js';
+import { midShiftReadingIssues, numericMidShiftReading, reportStartingPrice, midShiftChangeHasDetails } from '../src/mid-shift-price-change.js';
+import { midShiftSalesBreakdown } from '../src/mid-shift-sales-breakdown.js';
 import { reconcileSources } from '../pilot/state.mjs';
 import { fixture } from './pilot-fixture.mjs';
 import { authoritativePoRowsForReport } from '../api/_shared/po.js';
 import { runAction } from '../pilot/service.mjs';
 import { validateSubmission } from '../api/reports/save.js';
-import { hasPumpOpening } from '../src/fuel-leak-loss.js';
+import { hasPumpOpening, pumpMeterSales } from '../src/fuel-leak-loss.js';
 
 function extracts(file, names, context) {
   const source=fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8').replaceAll('\r','');
@@ -28,7 +28,7 @@ test('empty optional price-change drafts do not block Pondol or change its sales
   assert.deepEqual(midShiftReadingIssues(report),[]);
   assert.equal(reportStartingPrice(report,'Premium'),75);
   assert.deepEqual(midShiftSalesBreakdown(report),[]);
-  const context={n:v=>Number(v)||0,midShiftReadingValue,midShiftChangeHasDetails,CRITICAL_GROSS_SALES_THRESHOLD:1e9};
+  const context={n:v=>Number(v)||0,numericMidShiftReading,midShiftChangeHasDetails,CRITICAL_GROSS_SALES_THRESHOLD:1e9};
   for(const file of ['App.jsx','PilotApp.jsx','accounting-engine.js']) {
     const warnings=extracts(file,['reportWarnings'],context).reportWarnings;
     assert.equal(warnings(report,{grossSales:7500}).length,0,file);
@@ -72,10 +72,7 @@ test('a later lower totalizer cannot create negative price segments or disagree 
   const expected=80*80+20*85;
   assert.equal(compute(report).fuelSales,expected);
   assert.equal(midShiftSalesBreakdown(report).reduce((sum,r)=>sum+r.sales,0),expected);
-  for(const file of ['App.jsx','PilotApp.jsx','accounting-engine.js']) {
-    const fn=extracts(file,['sortedMidShiftChanges','validMidShiftChangeForRow','pumpRowSales'],{n:v=>Number(v)||0,midShiftReadingValue,midShiftChangeOrder,reportStartingPrice}).pumpRowSales;
-    assert.equal(fn(report,row),expected,file);
-  }
+  assert.equal(pumpMeterSales(report,row),expected);
   assert.ok(additionalReviewFlags(report).includes('Price-change readings need review'));
 });
 
