@@ -86,7 +86,7 @@ async function post(route,input,sessionToken,key,mutationId) {
     if(response.status!==503||result.code==='STATION_RECORDS_UNAVAILABLE'||attempt===1) break;
   }
   if(!response.ok||result.ok===false) throw Object.assign(new Error(result.error||'Save could not be verified.'),{...result,status:response.status});
-  if(['/api/demo/cash-confirm','/api/demo/delivery-save'].includes(route)) {
+  if(['/api/demo/cash-confirm','/api/demo/cash-check','/api/demo/cash-recount','/api/demo/delivery-save'].includes(route)) {
     // Scoped cash/delivery saves can read a newer shift without accepting this full draft.
     // A queued old draft must not inherit that revision and overwrite other edits.
     savedRevisions.delete(key);

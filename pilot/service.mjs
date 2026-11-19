@@ -405,7 +405,18 @@ function validatePriceReadingOrder(report,change) {
         if(input.report?.cashCountConfirmed||Number(input.report?.pilotCashRevision||0)!==Number(old.pilotCashRevision||0))reject('The cash confirmation changed. Refresh the saved shift before confirming.',409);
         r=candidate(old,session);
         r.actualCashCounted=total;r.cashDenominations=input.denominations;r.initialCashDenominations=input.denominations;r.cashCountConfirmed=true;
-      } else r=candidate(input.report,session);
+      } else {
+        // Reconciliation owns only the review/count. Never replay the desktop's
+        // full draft over a newer cashier, manager, phone or source save.
+        const old=database.reports[keyOf(input.report||{})];
+        if(!old)reject('Refresh the shift dashboard first.');
+        r=candidate(old,session);
+        if(route.endsWith('cash-recount') && (
+          Number(input.report?.pilotCashRevision||0)!==Number(old.pilotCashRevision||0)
+          || input.report?.reviewedExpectedCash!==r.reviewedExpectedCash
+          || r.reviewedExpectedCash!==compute(r).expectedCash
+        )) reject('The cash reconciliation changed. Refresh the saved shift and check your cash count again.',409);
+      }
       if(route.endsWith('cash-check')) {
         if(r.posRedemptions?.automatic&&(r.posRedemptions.status!=='verified'||!r.posRedemptions.verifiedAt||Date.now()-Date.parse(r.posRedemptions.verifiedAt)>120000))reject('Verify automatic POS redemptions before checking cash.');
         if(!r.cashCountConfirmed || r.pumpRows.some(row=>!readingComplete(row))) reject('Confirm cash and complete all readings first.');
