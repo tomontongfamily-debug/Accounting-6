@@ -163,7 +163,7 @@ test('Interrupted requests reuse their ID and a failed save does not stall later
  }finally{globalThis.fetch=originalFetch;globalThis.window=originalWindow;}
 });
 
-for(const route of ['/api/demo/cash-confirm','/api/demo/delivery-save'])test(`${route} cannot rebase a queued stale full draft over newer saved fields`,async()=>{
+for(const route of ['/api/demo/cash-confirm','/api/demo/cash-check','/api/demo/cash-recount','/api/demo/delivery-save'])test(`${route} cannot rebase a queued stale full draft over newer saved fields`,async()=>{
  const originalFetch=globalThis.fetch,originalWindow=globalThis.window;
  globalThis.window={__fueltechPilotConfig:{mode:'shadow',start_date:'2026-10-03'}};
  const {pilotPost}=await import(`../src/pilot-client.js?scoped-save-test=${route}`);const calls=[];

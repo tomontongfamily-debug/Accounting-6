@@ -90,6 +90,7 @@ test('Submit explains unfinished cash reconciliation, focuses the next action, a
    else if(path==='/api/pilot/action'){
     const body=route.request().postDataJSON();
     if(body.input.operation==='submit')submits++;
+    if(body.route==='/api/demo/cash-check'){assert.equal(state.reports[key].cashierName,'Cashier saved before reconciliation');assert.equal(body.input.report.cashierName,'Cashier saved before reconciliation');}
     try{const out=await runAction(state,cashier,body.route,body.input,{mutationId:body.mutationId});state=out.state;result=out.result;}
     catch(e){status=e.status||400;result={ok:false,error:e.message};}
    }else{status=404;result={ok:false,error:'Unexpected test route'};}
@@ -103,6 +104,7 @@ test('Submit explains unfinished cash reconciliation, focuses the next action, a
   await page.getByRole('button',{name:'Submit Shift Report',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Check my cash count',exact:true}).evaluate(e=>e===document.activeElement),true);
   assert.equal(submits,0);assert.equal(state.reports[key].confirmed,false);assert.equal(state.reports[key].actualCashCounted,1000);
+  await page.getByLabel('Cashier Name',{exact:true}).fill('Cashier saved before reconciliation');
   await page.getByRole('button',{name:'Check my cash count',exact:true}).click();
   await page.getByText('A final cash recount is required. Enter the recounted quantities and press Confirm final recount before submitting.',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Submit Shift Report',exact:true}).click();

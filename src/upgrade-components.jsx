@@ -361,14 +361,14 @@ export function MidShiftPhotoReadings({report,change,onReading,onBusy,onPrepare,
     <div className="demo-actions"><button type="button" className="secondary" disabled={capturing||index<=0} onClick={()=>setSelected(rows[index-1].id)}>Previous nozzle</button><button type="button" className="primary" disabled={capturing||index>=rows.length-1} onClick={()=>setSelected(rows[index+1].id)}>Next nozzle</button></div>
   </div>;
 }
-export function CashConfirmation({report,onSaved,onCountsChange,onReload,onRefreshVouchers,review=false}) {
+export function CashConfirmation({report,onSaved,onCountsChange,onReload,onRefreshVouchers,onPrepare,review=false}) {
   const [counts,setCounts]=useState({});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [stale,setStale]=useState(false);
   const denominations=review?counts:(report.cashDenominations||{});
   const reconciliation=review?compute(report):null;
   const blockedVariance=review&&reconciliation?.actualCashCountEntered&&isHighVariance(reconciliation.cashVariance);
   useEffect(()=>{if(!review&&report.cashCountConfirmed){setError('');setStale(false);}},[report.cashCountConfirmed,review]);
   let valid=false;try{denominationTotal(denominations);valid=true;}catch{ /* An empty/invalid count cannot be confirmed. */ }
-  async function run(action) {setBusy(true);setError('');setStale(false);try{const r=await demoApi(action,{report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409||e.saveUncertain===true);}finally{setBusy(false);}}
+  async function run(action) {setBusy(true);setError('');setStale(false);try{const prepared=await onPrepare?.(report);const r=await demoApi(action,{report:prepared||report,denominations});if(r.report)onSaved(r.report);}catch(e){setError(e.message);setStale(e.status===409||e.saveUncertain===true);}finally{setBusy(false);}}
   async function reload(){setBusy(true);try{await onReload(review?null:denominations);setError('');setStale(false);}catch(e){setError(e.message);}finally{setBusy(false);}}
   return <div className="cash-confirmation" aria-busy={busy}>
     {busy&&<p role="status">Waiting for the station server to verify the saved shift…</p>}
